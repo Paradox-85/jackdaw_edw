@@ -1,0 +1,32 @@
+# --- Python & Environment ---
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+
+# --- Databases & Infrastructure ---
+postgres_data/
+redis_data/
+ollama_storage/
+qdrant_storage/
+neo4j_data/
+dbgate_data/
+
+# --- Secrets & Configs ---
+.env
+config/db_config.yaml
+config/mapping_rules.yaml
+
+# --- Project Specific ---
+data/
+*.log
+*.xlsx
+*.csv
+
+# --- IDE & OS ---
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,53 @@
+{
+  "name": "EDW (Engineering Data Warehouse)",
+  "description": "Prefect 3.0 + PostgreSQL + Neo4j + Qdrant + Ollama",
+  "version": "1.0.0",
+  "systemInstructionFile": ".claude-code-system.md",
+  "projectStructure": {
+    "docker": "docker/",
+    "sql": {
+      "schema": "sql/schema/",
+      "views": "sql/views/",
+      "migrations": "sql/migrations/"
+    },
+    "etl": {
+      "flows": "etl/flows/",
+      "tasks": "etl/tasks/",
+      "requirements": "etl/requirements.txt"
+    },
+    "ai": {
+      "prompts": "ai/prompts/",
+      "graph_queries": "ai/graph_queries/",
+      "vector_ops": "ai/vector_ops/"
+    },
+    "config": "config/",
+    "logs": "logs/",
+    "data": "data/",
+    "vscode": ".vscode/"
+  },
+  "codestandards": {
+    "language": "Python 3.11+",
+    "framework": "Prefect 3.0",
+    "orm": "SQLAlchemy 2.x",
+    "databases": ["PostgreSQL", "Neo4j"],
+    "vectorDB": "Qdrant",
+    "localLLM": "Ollama",
+    "typeHints": "mandatory",
+    "docstringStyle": "Google",
+    "asyncRequired": true
+  },
+  "rules": {
+    "sqlSchemaPrefix": true,
+    "scdType2Tracking": true,
+    "hashComparison": true,
+    "asyncOnly": true,
+    "noHardcodedSecrets": true,
+    "configFromYAML": true,
+    "symlinksForData": true
+  },
+  "infrastructure": {
+    "configFile": "docker/docker-compose.yml",
+    "envFile": "docker/.env",
+    "envExample": "docker/.env.example"
+  }
+}
