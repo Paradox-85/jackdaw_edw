@@ -1,0 +1,17 @@
+# Database Connection Settings
+postgres:
+  host: "postgres_db"  # Use 'localhost' if running script outside docker (via SSH tunnel)
+  port: 5432
+  database: "engineering_core"
+  user: "postgres_admin"
+  password: "d5d182693cfd8f945fcb7fb3653fc039"
+  schema_reference: "reference_core"
+  schema_ontology: "ontology_core"
+  schema_project: "project_core"
+  # File Storage Settings
+storage:
+  master_reference_file: "/mnt/shared-data/ram-user/Jackdaw/Reference-Data/_Master/Master-Reference-Data.xlsx"
+  master_rdl: "/mnt/shared-data/ram-user/Jackdaw/Reference-Data/_Master/JDAW-PT-D-JA-7880-00001_A05.xlsx"
+  tag_dataset_file: "/mnt/shared-data/ram-user/Jackdaw/Master-Data/_master/data/MTR-dataset.xlsx"
+  doc_dataset_file: "/mnt/shared-data/ram-user/Jackdaw/Master-Data/_master/data/MDR.xlsx"
+  prop_dataset_file: "/mnt/shared-data/ram-user/Jackdaw/Master-Data/_master/data/TagProperties-rdl.xlsx"
