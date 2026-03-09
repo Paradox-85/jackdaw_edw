@@ -1,0 +1,31 @@
+{
+  "claudeCode.systemPrompt": ".claude-code-system.md",
+  "claudeCode.excludePatterns": [
+    ".git/**",
+    "__pycache__/**",
+    ".pytest_cache/**",
+    "venv/**",
+    ".env",
+    "*.log",
+    "docker/.env",
+    "logs/**",
+    "data/**"
+  ],
+  "python.defaultInterpreterPath": "${workspaceFolder}/venv/bin/python",
+  "python.linting.enabled": true,
+  "python.linting.pylintEnabled": true,
+  "[python]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "ms-python.python"
+  },
+  "[sql]": {
+    "editor.defaultFormatter": "adpyke.vscode-sql-formatter"
+  },
+  "[yaml]": {
+    "editor.insertSpaces": true,
+    "editor.tabSize": 2
+  },
+  "editor.codeActionsOnSave": {
+    "source.fixAll": "explicit"
+  }
+}

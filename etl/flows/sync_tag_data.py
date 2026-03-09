@@ -56,11 +56,12 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
     df = pd.read_excel(current_file, sheet_name=0, dtype=str, na_filter=False).dropna(subset=['TAG_NAME', 'ID'])
     
     tags_to_update = []
-    tags_status_only = [] 
+    tags_status_only = []
     doc_maps_to_insert = []
     doc_maps_to_update = []
     sece_maps_to_insert = []
     sece_maps_to_update = []
+    history_to_insert = []
     stats = {"New": 0, "Updated": 0, "No Changes": 0, "Errors": 0}
 
     # --- PHASE 2 & 4 MERGED: ONE TRANSACTION FOR EVERYTHING ---
@@ -124,18 +125,23 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                     if existing[1] == curr_hash:
                         stats["No Changes"] += 1
                         tags_status_only.append({"ts": sync_time, "id": tag_uuid})
+                        if existing[2] != 'No Changes':
+                            history_to_insert.append({"tid": tag_uuid, "tn": tn, "sid": sid,
+                                                       "ss": "No Changes", "ts": sync_time, "rid": run_id})
                     else:
                         stats["Updated"] += 1
                         params["id"] = tag_uuid
                         tags_to_update.append(params)
+                        history_to_insert.append({"tid": tag_uuid, "tn": tn, "sid": sid,
+                                                   "ss": "Updated", "ts": sync_time, "rid": run_id})
                 else:
                     stats["New"] += 1
                     # New tag is inserted immediately within the transaction to get ID
                     tag_uuid = conn.execute(text("""
                         INSERT INTO project_core.tag (
                             tag_name, source_id, row_hash, tag_status, sync_status, sync_timestamp,
-                            tag_class_raw, article_code_raw, design_company_name_raw, area_code_raw, 
-                            process_unit_raw, discipline_code_raw, po_code_raw, equip_no, manufacturer_id, 
+                            tag_class_raw, article_code_raw, design_company_name_raw, area_code_raw,
+                            process_unit_raw, discipline_code_raw, po_code_raw, equip_no, manufacturer_id,
                             vendor_id, model_id, serial_no, tech_id, alias, description, install_date,
                             startup_date, warranty_end_date, price, model_part_raw,
                             manufacturer_company_raw, vendor_company_raw, class_id, parent_tag_raw,
@@ -147,6 +153,8 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                             :mfr_raw, :v_raw, :cls_id, :prnt_raw, :po_id, :u_id, :a_id, :d_id, :art_id, :dco_id, :prj_id, 'Active'
                         ) RETURNING id
                     """), params).scalar()
+                    history_to_insert.append({"tid": tag_uuid, "tn": tn, "sid": sid,
+                                              "ss": "New", "ts": sync_time, "rid": run_id})
 
                 if tag_uuid:
                     doc_raw = clean_string(row.get('TAG_DOC'))
@@ -216,9 +224,28 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
         if sece_maps_to_update:
             conn.execute(text("UPDATE mapping.tag_sece SET sync_status='No Changes', sync_timestamp=:ts, row_hash=:h WHERE id=:id"), sece_maps_to_update)
 
+        if history_to_insert:
+            conn.execute(text("""
+                INSERT INTO audit_core.tag_status_history
+                    (tag_id, tag_name, source_id, sync_status, sync_timestamp, run_id)
+                VALUES (:tid, :tn, :sid, :ss, :ts, :rid)
+            """), history_to_insert)
+
         # --- PHASE 5: CLEANUP (Within the same transaction) ---
-        for t in ["project_core.tag", "mapping.tag_document", "mapping.tag_sece"]:
-            conn.execute(text(f"UPDATE {t} SET sync_status='Deleted' WHERE sync_timestamp < :sync_date AND sync_status != 'Deleted'"), 
+        deleted_rows = conn.execute(text("""
+            UPDATE project_core.tag SET sync_status = 'Deleted'
+            WHERE sync_timestamp < :sync_date AND sync_status != 'Deleted'
+            RETURNING id, tag_name, source_id
+        """), {"sync_date": sync_time}).fetchall()
+        if deleted_rows:
+            conn.execute(text("""
+                INSERT INTO audit_core.tag_status_history
+                    (tag_id, tag_name, source_id, sync_status, sync_timestamp, run_id)
+                VALUES (:tid, :tn, :sid, 'Deleted', :ts, :rid)
+            """), [{"tid": r[0], "tn": r[1], "sid": r[2],
+                    "ts": sync_time, "rid": run_id} for r in deleted_rows])
+        for t in ["mapping.tag_document", "mapping.tag_sece"]:
+            conn.execute(text(f"UPDATE {t} SET sync_status='Deleted' WHERE sync_timestamp < :sync_date AND sync_status != 'Deleted'"),
                          {"sync_date": sync_time})
         conn.execute(text("UPDATE project_core.tag SET object_status='Inactive' WHERE sync_status = 'Deleted' AND object_status != 'Inactive'"))
 

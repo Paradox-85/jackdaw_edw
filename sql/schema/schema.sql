@@ -337,7 +337,23 @@ CREATE TABLE "project_core"."property_value" (
   "tag_source_id_raw" TEXT NULL,
   CONSTRAINT "property_value_pkey" PRIMARY KEY ("id")
 );
-CREATE INDEX "idx_sync_stats_time" 
+CREATE TABLE "audit_core"."tag_status_history" (
+  "id"             UUID      NOT NULL DEFAULT gen_random_uuid(),
+  "tag_id"         UUID      NOT NULL,
+  "tag_name"       TEXT      NOT NULL,
+  "source_id"      TEXT      NOT NULL,
+  "sync_status"    TEXT      NOT NULL,
+  "sync_timestamp" TIMESTAMP NOT NULL DEFAULT now(),
+  "run_id"         UUID      NULL,
+  CONSTRAINT "tag_status_history_pkey" PRIMARY KEY ("id")
+);
+CREATE INDEX "idx_tag_hist_tag_id" ON "audit_core"."tag_status_history" ("tag_id"         ASC);
+CREATE INDEX "idx_tag_hist_ts"     ON "audit_core"."tag_status_history" ("sync_timestamp" ASC);
+ALTER TABLE "audit_core"."tag_status_history"
+  ADD CONSTRAINT "tag_status_history_tag_id_fkey"
+  FOREIGN KEY ("tag_id") REFERENCES "project_core"."tag" ("id")
+  ON DELETE NO ACTION ON UPDATE NO ACTION;
+CREATE INDEX "idx_sync_stats_time"
 ON "audit_core"."sync_run_stats" (
   "start_time" ASC
 );

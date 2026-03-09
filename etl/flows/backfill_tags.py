@@ -23,18 +23,44 @@ def get_sorted_history():
     """ Scans directory and returns sorted list of historical file info """
     if not os.path.exists(HISTORY_DIR):
         return []
-    
+
     history = []
     for fname in os.listdir(HISTORY_DIR):
         match = re.match(FILE_MASK, fname)
         if match:
             fdate = datetime.strptime(match.group(1), "%Y-%m-%d")
             history.append({
-                "path": os.path.join(HISTORY_DIR, fname), 
-                "date": fdate, 
+                "path": os.path.join(HISTORY_DIR, fname),
+                "date": fdate,
                 "name": fname
             })
     return sorted(history, key=lambda x: x['date'])
+
+
+def get_monthly_sample(all_files):
+    """Select representative files: always first & last, plus first file of each month in between."""
+    if len(all_files) <= 2:
+        return all_files
+
+    first = all_files[0]
+    last = all_files[-1]
+
+    seen_months = set()
+    monthly_firsts = []
+    for f in all_files[1:-1]:
+        key = (f['date'].year, f['date'].month)
+        if key not in seen_months:
+            seen_months.add(key)
+            monthly_firsts.append(f)
+
+    # Combine and deduplicate (first/last may fall in same month as a middle file)
+    seen_paths = set()
+    result = []
+    for f in [first] + monthly_firsts + [last]:
+        if f['path'] not in seen_paths:
+            seen_paths.add(f['path'])
+            result.append(f)
+    return result
 
 @flow(name="Tag History Replay (Backfill)", log_prints=True)
 def tag_backfill_flow(debug_mode: bool = True):
@@ -46,11 +72,11 @@ def tag_backfill_flow(debug_mode: bool = True):
         return
 
     # Determine files to process
-    targets = [all_files[0], all_files[-1]] if debug_mode and len(all_files) > 1 else all_files
+    targets = [all_files[0], all_files[-1]] if debug_mode and len(all_files) > 1 else get_monthly_sample(all_files)
     total = len(targets)
-    
+
     logger.info(f"STARTING BACKFILL: Mode={'DEBUG' if debug_mode else 'FULL'}")
-    logger.info(f"Total snapshots to replay: {total}")
+    logger.info(f"Total snapshots to replay: {total} (monthly sample from {len(all_files)} available files)")
 
     # PHASE 1: Sequential Data Sync (UPSERT only)
     for index, f_info in enumerate(targets, 1):
