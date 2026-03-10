@@ -1,3 +1,4 @@
+import json
 import pandas as pd
 import os
 import sys
@@ -15,7 +16,7 @@ if str(script_root) not in sys.path:
 
 from tasks.common import (
     load_config, get_db_engine_url, calculate_row_hash,
-    clean_string, normalize_to_id_code, get_ref_id, parse_bool, to_dt
+    clean_string, normalize_to_id_code, get_ref_id, to_dt
 )
 
 config = load_config()
@@ -41,7 +42,8 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
     # --- PHASE 1: PRE-LOAD EVERYTHING ---
     logger.info("PHASE 1: Pre-loading registries into memory...")
     with engine.connect() as conn:
-        tag_registry = {(row[0], row[1]): (row[2], row[3], row[4]) for row in conn.execute(
+        # source_id is the stable system key; tag_name may change across syncs
+        tag_registry = {row[1]: (row[2], row[3], row[4]) for row in conn.execute(
             text("SELECT tag_name, source_id, id, row_hash, sync_status FROM project_core.tag"))}
         doc_lookup = {row[0]: row[1] for row in conn.execute(text("SELECT doc_number, id FROM project_core.document"))}
         sece_lookup = {row[0]: row[1] for row in conn.execute(text("SELECT code, id FROM reference_core.sece"))}
@@ -52,6 +54,13 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
             text("SELECT tag_id, document_id, id, sync_status FROM mapping.tag_document"))}
         tag_sece_cache = {(row[0], row[1]): (row[2], row[3]) for row in conn.execute(
             text("SELECT tag_id, sece_id, id, sync_status FROM mapping.tag_sece"))}
+        # Load previous hash + snapshot to detect field count changes (Extended/Reduced)
+        history_data_cache = {row[0]: (row[1], row[2]) for row in conn.execute(text("""
+            SELECT DISTINCT ON (tag_id) tag_id, row_hash, snapshot
+            FROM audit_core.tag_status_history
+            WHERE row_hash IS NOT NULL
+            ORDER BY tag_id, sync_timestamp DESC
+        """))}
 
     df = pd.read_excel(current_file, sheet_name=0, dtype=str, na_filter=False).dropna(subset=['TAG_NAME', 'ID'])
     
@@ -62,7 +71,16 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
     sece_maps_to_insert = []
     sece_maps_to_update = []
     history_to_insert = []
-    stats = {"New": 0, "Updated": 0, "No Changes": 0, "Errors": 0}
+    stats = {"New": 0, "Updated": 0, "Extended": 0, "Reduced": 0, "No Changes": 0, "Errors": 0}
+
+    def _field_count(snap_json: str | None) -> int:
+        """Count non-null fields in a JSON snapshot string."""
+        if not snap_json:
+            return 0
+        try:
+            return len(json.loads(snap_json))
+        except Exception:
+            return 0
 
     # --- PHASE 2 & 4 MERGED: ONE TRANSACTION FOR EVERYTHING ---
     logger.info("PHASE 2: Processing and executing in a single atomic transaction...")
@@ -114,10 +132,23 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                     "v_raw": clean_string(row.get('VENDOR_COMPANY_NAME')),
                     "cls_id": class_id, "po_id": po_id, "u_id": unit_id, "a_id": area_id, "d_id": disc_id,
                     "art_id": article_id, "dco_id": design_co_id, "prj_id": project_id,
-                    "prnt_raw": clean_string(row.get('PARENT_TAG_NAME'))
+                    "prnt_raw": clean_string(row.get('PARENT_TAG_NAME')),
+                    "ex_cls": clean_string(row.get('EX CLASS')),
+                    "ip_gr": clean_string(row.get('IP_GRADE')),
+                    "mc_pkg": clean_string(row.get('MC_PACKAGE_CODE')),
+                    "from_tag_raw": clean_string(row.get('FROM_TAG')),
+                    "to_tag_raw": clean_string(row.get('TO_TAG')),
                 }
 
-                existing = tag_registry.get((tn, sid))
+                _SNAPSHOT_KEYS = {
+                    "t_stat", "cls_raw", "art_raw", "dco_raw", "area_raw", "unit_raw",
+                    "disc_raw", "po_raw", "sn", "tid", "als", "dsc", "inst", "start",
+                    "warn", "prc", "m_raw", "mfr_raw", "v_raw", "prnt_raw",
+                    "ex_cls", "ip_gr", "mc_pkg", "from_tag_raw", "to_tag_raw"
+                }
+                snapshot = json.dumps({k: str(v) for k, v in params.items() if k in _SNAPSHOT_KEYS and v is not None})
+
+                existing = tag_registry.get(sid)
                 tag_uuid = None
 
                 if existing:
@@ -127,13 +158,26 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                         tags_status_only.append({"ts": sync_time, "id": tag_uuid})
                         if existing[2] != 'No Changes':
                             history_to_insert.append({"tid": tag_uuid, "tn": tn, "sid": sid,
-                                                       "ss": "No Changes", "ts": sync_time, "rid": run_id})
+                                                       "ss": "No Changes", "ts": sync_time, "rid": run_id,
+                                                       "h": curr_hash, "snap": snapshot})
                     else:
-                        stats["Updated"] += 1
+                        prev_hash, prev_snap = history_data_cache.get(tag_uuid, (None, None))
+                        prev_count = _field_count(prev_snap)
+                        curr_count = len(json.loads(snapshot))
+                        if curr_count > prev_count:
+                            sub_status = "Extended"
+                        elif curr_count < prev_count:
+                            sub_status = "Reduced"
+                        else:
+                            sub_status = "Updated"
+                        stats[sub_status] += 1
                         params["id"] = tag_uuid
+                        params["sub_status"] = sub_status
                         tags_to_update.append(params)
-                        history_to_insert.append({"tid": tag_uuid, "tn": tn, "sid": sid,
-                                                   "ss": "Updated", "ts": sync_time, "rid": run_id})
+                        if curr_hash != prev_hash:
+                            history_to_insert.append({"tid": tag_uuid, "tn": tn, "sid": sid,
+                                                       "ss": sub_status, "ts": sync_time, "rid": run_id,
+                                                       "h": curr_hash, "snap": snapshot})
                 else:
                     stats["New"] += 1
                     # New tag is inserted immediately within the transaction to get ID
@@ -145,16 +189,19 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                             vendor_id, model_id, serial_no, tech_id, alias, description, install_date,
                             startup_date, warranty_end_date, price, model_part_raw,
                             manufacturer_company_raw, vendor_company_raw, class_id, parent_tag_raw,
-                            po_id, process_unit_id, area_id, discipline_id, article_id, design_company_id, project_id, object_status
+                            po_id, process_unit_id, area_id, discipline_id, article_id, design_company_id, project_id, object_status,
+                            ex_class, ip_grade, mc_package_code, from_tag_raw, to_tag_raw
                         ) VALUES (
                             :tn, :sid, :h, :t_stat, 'New', :ts,
                             :cls_raw, :art_raw, :dco_raw, :area_raw, :unit_raw, :disc_raw, :po_raw, :eq, :mfr,
                             :vnd, :mod, :sn, :tid, :als, :dsc, :inst, :start, :warn, :prc, :m_raw,
-                            :mfr_raw, :v_raw, :cls_id, :prnt_raw, :po_id, :u_id, :a_id, :d_id, :art_id, :dco_id, :prj_id, 'Active'
+                            :mfr_raw, :v_raw, :cls_id, :prnt_raw, :po_id, :u_id, :a_id, :d_id, :art_id, :dco_id, :prj_id, 'Active',
+                            :ex_cls, :ip_gr, :mc_pkg, :from_tag_raw, :to_tag_raw
                         ) RETURNING id
                     """), params).scalar()
                     history_to_insert.append({"tid": tag_uuid, "tn": tn, "sid": sid,
-                                              "ss": "New", "ts": sync_time, "rid": run_id})
+                                              "ss": "New", "ts": sync_time, "rid": run_id,
+                                              "h": curr_hash, "snap": snapshot})
 
                 if tag_uuid:
                     doc_raw = clean_string(row.get('TAG_DOC'))
@@ -190,8 +237,8 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
         
         if tags_to_update:
             conn.execute(text("""
-                UPDATE project_core.tag SET 
-                    tag_status=:t_stat, row_hash=:h, sync_status='Updated', sync_timestamp=:ts,
+                UPDATE project_core.tag SET
+                    tag_name=:tn, tag_status=:t_stat, row_hash=:h, sync_status=:sub_status, sync_timestamp=:ts,
                     tag_class_raw=:cls_raw, article_code_raw=:art_raw, design_company_name_raw=:dco_raw,
                     area_code_raw=:area_raw, process_unit_raw=:unit_raw, discipline_code_raw=:disc_raw,
                     po_code_raw=:po_raw, equip_no=:eq, manufacturer_id=:mfr, vendor_id=:vnd,
@@ -199,7 +246,9 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                     install_date=:inst, startup_date=:start, warranty_end_date=:warn, price=:prc,
                     model_part_raw=:m_raw, manufacturer_company_raw=:mfr_raw, vendor_company_raw=:v_raw,
                     class_id=:cls_id, po_id=:po_id, process_unit_id=:u_id, area_id=:a_id, parent_tag_raw=:prnt_raw,
-                    discipline_id=:d_id, article_id=:art_id, design_company_id=:dco_id, project_id=:prj_id, object_status='Active'
+                    discipline_id=:d_id, article_id=:art_id, design_company_id=:dco_id, project_id=:prj_id, object_status='Active',
+                    ex_class=:ex_cls, ip_grade=:ip_gr, mc_package_code=:mc_pkg,
+                    from_tag_raw=:from_tag_raw, to_tag_raw=:to_tag_raw
                 WHERE id=:id
             """), tags_to_update)
 
@@ -227,8 +276,8 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
         if history_to_insert:
             conn.execute(text("""
                 INSERT INTO audit_core.tag_status_history
-                    (tag_id, tag_name, source_id, sync_status, sync_timestamp, run_id)
-                VALUES (:tid, :tn, :sid, :ss, :ts, :rid)
+                    (tag_id, tag_name, source_id, sync_status, sync_timestamp, run_id, row_hash, snapshot)
+                VALUES (:tid, :tn, :sid, :ss, :ts, :rid, :h, :snap)
             """), history_to_insert)
 
         # --- PHASE 5: CLEANUP (Within the same transaction) ---
@@ -240,8 +289,8 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
         if deleted_rows:
             conn.execute(text("""
                 INSERT INTO audit_core.tag_status_history
-                    (tag_id, tag_name, source_id, sync_status, sync_timestamp, run_id)
-                VALUES (:tid, :tn, :sid, 'Deleted', :ts, :rid)
+                    (tag_id, tag_name, source_id, sync_status, sync_timestamp, run_id, row_hash, snapshot)
+                VALUES (:tid, :tn, :sid, 'Deleted', :ts, :rid, NULL, NULL)
             """), [{"tid": r[0], "tn": r[1], "sid": r[2],
                     "ts": sync_time, "rid": run_id} for r in deleted_rows])
         for t in ["mapping.tag_document", "mapping.tag_sece"]:
@@ -251,9 +300,11 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
 
     # Final Audit (Separate transaction is fine)
     with engine.begin() as conn:
+        count_updated = stats["Updated"] + stats["Extended"] + stats["Reduced"]
+        logger.info(f"Updated breakdown — Updated: {stats['Updated']}, Extended: {stats['Extended']}, Reduced: {stats['Reduced']}")
         conn.execute(text("""
             UPDATE audit_core.sync_run_stats SET end_time=:et, count_created=:nc, count_updated=:nu, count_unchanged=:nch, count_errors=:ne WHERE run_id=:rid
-        """), {"rid": run_id, "et": datetime.now(), "nc": stats["New"], "nu": stats["Updated"], "nch": stats["No Changes"], "ne": stats["Errors"]})
+        """), {"rid": run_id, "et": datetime.now(), "nc": stats["New"], "nu": count_updated, "nch": stats["No Changes"], "ne": stats["Errors"]})
 
 @task(name="Resolve Parent-Child Hierarchy (Atomic)")
 def build_hierarchy(override_file=None):
@@ -266,9 +317,27 @@ def build_hierarchy(override_file=None):
             FROM project_core.tag p
             WHERE t.parent_tag_raw = p.tag_name
               AND (t.parent_tag_id IS NULL OR t.parent_tag_id != p.id)
-              AND t.parent_tag_raw IS NOT NULL 
+              AND t.parent_tag_raw IS NOT NULL
               AND t.parent_tag_raw != ''
               AND t.parent_tag_raw != 'unset';
+        """))
+        conn.execute(text("""
+            UPDATE project_core.tag t
+            SET from_tag_id = f.id
+            FROM project_core.tag f
+            WHERE t.from_tag_raw = f.tag_name
+              AND (t.from_tag_id IS NULL OR t.from_tag_id != f.id)
+              AND t.from_tag_raw IS NOT NULL
+              AND t.from_tag_raw != '';
+        """))
+        conn.execute(text("""
+            UPDATE project_core.tag t
+            SET to_tag_id = tt.id
+            FROM project_core.tag tt
+            WHERE t.to_tag_raw = tt.tag_name
+              AND (t.to_tag_id IS NULL OR t.to_tag_id != tt.id)
+              AND t.to_tag_raw IS NOT NULL
+              AND t.to_tag_raw != '';
         """))
 
 @flow(name="Tag Register Master Sync", log_prints=True)

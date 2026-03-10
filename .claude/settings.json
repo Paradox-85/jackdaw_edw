@@ -1,0 +1,62 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/schemas/settings.json",
+  "model": {
+    "default": "claude-4.6-opus-max",
+    "fallback": "claude-4.6-sonnet"
+  },
+  "permissions": {
+    "allow": [
+      "mcp__perplexity",
+      "mcp__proxmox",
+      "bash:*etl/**",
+      "bash:pytest",
+      "bash:black",
+      "bash:ruff",
+      "bash:pre-commit",
+      "Read:etl/**",
+      "Read:sql/**",
+      "Read:config/**",
+      "Read:CLAUDE*.md"
+    ],
+    "deny": [
+      "*.env*",
+      "secrets/**",
+      "*.pem",
+      "ssh/**",
+      "data/private/**",
+      "logs/prod/**"
+    ],
+    "ask": [
+      "bash:rm",
+      "bash:docker rm",
+      "Write:**"
+    ]
+  },
+  "hooks": {
+    "pre-prompt": [
+      {
+        "command": "bash",
+        "args": ["scripts/pre-hook.sh"]
+      }
+    ],
+    "post-response": [
+      {
+        "command": "ruff",
+        "args": ["check", "--fix"]
+      }
+    ]
+  },
+  "mcpServers": {
+    "autoApprove": ["perplexity", "proxmox"],
+    "maxConcurrent": 3
+  },
+  "ui": {
+    "theme": "dark",
+    "showPlan": true,
+    "autoApproveSafeCommands": true
+  },
+  "experimental": {
+    "enableSubagents": true,
+    "contextWindow": "max"
+  }
+}

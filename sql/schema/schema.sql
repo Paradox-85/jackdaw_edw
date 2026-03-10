@@ -283,8 +283,15 @@ CREATE TABLE "project_core"."tag" (
   "source_id" TEXT NOT NULL,
   "object_status" TEXT NULL DEFAULT 'Active'::text ,
   "parent_tag_raw" TEXT NULL,
+  "ex_class" TEXT NULL,
+  "ip_grade" TEXT NULL,
+  "mc_package_code" TEXT NULL,
+  "from_tag_raw"    TEXT NULL,
+  "to_tag_raw"      TEXT NULL,
+  "from_tag_id"     UUID NULL,
+  "to_tag_id"       UUID NULL,
   CONSTRAINT "tag_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "uq_tag_name_source" UNIQUE ("tag_name", "source_id")
+  CONSTRAINT "uq_source_id" UNIQUE ("source_id")
 );
 CREATE TABLE "mapping"."document_po" ( 
   "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
@@ -345,6 +352,8 @@ CREATE TABLE "audit_core"."tag_status_history" (
   "sync_status"    TEXT      NOT NULL,
   "sync_timestamp" TIMESTAMP NOT NULL DEFAULT now(),
   "run_id"         UUID      NULL,
+  "row_hash"       TEXT      NULL,
+  "snapshot"       JSONB     NULL,
   CONSTRAINT "tag_status_history_pkey" PRIMARY KEY ("id")
 );
 CREATE INDEX "idx_tag_hist_tag_id" ON "audit_core"."tag_status_history" ("tag_id"         ASC);
@@ -389,6 +398,8 @@ ALTER TABLE "reference_core"."area" ADD CONSTRAINT "area_plant_id_fkey" FOREIGN 
 ALTER TABLE "reference_core"."process_unit" ADD CONSTRAINT "process_unit_plant_id_fkey" FOREIGN KEY ("plant_id") REFERENCES "reference_core"."plant" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
 ALTER TABLE "reference_core"."model_part" ADD CONSTRAINT "model_part_manuf_id_fkey" FOREIGN KEY ("manufacturer_id") REFERENCES "reference_core"."company" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
 ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_parent_tag_id_fkey" FOREIGN KEY ("parent_tag_id") REFERENCES "project_core"."tag" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
+ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_from_tag_id_fkey" FOREIGN KEY ("from_tag_id") REFERENCES "project_core"."tag" ("id") ON DELETE SET NULL ON UPDATE NO ACTION;
+ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_to_tag_id_fkey" FOREIGN KEY ("to_tag_id") REFERENCES "project_core"."tag" ("id") ON DELETE SET NULL ON UPDATE NO ACTION;
 ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_class_id_fkey" FOREIGN KEY ("class_id") REFERENCES "ontology_core"."class" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
 ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_article_id_fkey" FOREIGN KEY ("article_id") REFERENCES "reference_core"."article" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
 ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_company_id_fkey" FOREIGN KEY ("design_company_id") REFERENCES "reference_core"."company" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;

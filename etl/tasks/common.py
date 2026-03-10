@@ -47,7 +47,7 @@ def calculate_row_hash(row):
 
 def clean_string(val):
     """Trims and removes tabs/newlines, keeping internal spaces."""
-    if pd.isna(val) or str(val).strip().upper() in ['NAN', 'NA', '']:
+    if pd.isna(val) or str(val).strip().upper() in ['NAN', 'NA', '', 'UNSET']:
         return None
     s = str(val)
     s = re.sub(r'[\t\n\r]', ' ', s) 

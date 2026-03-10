@@ -1,53 +1,281 @@
 {
-  "name": "EDW (Engineering Data Warehouse)",
-  "description": "Prefect 3.0 + PostgreSQL + Neo4j + Qdrant + Ollama",
-  "version": "1.0.0",
-  "systemInstructionFile": ".claude-code-system.md",
-  "projectStructure": {
-    "docker": "docker/",
+  "project_name": "EDW (Engineering Data Warehouse)",
+  "project_type": "ETL/Data Warehousing Platform",
+  "version": "2026-03-09",
+  "description": "Master Data Repository with SCD Type 2 tracking, Prefect orchestration, PostgreSQL backend",
+
+  "stack": {
+    "orchestration": "Prefect 3.0 (async/await)",
+    "database_primary": "PostgreSQL 15+ (async via asyncpg)",
+    "database_graph": "Neo4j 5.x (relationships)",
+    "vector_db": "Qdrant (semantic search)",
+    "cache": "Redis (optional)",
+    "compute": "Python 3.11+, SQLAlchemy 2.x (async ORM), Pandas",
+    "local_llm": "Ollama (embeddings via RTX 3090)",
+    "ci_cd": "GitHub Actions, pre-commit hooks"
+  },
+
+  "hardware": {
+    "cpu": "AMD Ryzen 7 7700 (8-core)",
+    "gpu": "NVIDIA RTX 3090 (24GB VRAM)",
+    "ram": "32GB+ recommended",
+    "notes": "GPU used for Ollama embeddings, batch processing optimization"
+  },
+
+  "core_schemas": [
+    {
+      "name": "project_core",
+      "purpose": "Main data warehouse tables",
+      "tables": [
+        "tag (master tags with SCD Type 2)",
+        "tag_history (audit trail for SCD2)",
+        "document (MDR - Master Data Repository)",
+        "document_history (audit trail)",
+        "property_value (property tracking)",
+        "property_value_history (audit trail)"
+      ]
+    },
+    {
+      "name": "ontology_core",
+      "purpose": "Reference/lookup tables",
+      "tables": [
+        "classification (tag classifications)",
+        "unit (measurement units)",
+        "company (source systems)"
+      ]
+    },
+    {
+      "name": "mapping",
+      "purpose": "Source system mappings",
+      "tables": [
+        "tag_source_mapping (code translations)"
+      ]
+    },
+    {
+      "name": "audit_core",
+      "purpose": "Audit and compliance logging",
+      "tables": [
+        "log_entry (operation logs)",
+        "error_log (error tracking)"
+      ]
+    }
+  ],
+
+  "flows": [
+    {
+      "name": "main_sync",
+      "path": "etl/flows/main_sync.py",
+      "purpose": "Master orchestration: MDR → MTR → Properties sync",
+      "schedule": "Daily at 02:00 UTC",
+      "tasks": ["sync_doc", "sync_tag", "sync_prop"]
+    },
+    {
+      "name": "backfill",
+      "path": "etl/flows/backfill.py",
+      "purpose": "Historical data backfill for new tables",
+      "triggers": "Manual or on schema change"
+    },
+    {
+      "name": "ai_ingest",
+      "path": "etl/flows/ai_ingest.py",
+      "purpose": "Load processed data to Qdrant (vector) + Neo4j (graph)",
+      "triggers": "After main_sync completes"
+    }
+  ],
+
+  "tasks": [
+    {
+      "name": "sync_doc",
+      "file": "etl/tasks/sync_doc.py",
+      "purpose": "MDR (Master Data Repository) synchronization",
+      "pattern": "Extract CSV → Transform → Upsert to document table"
+    },
+    {
+      "name": "sync_tag",
+      "file": "etl/tasks/sync_tag.py",
+      "purpose": "MTR (Master Tag Repository) with SCD Type 2",
+      "pattern": "CSV → Hash comparison → MERGE upsert → Log to tag_history"
+    },
+    {
+      "name": "sync_prop",
+      "file": "etl/tasks/sync_prop.py",
+      "purpose": "Property values synchronization",
+      "pattern": "Link tags to properties → Version tracking"
+    },
+    {
+      "name": "common",
+      "file": "etl/tasks/common.py",
+      "purpose": "Shared utilities: config loading, DB connections, hashing, FK resolution"
+    }
+  ],
+
+  "critical_patterns": {
+    "scd_type_2": {
+      "rule": "ALWAYS detect changes via MD5/SHA256 hash before UPSERT",
+      "implementation": "Compare row_hash, log old/new values to {table}_history",
+      "status_values": ["NEW", "UPDATED", "DELETED"],
+      "audit_fields": ["id", "tag_id", "status", "old_values (JSONB)", "new_values (JSONB)", "changed_at"]
+    },
+    "foreign_key_resolution": {
+      "rule": "Safe FK lookup with fallback",
+      "pattern": "lookup.get(code) or None",
+      "on_missing": "Log warning, preserve original in _raw_{column} column",
+      "never_auto_create": "Reference data (Companies, Classifications, Units) must be pre-loaded"
+    },
+    "csv_loading": {
+      "dtype": "str (preserve all values as strings)",
+      "na_filter": false,
+      "symlink_path": "Use data/current/ and data/_history/ symlinks",
+      "null_handling": "Convert empty strings and NaT to Python None BEFORE DB insert",
+      "example": "pd.read_csv(path, dtype=str, na_filter=False).where(pd.notna(...), None)"
+    },
+    "audit_logging": {
+      "requirement": "ALWAYS insert to audit_core.log_entry",
+      "fields": ["operation (SYNC_TAGS, SYNC_DOC)", "table_name", "rows_affected", "success (bool)", "error_message", "logged_at"],
+      "timing": "After ETL completion or on error"
+    },
+    "async_patterns": {
+      "engine": "AsyncEngine (create_async_engine)",
+      "session": "AsyncSession with session.begin() for atomic transactions",
+      "queries": "Use await on all execute() calls",
+      "batch_size": "500+ rows per transaction for performance"
+    }
+  },
+
+  "directory_structure": {
+    "docker": "Infrastructure: docker-compose.yml, .env (not committed)",
     "sql": {
-      "schema": "sql/schema/",
-      "views": "sql/views/",
-      "migrations": "sql/migrations/"
+      "schema": "Table definitions (project_core, ontology_core, etc)",
+      "views": "Analytical views (read-only)",
+      "migrations": "Versioned schema changes (001_*, 002_*)"
     },
     "etl": {
-      "flows": "etl/flows/",
-      "tasks": "etl/tasks/",
-      "requirements": "etl/requirements.txt"
+      "flows": "High-level Prefect orchestration",
+      "tasks": "Atomic, reusable Prefect tasks",
+      "requirements.txt": "Python dependencies (Prefect, SQLAlchemy, Pandas)"
     },
     "ai": {
-      "prompts": "ai/prompts/",
-      "graph_queries": "ai/graph_queries/",
-      "vector_ops": "ai/vector_ops/"
+      "prompts": "Ollama/LLM templates for enrichment",
+      "graph_queries": "Cypher for Neo4j",
+      "vector_ops": "Qdrant collection configurations"
     },
-    "config": "config/",
-    "logs": "logs/",
-    "data": "data/",
-    "vscode": ".vscode/"
+    "config": "settings.yaml (paths, database URLs, mappings)",
+    "logs": "Local debug logs (development only)",
+    "data": "Symlinks to /mnt/shared-data/ (not in Git)"
   },
-  "codestandards": {
+
+  "code_standards": {
     "language": "Python 3.11+",
-    "framework": "Prefect 3.0",
-    "orm": "SQLAlchemy 2.x",
-    "databases": ["PostgreSQL", "Neo4j"],
-    "vectorDB": "Qdrant",
-    "localLLM": "Ollama",
-    "typeHints": "mandatory",
-    "docstringStyle": "Google",
-    "asyncRequired": true
+    "docstring_style": "Google (PEP 257)",
+    "type_hints": "Mandatory (mypy --strict ready)",
+    "comments": "WHY not WHAT (explain intent, business logic, workarounds)",
+    "sql_format": "ANSI SQL, lowercase keywords, sqlfluff-compatible",
+    "linting": ["black (formatter)", "ruff (linter)", "mypy (type checker)", "pydocstyle", "sqlfluff"],
+    "testing": "pytest with asyncio support"
   },
-  "rules": {
-    "sqlSchemaPrefix": true,
-    "scdType2Tracking": true,
-    "hashComparison": true,
-    "asyncOnly": true,
-    "noHardcodedSecrets": true,
-    "configFromYAML": true,
-    "symlinksForData": true
+
+  "related_files": [
+    {
+      "name": "CLAUDE.md",
+      "location": "edw/CLAUDE.md",
+      "purpose": "Project-specific Claude Code instructions (language, code standards, EDW rules)"
+    },
+    {
+      "name": "schema.sql",
+      "location": "sql/schema/project_core.sql",
+      "purpose": "All table definitions with comments"
+    },
+    {
+      "name": "logic-manifesto.md",
+      "location": "edw/logic-manifesto.md",
+      "purpose": "Business rules, SCD2 logic, data quality standards"
+    },
+    {
+      "name": "environment-setup.md",
+      "location": "edw/environment-setup.md",
+      "purpose": "Infrastructure setup, Docker, hardware config"
+    }
+  ],
+
+  "skills_to_create": [
+    {
+      "name": "SCD2 Expert",
+      "file": ".claude/skills/scd2.md",
+      "purpose": "SCD Type 2 patterns for tag_sync and document_sync"
+    },
+    {
+      "name": "EDW Schemas",
+      "file": ".claude/skills/edw_schemas.md",
+      "purpose": "Quick reference for all tables, relationships, PK/FK"
+    },
+    {
+      "name": "Prefect ETL Flows",
+      "file": ".claude/skills/prefect_flows.md",
+      "purpose": "Prefect 3.0 async patterns for orchestration"
+    },
+    {
+      "name": "EDW FK Resolution",
+      "file": ".claude/skills/fk_resolution.md",
+      "purpose": "Safe foreign key lookup with _raw fallback"
+    },
+    {
+      "name": "Proxmox GPU Setup",
+      "file": ".claude/skills/proxmox_gpu.md",
+      "purpose": "GPU passthrough for Ollama embeddings"
+    }
+  ],
+
+  "mcp_tools_to_integrate": [
+    {
+      "name": "Proxmox API",
+      "type": "VM/Infrastructure management",
+      "endpoint": "http://proxmox1.local:8006/api2/json",
+      "use_cases": ["Check VM resources", "Monitor GPU utilization"]
+    },
+    {
+      "name": "PostgreSQL",
+      "type": "Direct database queries",
+      "endpoint": "postgresql://user:pass@localhost:5432/edw",
+      "use_cases": ["Count rows in tables", "Check recent changes"]
+    },
+    {
+      "name": "Qdrant",
+      "type": "Vector database RAG",
+      "endpoint": "http://localhost:6333",
+      "use_cases": ["Search schema definitions", "Find similar SQL queries"]
+    },
+    {
+      "name": "GitHub",
+      "type": "Codebase search",
+      "repo": "your-org/edw",
+      "use_cases": ["Find all usages of sync_tag", "View commit history"]
+    },
+    {
+      "name": "Perplexity",
+      "type": "Research/fact-checking",
+      "use_cases": ["Latest Proxmox features", "PostgreSQL optimizations", "Prefect updates"]
+    }
+  ],
+
+  "performance_notes": {
+    "batch_size": "500-1000 rows per transaction (tunable for RTX 3090)",
+    "hash_algorithm": "MD5 for tag_history (faster), SHA256 for critical FK lookups",
+    "index_strategy": "Partial indexes on frequently queried columns (tag_parent_id, changed_at >90d)",
+    "gpu_usage": "Ollama embeddings via Qdrant (batch 100+ docs for efficiency)"
   },
-  "infrastructure": {
-    "configFile": "docker/docker-compose.yml",
-    "envFile": "docker/.env",
-    "envExample": "docker/.env.example"
+
+  "constraints": {
+    "no_hardcoded_secrets": "Use .env files, environment variables",
+    "no_auto_reference_creation": "FK targets (Company, Classification, Unit) must exist before sync",
+    "no_sync_parallelization": "SCD2 audit trail requires sequential processing",
+    "no_raw_sql": "Use SQLAlchemy ORM unless unavoidable (complex CTEs)"
+  },
+
+  "metadata": {
+    "created": "2026-03-01",
+    "updated": "2026-03-09",
+    "maintainers": ["EDW Team"],
+    "slack_channel": "#edw-dev",
+    "confluence": "https://wiki.company.local/edw"
   }
 }

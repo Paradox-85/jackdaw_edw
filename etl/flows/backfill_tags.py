@@ -37,26 +37,29 @@ def get_sorted_history():
     return sorted(history, key=lambda x: x['date'])
 
 
-def get_monthly_sample(all_files):
-    """Select representative files: always first & last, plus first file of each month in between."""
+def get_quarterly_sample(all_files):
+    """Select representative files: always first & last, plus first file of each quarter in between.
+
+    Quarter mapping: Q1=Jan-Mar, Q2=Apr-Jun, Q3=Jul-Sep, Q4=Oct-Dec.
+    """
     if len(all_files) <= 2:
         return all_files
 
     first = all_files[0]
     last = all_files[-1]
 
-    seen_months = set()
-    monthly_firsts = []
+    seen_quarters = set()
+    quarterly_firsts = []
     for f in all_files[1:-1]:
-        key = (f['date'].year, f['date'].month)
-        if key not in seen_months:
-            seen_months.add(key)
-            monthly_firsts.append(f)
+        q = (f['date'].month - 1) // 3 + 1  # 1..4
+        key = (f['date'].year, q)
+        if key not in seen_quarters:
+            seen_quarters.add(key)
+            quarterly_firsts.append(f)
 
-    # Combine and deduplicate (first/last may fall in same month as a middle file)
     seen_paths = set()
     result = []
-    for f in [first] + monthly_firsts + [last]:
+    for f in [first] + quarterly_firsts + [last]:
         if f['path'] not in seen_paths:
             seen_paths.add(f['path'])
             result.append(f)
@@ -72,11 +75,11 @@ def tag_backfill_flow(debug_mode: bool = True):
         return
 
     # Determine files to process
-    targets = [all_files[0], all_files[-1]] if debug_mode and len(all_files) > 1 else get_monthly_sample(all_files)
+    targets = [all_files[0], all_files[-1]] if debug_mode and len(all_files) > 1 else get_quarterly_sample(all_files)
     total = len(targets)
 
     logger.info(f"STARTING BACKFILL: Mode={'DEBUG' if debug_mode else 'FULL'}")
-    logger.info(f"Total snapshots to replay: {total} (monthly sample from {len(all_files)} available files)")
+    logger.info(f"Total snapshots to replay: {total} (quarterly sample from {len(all_files)} available files)")
 
     # PHASE 1: Sequential Data Sync (UPSERT only)
     for index, f_info in enumerate(targets, 1):
