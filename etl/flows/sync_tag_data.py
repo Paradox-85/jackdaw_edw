@@ -108,6 +108,14 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                 area_id = get_ref_id(conn, 'reference_core', 'area', row.get('AREA_CODE'), logger)
                 disc_id = get_ref_id(conn, 'reference_core', 'discipline', row.get('DISCIPLINE_CODE'), logger)
 
+                # Derive plant_id via area.plant_id — tag has no direct plant column in source
+                plant_id = None
+                if area_id:
+                    plant_id = conn.execute(
+                        text("SELECT plant_id FROM reference_core.area WHERE id = :aid"),
+                        {"aid": area_id}
+                    ).scalar()
+
                 params = {
                     "tn": tn, "sid": sid, "h": curr_hash, "ts": sync_time,
                     "t_stat": clean_string(row.get('TAG_STATUS')),
@@ -138,13 +146,19 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                     "mc_pkg": clean_string(row.get('MC_PACKAGE_CODE')),
                     "from_tag_raw": clean_string(row.get('FROM_TAG')),
                     "to_tag_raw": clean_string(row.get('TO_TAG')),
+                    # Export-facing fields for EIS Tag Register (seq 003)
+                    "plt_id":  plant_id,
+                    "sci":     clean_string(row.get('SAFETY_CRITICAL_ITEM')),
+                    "sci_rea": clean_string(row.get('SAFETY_CRITICAL_ITEM _REASON_AWARDED')),
+                    "pci":     clean_string(row.get('PRODUCTION_CRITICAL_ITEM')),
                 }
 
                 _SNAPSHOT_KEYS = {
                     "t_stat", "cls_raw", "art_raw", "dco_raw", "area_raw", "unit_raw",
                     "disc_raw", "po_raw", "sn", "tid", "als", "dsc", "inst", "start",
                     "warn", "prc", "m_raw", "mfr_raw", "v_raw", "prnt_raw",
-                    "ex_cls", "ip_gr", "mc_pkg", "from_tag_raw", "to_tag_raw"
+                    "ex_cls", "ip_gr", "mc_pkg", "from_tag_raw", "to_tag_raw",
+                    "sci", "sci_rea", "pci",
                 }
                 snapshot = json.dumps({k: str(v) for k, v in params.items() if k in _SNAPSHOT_KEYS and v is not None})
 
@@ -190,13 +204,15 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                             startup_date, warranty_end_date, price, model_part_raw,
                             manufacturer_company_raw, vendor_company_raw, class_id, parent_tag_raw,
                             po_id, process_unit_id, area_id, discipline_id, article_id, design_company_id, project_id, object_status,
-                            ex_class, ip_grade, mc_package_code, from_tag_raw, to_tag_raw
+                            ex_class, ip_grade, mc_package_code, from_tag_raw, to_tag_raw,
+                            plant_id, safety_critical_item, safety_critical_item_reason_awarded, production_critical_item
                         ) VALUES (
                             :tn, :sid, :h, :t_stat, 'New', :ts,
                             :cls_raw, :art_raw, :dco_raw, :area_raw, :unit_raw, :disc_raw, :po_raw, :eq, :mfr,
                             :vnd, :mod, :sn, :tid, :als, :dsc, :inst, :start, :warn, :prc, :m_raw,
                             :mfr_raw, :v_raw, :cls_id, :prnt_raw, :po_id, :u_id, :a_id, :d_id, :art_id, :dco_id, :prj_id, 'Active',
-                            :ex_cls, :ip_gr, :mc_pkg, :from_tag_raw, :to_tag_raw
+                            :ex_cls, :ip_gr, :mc_pkg, :from_tag_raw, :to_tag_raw,
+                            :plt_id, :sci, :sci_rea, :pci
                         ) RETURNING id
                     """), params).scalar()
                     history_to_insert.append({"tid": tag_uuid, "tn": tn, "sid": sid,
@@ -248,7 +264,9 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                     class_id=:cls_id, po_id=:po_id, process_unit_id=:u_id, area_id=:a_id, parent_tag_raw=:prnt_raw,
                     discipline_id=:d_id, article_id=:art_id, design_company_id=:dco_id, project_id=:prj_id, object_status='Active',
                     ex_class=:ex_cls, ip_grade=:ip_gr, mc_package_code=:mc_pkg,
-                    from_tag_raw=:from_tag_raw, to_tag_raw=:to_tag_raw
+                    from_tag_raw=:from_tag_raw, to_tag_raw=:to_tag_raw,
+                    plant_id=:plt_id, safety_critical_item=:sci,
+                    safety_critical_item_reason_awarded=:sci_rea, production_critical_item=:pci
                 WHERE id=:id
             """), tags_to_update)
 

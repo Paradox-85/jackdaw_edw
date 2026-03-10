@@ -118,4 +118,4 @@ def tag_backfill_flow(debug_mode: bool = True):
 
 if __name__ == "__main__":
     # Start with debug_mode=True to test the first and last files
-    tag_backfill_flow(debug_mode=False)
+    tag_backfill_flow(debug_mode=True)

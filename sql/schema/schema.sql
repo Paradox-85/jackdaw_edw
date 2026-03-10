@@ -290,6 +290,11 @@ CREATE TABLE "project_core"."tag" (
   "to_tag_raw"      TEXT NULL,
   "from_tag_id"     UUID NULL,
   "to_tag_id"       UUID NULL,
+  -- Export-facing columns added by migration_001 (2026-03-10)
+  "plant_id"        UUID NULL,
+  "safety_critical_item"                TEXT NULL,
+  "safety_critical_item_reason_awarded" TEXT NULL,
+  "production_critical_item"            TEXT NULL,
   CONSTRAINT "tag_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "uq_source_id" UNIQUE ("source_id")
 );
@@ -398,6 +403,8 @@ ALTER TABLE "reference_core"."area" ADD CONSTRAINT "area_plant_id_fkey" FOREIGN 
 ALTER TABLE "reference_core"."process_unit" ADD CONSTRAINT "process_unit_plant_id_fkey" FOREIGN KEY ("plant_id") REFERENCES "reference_core"."plant" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
 ALTER TABLE "reference_core"."model_part" ADD CONSTRAINT "model_part_manuf_id_fkey" FOREIGN KEY ("manufacturer_id") REFERENCES "reference_core"."company" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
 ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_parent_tag_id_fkey" FOREIGN KEY ("parent_tag_id") REFERENCES "project_core"."tag" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
+ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_plant_id_fkey" FOREIGN KEY ("plant_id") REFERENCES "reference_core"."plant" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
+CREATE INDEX "idx_tag_plant_id" ON "project_core"."tag" ("plant_id") WHERE "plant_id" IS NOT NULL;
 ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_from_tag_id_fkey" FOREIGN KEY ("from_tag_id") REFERENCES "project_core"."tag" ("id") ON DELETE SET NULL ON UPDATE NO ACTION;
 ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_to_tag_id_fkey" FOREIGN KEY ("to_tag_id") REFERENCES "project_core"."tag" ("id") ON DELETE SET NULL ON UPDATE NO ACTION;
 ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_class_id_fkey" FOREIGN KEY ("class_id") REFERENCES "ontology_core"."class" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
