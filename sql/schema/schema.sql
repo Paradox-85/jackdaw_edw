@@ -292,6 +292,7 @@ CREATE TABLE "project_core"."tag" (
   "to_tag_id"       UUID NULL,
   -- Export-facing columns added by migration_001 (2026-03-10)
   "plant_id"        UUID NULL,
+  "plant_raw" TEXT NULL,
   "safety_critical_item"                TEXT NULL,
   "safety_critical_item_reason_awarded" TEXT NULL,
   "production_critical_item"            TEXT NULL,

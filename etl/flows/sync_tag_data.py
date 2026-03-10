@@ -99,6 +99,7 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                 design_co_id = company_lookup.get(normalize_to_id_code(design_co_raw_val))
                 
                 project_id = project_lookup.get('JDAW')
+                plant_id = get_ref_id(conn, 'reference_core', 'plant', row.get('PLANT_CODE'), logger)
                 article_id = article_lookup.get(clean_string(row.get('ARTICLE_CODE')))
                 model_id = get_model_id(conn, row.get('MODEL_PART_NAME'), row.get('MANUFACTURER_COMPANY_NAME'), logger)
                 
@@ -108,14 +109,6 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                 area_id = get_ref_id(conn, 'reference_core', 'area', row.get('AREA_CODE'), logger)
                 disc_id = get_ref_id(conn, 'reference_core', 'discipline', row.get('DISCIPLINE_CODE'), logger)
 
-                # Derive plant_id via area.plant_id — tag has no direct plant column in source
-                plant_id = None
-                if area_id:
-                    plant_id = conn.execute(
-                        text("SELECT plant_id FROM reference_core.area WHERE id = :aid"),
-                        {"aid": area_id}
-                    ).scalar()
-
                 params = {
                     "tn": tn, "sid": sid, "h": curr_hash, "ts": sync_time,
                     "t_stat": clean_string(row.get('TAG_STATUS')),
@@ -124,6 +117,7 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                     "dco_raw": design_co_raw_val,
                     "area_raw": clean_string(row.get('AREA_CODE')),
                     "unit_raw": clean_string(row.get('PROCESS_UNIT_CODE')),
+                    "plt_raw": clean_string(row.get('PLANT_CODE')),
                     "disc_raw": clean_string(row.get('DISCIPLINE_CODE')),
                     "po_raw": clean_string(row.get('PO_CODE')),
                     "eq": f"Equip_{tn}", "mfr": mfr_id, "vnd": vendor_id, "mod": model_id,
@@ -154,7 +148,7 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                 }
 
                 _SNAPSHOT_KEYS = {
-                    "t_stat", "cls_raw", "art_raw", "dco_raw", "area_raw", "unit_raw",
+                    "t_stat", "cls_raw", "art_raw", "dco_raw", "area_raw", "unit_raw", "plt_raw",
                     "disc_raw", "po_raw", "sn", "tid", "als", "dsc", "inst", "start",
                     "warn", "prc", "m_raw", "mfr_raw", "v_raw", "prnt_raw",
                     "ex_cls", "ip_gr", "mc_pkg", "from_tag_raw", "to_tag_raw",
@@ -199,7 +193,7 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                         INSERT INTO project_core.tag (
                             tag_name, source_id, row_hash, tag_status, sync_status, sync_timestamp,
                             tag_class_raw, article_code_raw, design_company_name_raw, area_code_raw,
-                            process_unit_raw, discipline_code_raw, po_code_raw, equip_no, manufacturer_id,
+                            process_unit_raw, plant_raw, discipline_code_raw, po_code_raw, equip_no, manufacturer_id,
                             vendor_id, model_id, serial_no, tech_id, alias, description, install_date,
                             startup_date, warranty_end_date, price, model_part_raw,
                             manufacturer_company_raw, vendor_company_raw, class_id, parent_tag_raw,
@@ -208,7 +202,7 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                             plant_id, safety_critical_item, safety_critical_item_reason_awarded, production_critical_item
                         ) VALUES (
                             :tn, :sid, :h, :t_stat, 'New', :ts,
-                            :cls_raw, :art_raw, :dco_raw, :area_raw, :unit_raw, :disc_raw, :po_raw, :eq, :mfr,
+                            :cls_raw, :art_raw, :dco_raw, :area_raw, :unit_raw, :plt_raw, :disc_raw, :po_raw, :eq, :mfr,
                             :vnd, :mod, :sn, :tid, :als, :dsc, :inst, :start, :warn, :prc, :m_raw,
                             :mfr_raw, :v_raw, :cls_id, :prnt_raw, :po_id, :u_id, :a_id, :d_id, :art_id, :dco_id, :prj_id, 'Active',
                             :ex_cls, :ip_gr, :mc_pkg, :from_tag_raw, :to_tag_raw,
@@ -256,7 +250,7 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                 UPDATE project_core.tag SET
                     tag_name=:tn, tag_status=:t_stat, row_hash=:h, sync_status=:sub_status, sync_timestamp=:ts,
                     tag_class_raw=:cls_raw, article_code_raw=:art_raw, design_company_name_raw=:dco_raw,
-                    area_code_raw=:area_raw, process_unit_raw=:unit_raw, discipline_code_raw=:disc_raw,
+                    area_code_raw=:area_raw, process_unit_raw=:unit_raw, plant_raw=:plt_raw, discipline_code_raw=:disc_raw,
                     po_code_raw=:po_raw, equip_no=:eq, manufacturer_id=:mfr, vendor_id=:vnd,
                     model_id=:mod, serial_no=:sn, tech_id=:tid, alias=:als, description=:dsc,
                     install_date=:inst, startup_date=:start, warranty_end_date=:warn, price=:prc,

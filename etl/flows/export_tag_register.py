@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 from prefect import flow, task, get_run_logger
+from prefect.cache_policies import NO_CACHE
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
@@ -19,6 +20,11 @@ if str(script_root) not in sys.path:
 
 from tasks.common import load_config, get_db_engine_url
 from tasks.export_transforms import transform_tag_register, write_csv
+
+# Module-level config — same pattern as sync_tag_data.py and other flows
+config = load_config()
+DB_URL = get_db_engine_url(config)
+_EXPORT_DIR = config.get("storage", {}).get("export_dir", ".")
 
 # ---------------------------------------------------------------------------
 # SQL: Extract active tags with all resolved FK references
@@ -40,10 +46,10 @@ SELECT
     u.code                                      AS PROCESS_UNIT_CODE,
     c.name                                      AS TAG_CLASS_NAME,
     t.tag_status                                AS TAG_STATUS,
-    po.code                                     AS REQUISITION_CODE,
+    COALESCE(art.name, art.code)                AS REQUISITION_CODE,
     dco.name                                    AS DESIGNED_BY_COMPANY_NAME,
-    dco.name                                    AS COMPANY_NAME,
-    po.code                                     AS PO_CODE,
+    COALESCE(ico.name, '')                      AS COMPANY_NAME,
+    COALESCE(po.name, po.code)                  AS PO_CODE,
     t.production_critical_item                  AS PRODUCTION_CRITICAL_ITEM,
     t.safety_critical_item                      AS SAFETY_CRITICAL_ITEM,
     -- Why correlated subquery: one tag may have multiple active SECE mappings
@@ -68,6 +74,8 @@ LEFT JOIN ontology_core.class           c   ON c.id   = t.class_id
 LEFT JOIN project_core.tag              pt  ON pt.id  = t.parent_tag_id
 LEFT JOIN reference_core.company        dco ON dco.id = t.design_company_id
 LEFT JOIN reference_core.purchase_order po  ON po.id  = t.po_id
+LEFT JOIN reference_core.article        art ON art.id = t.article_id
+LEFT JOIN reference_core.company        ico ON ico.id = po.issuer_id
 WHERE t.object_status = 'Active'
 ORDER BY pl.code, t.tag_name
 """
@@ -79,7 +87,7 @@ _FILE_TEMPLATE = "JDAW-KVE-E-JA-6944-00001-003-{revision}.CSV"
 # Prefect tasks
 # ---------------------------------------------------------------------------
 
-@task(name="extract-tag-register", retries=1)
+@task(name="extract-tag-register", retries=1, cache_policy=NO_CACHE)
 def extract_tag_register(engine: Engine) -> pd.DataFrame:
     """
     Run the Tag Register SQL query and return a raw DataFrame.
@@ -132,7 +140,6 @@ def _log_audit_end(engine: Engine, run_id: str, row_count: int) -> None:
 def export_tag_register_flow(
     doc_revision: str = "A35",
     output_dir: str | None = None,
-    config_path: str = "config/db_config.yaml",
 ) -> dict[str, int]:
     """
     Export Master Tag Register to EIS CSV snapshot (seq 003).
@@ -145,7 +152,6 @@ def export_tag_register_flow(
     Args:
         doc_revision: EIS revision code (e.g. "A35"). Must match [A-Z]\\d{2}.
         output_dir: Destination directory. Defaults to config storage.export_dir.
-        config_path: Path to db_config.yaml (relative to working directory).
 
     Returns:
         dict with key "exported" = number of rows written to CSV.
@@ -165,10 +171,8 @@ def export_tag_register_flow(
             f"doc_revision '{doc_revision}' is invalid. Expected format: [A-Z]\\d{{2}} (e.g. 'A35')."
         )
 
-    config = load_config(config_path)
-    engine = create_engine(get_db_engine_url(config))
-
-    resolved_dir = output_dir or config.get("storage", {}).get("export_dir", ".")
+    engine = create_engine(DB_URL)
+    resolved_dir = output_dir or _EXPORT_DIR
     output_path = Path(resolved_dir) / _FILE_TEMPLATE.format(revision=doc_revision)
 
     run_id = str(uuid.uuid4())

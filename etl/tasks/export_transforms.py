@@ -178,20 +178,28 @@ def transform_tag_register(df: pd.DataFrame) -> pd.DataFrame:
         >>> list(result.columns)[:3]
         ['PLANT_CODE', 'TAG_NAME', 'PARENT_TAG_NAME']
     """
-    # Second-level defence: only Active records exported
-    df = df[df["object_status"] == "Active"].copy()
+    # PostgreSQL returns unquoted aliases in lowercase; normalise to UPPER for EIS columns
+    df = df.copy()
+    df.columns = df.columns.str.upper()
 
-    # Rename sync control columns to EIS output names
-    df = df.rename(columns={"sync_status": "ACTION_STATUS"})
+    # Second-level defence: only Active records exported
+    df = df[df["OBJECT_STATUS"] == "Active"]
+
+    # ACTION_STATUS: Void tag_status always maps to Deleted regardless of sync_status
+    df["ACTION_STATUS"] = df.apply(
+        lambda row: "Deleted" if row.get("TAG_STATUS") == "Void" else row.get("SYNC_STATUS", ""),
+        axis=1,
+    )
+    df = df.drop(columns=["SYNC_STATUS"], errors="ignore")
 
     # Convert timestamp to date-only string for EIS format
-    df["ACTION_DATE"] = pd.to_datetime(df["sync_timestamp"], errors="coerce").dt.strftime("%Y-%m-%d")
+    df["ACTION_DATE"] = pd.to_datetime(df["SYNC_TIMESTAMP"], errors="coerce").dt.strftime("%d.%m.%Y")
 
     # Normalise PARENT_TAG_NAME: literal 'unset' → empty string
     df["PARENT_TAG_NAME"] = df["PARENT_TAG_NAME"].replace("unset", "")
 
     # Drop internal columns not exported to EIS
-    df = df.drop(columns=["object_status", "sync_timestamp"], errors="ignore")
+    df = df.drop(columns=["OBJECT_STATUS", "SYNC_TIMESTAMP"], errors="ignore")
 
     # Reorder to strict EIS column sequence
     available = [c for c in _TAG_REGISTER_COLUMNS if c in df.columns]
