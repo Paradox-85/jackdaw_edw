@@ -16,20 +16,13 @@ if str(script_root) not in sys.path:
 
 from tasks.common import (
     load_config, get_db_engine_url, calculate_row_hash,
-    clean_string, normalize_to_id_code, get_ref_id, to_dt
+    clean_string, normalize_to_id_code, to_dt
 )
 
 config = load_config()
 DB_URL = get_db_engine_url(config)
 FILE_PATH = config.get('storage', {}).get('tag_dataset_file')
 
-def get_model_id(conn, model_name_raw, mfr_name_raw, logger, auto_create=False):
-    """ Finds model_part ID using normalized code. Manual management mode. """
-    model_id_code = normalize_to_id_code(model_name_raw)
-    if not model_id_code: return None
-    res = conn.execute(text("SELECT id FROM reference_core.model_part WHERE code = :code"), {"code": model_id_code}).scalar()
-    if res: return res
-    return None
 
 @task(name="Sync Tags and Mappings (High-Speed Batch Mode)")
 def sync_tags_task(run_id, override_file=None, override_date=None):
@@ -50,6 +43,13 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
         company_lookup = {row[0]: row[1] for row in conn.execute(text("SELECT code, id FROM reference_core.company"))}
         project_lookup = {row[0]: row[1] for row in conn.execute(text("SELECT code, id FROM reference_core.project"))}
         article_lookup = {row[0]: row[1] for row in conn.execute(text("SELECT code, id FROM reference_core.article"))}
+        plant_lookup   = {row[0]: row[1] for row in conn.execute(text("SELECT code, id FROM reference_core.plant"))}
+        class_lookup   = {row[0]: row[1] for row in conn.execute(text("SELECT name, id FROM ontology_core.class"))}
+        po_lookup      = {row[0]: row[1] for row in conn.execute(text("SELECT code, id FROM reference_core.purchase_order"))}
+        unit_lookup    = {row[0]: row[1] for row in conn.execute(text("SELECT code, id FROM reference_core.process_unit"))}
+        area_lookup    = {row[0]: row[1] for row in conn.execute(text("SELECT code, id FROM reference_core.area"))}
+        disc_lookup    = {row[0]: row[1] for row in conn.execute(text("SELECT code, id FROM reference_core.discipline"))}
+        model_lookup   = {row[0]: row[1] for row in conn.execute(text("SELECT code, id FROM reference_core.model_part"))}
         tag_doc_cache = {(row[0], row[1]): (row[2], row[3]) for row in conn.execute(
             text("SELECT tag_id, document_id, id, sync_status FROM mapping.tag_document"))}
         tag_sece_cache = {(row[0], row[1]): (row[2], row[3]) for row in conn.execute(
@@ -92,22 +92,20 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                 tn, sid = clean_string(row['TAG_NAME']), clean_string(row['ID'])
                 curr_hash = calculate_row_hash(row)
                 
-                # Resolve References
-                mfr_id = company_lookup.get(normalize_to_id_code(row.get('MANUFACTURER_COMPANY_NAME')))
-                vendor_id = company_lookup.get(normalize_to_id_code(row.get('VENDOR_COMPANY_NAME')))
+                # Resolve references — all in-memory lookups, zero per-row SQL
                 design_co_raw_val = clean_string(row.get('DESIGNED_BY_COMPANY_NAME'))
-                design_co_id = company_lookup.get(normalize_to_id_code(design_co_raw_val))
-                
-                project_id = project_lookup.get('JDAW')
-                plant_id = get_ref_id(conn, 'reference_core', 'plant', row.get('PLANT_CODE'), logger)
-                article_id = article_lookup.get(clean_string(row.get('ARTICLE_CODE')))
-                model_id = get_model_id(conn, row.get('MODEL_PART_NAME'), row.get('MANUFACTURER_COMPANY_NAME'), logger)
-                
-                class_id = get_ref_id(conn, 'ontology_core', 'class', row.get('TAG_CLASS_NAME'), logger, search_by='name')
-                po_id = get_ref_id(conn, 'reference_core', 'purchase_order', row.get('PO_CODE'), logger, use_normalization=True)
-                unit_id = get_ref_id(conn, 'reference_core', 'process_unit', row.get('PROCESS_UNIT_CODE'), logger)
-                area_id = get_ref_id(conn, 'reference_core', 'area', row.get('AREA_CODE'), logger)
-                disc_id = get_ref_id(conn, 'reference_core', 'discipline', row.get('DISCIPLINE_CODE'), logger)
+                mfr_id        = company_lookup.get(normalize_to_id_code(row.get('MANUFACTURER_COMPANY_NAME')))
+                vendor_id     = company_lookup.get(normalize_to_id_code(row.get('VENDOR_COMPANY_NAME')))
+                design_co_id  = company_lookup.get(normalize_to_id_code(design_co_raw_val))
+                project_id    = project_lookup.get('JDAW')
+                plant_id      = plant_lookup.get(clean_string(row.get('PLANT_CODE')))
+                article_id    = article_lookup.get(normalize_to_id_code(row.get('ARTICLE_CODE')))
+                model_id      = model_lookup.get(normalize_to_id_code(row.get('MODEL_PART_NAME')))
+                class_id      = class_lookup.get(clean_string(row.get('TAG_CLASS_NAME')))
+                po_id         = po_lookup.get(normalize_to_id_code(row.get('PO_CODE')))
+                unit_id       = unit_lookup.get(clean_string(row.get('PROCESS_UNIT_CODE')))
+                area_id       = area_lookup.get(clean_string(row.get('AREA_CODE')))
+                disc_id       = disc_lookup.get(clean_string(row.get('DISCIPLINE_CODE')))
 
                 params = {
                     "tn": tn, "sid": sid, "h": curr_hash, "ts": sync_time,

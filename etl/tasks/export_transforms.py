@@ -186,8 +186,9 @@ def transform_tag_register(df: pd.DataFrame) -> pd.DataFrame:
     df = df[df["OBJECT_STATUS"] == "Active"]
 
     # ACTION_STATUS: Void tag_status always maps to Deleted regardless of sync_status
+    # Case-insensitive check — DB may store 'Void', 'VOID', or 'void' depending on source
     df["ACTION_STATUS"] = df.apply(
-        lambda row: "Deleted" if row.get("TAG_STATUS") == "Void" else row.get("SYNC_STATUS", ""),
+        lambda row: "Deleted" if str(row.get("TAG_STATUS") or "").upper() == "VOID" else row.get("SYNC_STATUS", ""),
         axis=1,
     )
     df = df.drop(columns=["SYNC_STATUS"], errors="ignore")
@@ -203,4 +204,85 @@ def transform_tag_register(df: pd.DataFrame) -> pd.DataFrame:
 
     # Reorder to strict EIS column sequence
     available = [c for c in _TAG_REGISTER_COLUMNS if c in df.columns]
+    return df[available]
+
+
+# ---------------------------------------------------------------------------
+# Equipment Register domain transform (seq 004)
+# ---------------------------------------------------------------------------
+
+_EQUIPMENT_REGISTER_COLUMNS: list[str] = [
+    "EQUIPMENT_NUMBER",
+    "PLANT_CODE",
+    "TAG_NAME",
+    "EQUIPMENT_CLASS_NAME",
+    "MANUFACTURER_COMPANY_NAME",
+    "MODEL_PART_NAME",
+    "MANUFACTURER_SERIAL_NUMBER",
+    "PURCHASE_DATE",
+    "VENDOR_COMPANY_NAME",
+    "INSTALLATION_DATE",
+    "STARTUP_DATE",
+    "PRICE",
+    "WARRANTY_END_DATE",
+    "PART_OF",
+    "TECHIDENTNO",
+    "ALIAS",
+    "EQUIPMENT_DESCRIPTION",
+    "ACTION_STATUS",
+    "ACTION_DATE",
+]
+
+
+def transform_equipment_register(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS Master Equipment Register (seq 004).
+
+    Layers:
+    1. Second-level defence: keep only object_status = 'Active' rows with equip_no set.
+       (SQL WHERE already filters, this guards against any upstream leak.)
+    2. Compute ACTION_STATUS: Void tag → 'Deleted', otherwise sync_status value.
+    3. Convert sync_timestamp → ACTION_DATE (DD.MM.YYYY format).
+    4. Drop internal columns (object_status, tag_status, sync_status, sync_timestamp).
+    5. Reorder columns to EIS-specified output order.
+
+    Args:
+        df: Raw DataFrame from extract_equipment_register SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Raises:
+        KeyError: If mandatory columns are missing from df.
+
+    Example:
+        >>> result = transform_equipment_register(raw_df)
+        >>> list(result.columns)[:3]
+        ['EQUIPMENT_NUMBER', 'PLANT_CODE', 'TAG_NAME']
+    """
+    # PostgreSQL returns unquoted aliases in lowercase; normalise to UPPER for EIS columns
+    df = df.copy()
+    df.columns = df.columns.str.upper()
+
+    # Second-level defence: only Active records with equipment number exported
+    df = df[df["OBJECT_STATUS"] == "Active"]
+    df = df[df["EQUIPMENT_NUMBER"].notna() & (df["EQUIPMENT_NUMBER"] != "")]
+
+    # ACTION_STATUS: Void tag_status always maps to Deleted regardless of sync_status
+    # Case-insensitive check — DB may store 'Void', 'VOID', or 'void' depending on source
+    df["ACTION_STATUS"] = df.apply(
+        lambda row: "Deleted" if str(row.get("TAG_STATUS") or "").upper() == "VOID"
+                    else row.get("SYNC_STATUS", ""),
+        axis=1,
+    )
+    df = df.drop(columns=["SYNC_STATUS"], errors="ignore")
+
+    # Convert timestamp to date-only string for EIS format
+    df["ACTION_DATE"] = pd.to_datetime(df["SYNC_TIMESTAMP"], errors="coerce").dt.strftime("%d.%m.%Y")
+
+    # Drop internal columns not exported to EIS
+    df = df.drop(columns=["OBJECT_STATUS", "SYNC_TIMESTAMP", "TAG_STATUS"], errors="ignore")
+
+    # Reorder to strict EIS column sequence
+    available = [c for c in _EQUIPMENT_REGISTER_COLUMNS if c in df.columns]
     return df[available]
