@@ -1,10 +1,15 @@
-import pandas as pd
-import re
-from sqlalchemy import create_engine, text
-from prefect import flow, task, get_run_logger
-import sys
+"""Prefect flow: seed reference_core layer from Master Reference Data Excel."""
+
 import os
+import re
+import sys
 from pathlib import Path
+
+import pandas as pd
+from prefect import flow, task, get_run_logger
+from prefect.cache_policies import NO_CACHE
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Connection, Engine
 
 # Setup paths
 current_dir = Path(__file__).resolve().parent
@@ -12,171 +17,600 @@ script_root = current_dir.parent
 if str(script_root) not in sys.path:
     sys.path.append(str(script_root))
 
-from tasks.common import load_config, get_db_engine_url
+from tasks.common import (
+    load_config,
+    get_db_engine_url,
+    normalize_to_id_code,
+    parse_bool,
+    get_object_status,
+)
 
-# Load Configuration
+# Load config
 config = load_config()
 DB_URL = get_db_engine_url(config)
-FILE_PATH = config.get('storage', {}).get('master_rdl')
+FILE_PATH = config.get("storage", {}).get("master_reference_file")
 
-def read_sheet_with_header_search(file_path, sheet_name, keyword):
+
+# ---------------------------------------------------------------------------
+# Normalization helpers (module-private)
+# ---------------------------------------------------------------------------
+
+def _nc(val: object) -> str | None:
+    """Strict code normalization: alphanumeric + UPPER (no hyphens or underscores)."""
+    # Delegates to normalize_to_id_code which strips [^A-Z0-9] and converts UPPER
+    if pd.isna(val) or str(val).strip() == "":
+        return None
+    return normalize_to_id_code(str(val))
+
+
+def _nn(val: object) -> str | None:
+    """Light name/text normalize: UPPER + collapse multiple spaces + strip."""
+    if pd.isna(val) or str(val).strip() == "":
+        return None
+    return re.sub(r" {2,}", " ", str(val).upper().strip()) or None
+
+
+def _float(val: object) -> float | None:
+    """Convert to float, return None for blank/non-numeric values."""
+    if pd.isna(val):
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Shared utilities
+# ---------------------------------------------------------------------------
+
+def read_sheet_smart(file_path: str, sheet_name: str, header_keyword: str) -> pd.DataFrame:
     """
-    Finds the header row by searching for a keyword in the sheet.
-    Useful for sheets where tables don't start at the first row.
+    Find the header row by keyword and return a clean DataFrame.
+
+    Scans sheet rows until header_keyword is found, then re-reads with
+    that row as the header — avoids consuming the first data row.
+
+    Args:
+        file_path: Path to the Excel workbook.
+        sheet_name: Name of the target sheet.
+        header_keyword: A cell value expected in the header row.
+
+    Returns:
+        DataFrame with correct header and no empty columns.
+        Empty DataFrame if keyword not found.
+
+    Example:
+        >>> df = read_sheet_smart(path, "site", "code")
     """
-    # Load raw sheet without header to find the keyword
     df_raw = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
     for i, row in df_raw.iterrows():
-        if keyword in row.values:
-            # Re-read the sheet starting from the identified header row
-            df = pd.read_excel(file_path, sheet_name=sheet_name, skiprows=i+1)
-            # Restore the header names found at row i
-            df.columns = df_raw.iloc[i].values
-            # Return cleaned dataframe without empty columns
+        if header_keyword in row.values:
+            df = pd.read_excel(file_path, sheet_name=sheet_name, header=i)
             return df.loc[:, df.columns.notna()].copy()
     return pd.DataFrame()
 
-@task(name="Sync Validation Rules (Regex)")
-def sync_validation_rules():
-    """Parses picklists and generates Regex values (e.g., '(value1|value2)')."""
-    logger = get_run_logger()
-    engine = create_engine(DB_URL)
-    
-    # Sheets for validation rules
-    df_pl = read_sheet_with_header_search(FILE_PATH, 'Property picklist', 'Id')
-    df_vals = read_sheet_with_header_search(FILE_PATH, 'Property picklist value ', 'Picklist ID')
-    
-    count = 0
-    with engine.begin() as conn:
-        for _, pl in df_pl.iterrows():
-            pl_id = str(pl['Id']).strip()
-            # Extract items for this specific picklist
-            items = df_vals[df_vals['Picklist ID'] == pl_id]['Picklist Item Name'].dropna().unique()
-            
-            if len(items) > 0:
-                # Build Regex string: (Item 1|Item 2|Item 3)
-                regex_pattern = f"({'|'.join(map(str, items))})"
-                
-                conn.execute(text("""
-                    INSERT INTO ontology_core.validation_rule (code, name, validation_type, validation_value)
-                    VALUES (:c, :n, 'picklist', :v)
-                    ON CONFLICT (code) DO UPDATE SET validation_value = EXCLUDED.validation_value
-                """), {"c": pl_id, "n": pl['Name'], "v": regex_pattern})
-                count += 1
-    logger.info(f"Synchronized {count} validation rules with generated Regex.")
 
-@task(name="Sync Unified Classes")
-def sync_unified_classes():
-    """Merges Tag (Functional) and Equipment (Physical) classes."""
-    logger = get_run_logger()
-    engine = create_engine(DB_URL)
-    
-    df_tag = read_sheet_with_header_search(FILE_PATH, 'Tag class', 'Tag Class ID')
-    df_eq = read_sheet_with_header_search(FILE_PATH, 'Equipment class', 'Equipment Class ID')
-    
-    # Standardize columns for merging
-    df_tag = df_tag[['Tag Class ID', 'Tag Class Name']].rename(columns={'Tag Class ID': 'code', 'Tag Class Name': 'name'})
-    df_eq = df_eq[['Equipment Class ID', 'Equipment Class Name']].rename(columns={'Equipment Class ID': 'code', 'Equipment Class Name': 'name'})
-    
-    unique_codes = set(df_tag['code'].dropna()) | set(df_eq['code'].dropna())
-    
-    with engine.begin() as conn:
-        for code in unique_codes:
-            is_tag = code in df_tag['code'].values
-            is_eq = code in df_eq['code'].values
-            
-            # Concept Logic: Combined, Functional or Physical
-            concept = "Functional Physical" if (is_tag and is_eq) else ("Functional" if is_tag else "Physical")
-            name = df_tag[df_tag['code'] == code]['name'].iloc[0] if is_tag else df_eq[df_eq['code'] == code]['name'].iloc[0]
+def _get_id_map(conn: Connection, table: str) -> dict[str, str]:
+    """
+    Pre-load {code: id} dict from reference_core.{table} for FK resolution.
 
-            conn.execute(text("""
-                INSERT INTO ontology_core.class (code, name, concept, object_status)
-                VALUES (:c, :n, :cp, 'ACTIVE')
-                ON CONFLICT (code) DO UPDATE SET concept = EXCLUDED.concept
-            """), {"c": str(code).upper(), "n": str(name).upper(), "cp": concept})
-    logger.info("Classes unified and synchronized.")
+    Args:
+        conn: Active SQLAlchemy connection.
+        table: Table name within reference_core schema.
 
-@task(name="Sync UoM and Property Layer")
-def sync_uom_and_properties():
-    """Syncs UoM dimensions and Properties with metadata linking."""
-    logger = get_run_logger()
-    engine = create_engine(DB_URL)
-    
-    df_dim = read_sheet_with_header_search(FILE_PATH, 'Unit of measure dimension', 'Group Dimension')
-    df_uom = read_sheet_with_header_search(FILE_PATH, 'Unit of measure', 'Unique ID')
-    df_prop = read_sheet_with_header_search(FILE_PATH, 'Property', 'Property ID')
-    
-    with engine.begin() as conn:
-        # 1. UoM Groups
-        for _, r in df_dim.iterrows():
-            conn.execute(text("INSERT INTO ontology_core.uom_group (code, name) VALUES (:c, :n) ON CONFLICT (code) DO NOTHING"),
-                         {"c": str(r['Group Dimension']).upper(), "n": r['Dimension Name']})
-        
-        # 2. UoMs
-        for _, r in df_uom.iterrows():
-            conn.execute(text("""
-                INSERT INTO ontology_core.uom (code, name, symbol, uom_group_id)
-                VALUES (:c, :n, :s, (SELECT id FROM ontology_core.uom_group WHERE code = :gc))
-                ON CONFLICT (code) DO NOTHING
-            """), {"c": str(r['Unique ID']).upper(), "n": r['UoM Name'], "s": r['UoM Symbol'], "gc": str(r['UoM Dimension']).upper()})
-            
-        # 3. Properties
-        for _, r in df_prop.iterrows():
-            pl_ref = r['picklist name'] if not pd.isna(r['picklist name']) else None
-            ug_code = str(r['Unit of measure dimension code']).upper() if not pd.isna(r['Unit of measure dimension code']) else None
-            
-            conn.execute(text("""
-                INSERT INTO ontology_core.property (code, name, validation_rule_id, uom_group_id)
-                VALUES (:c, :n, 
-                    (SELECT id FROM ontology_core.validation_rule WHERE code = :vrc),
-                    (SELECT id FROM ontology_core.uom_group WHERE code = :ugc))
-                ON CONFLICT (code) DO UPDATE SET 
-                    validation_rule_id = EXCLUDED.validation_rule_id,
-                    uom_group_id = EXCLUDED.uom_group_id
-            """), {"c": str(r['Property ID']).upper(), "n": str(r['property name']).upper(), "vrc": pl_ref, "ugc": ug_code})
-    logger.info("UoM and Property layer synchronized.")
+    Returns:
+        Dict mapping normalized code to UUID string.
+    """
+    return {
+        row[0]: row[1]
+        for row in conn.execute(text(f"SELECT code, id FROM reference_core.{table}"))
+    }
 
-@task(name="Sync Unified Class-Property Mapping")
-def sync_class_property_matrix():
-    """Merges Tag and Equipment property assignments."""
+
+# ---------------------------------------------------------------------------
+# Prefect tasks — load order follows FK dependency tree
+# ---------------------------------------------------------------------------
+
+@task(name="Seed Root Tables", cache_policy=NO_CACHE)
+def seed_root_tables(engine: Engine) -> None:
+    """
+    Upsert root reference tables (no FK dependencies) from Master Reference Excel.
+
+    Loads five independent tables in one transaction:
+    site, company, sece, discipline, po_package.
+
+    Returns:
+        None. Logs row counts per table.
+    """
     logger = get_run_logger()
-    engine = create_engine(DB_URL)
-    
-    df_tag_map = read_sheet_with_header_search(FILE_PATH, 'Tag class properties', 'Tag class ID')
-    df_eq_map = read_sheet_with_header_search(FILE_PATH, 'Equipment class props', 'Equipment class ID')
-    
-    # Generate unique keys for comparison
-    df_tag_map['key'] = df_tag_map['Tag class ID'].astype(str) + "|" + df_tag_map['Tag Property ID'].astype(str)
-    df_eq_map['key'] = df_eq_map['Equipment class ID'].astype(str) + "|" + df_eq_map['Equipment Property ID'].astype(str)
-    
-    all_keys = set(df_tag_map['key']) | set(df_eq_map['key'])
-    
+    stats: dict[str, int] = {}
+
+    df_site  = read_sheet_smart(FILE_PATH, "site",       "code")
+    df_co    = read_sheet_smart(FILE_PATH, "company",    "code")
+    df_sece  = read_sheet_smart(FILE_PATH, "sece",       "code")
+    df_disc  = read_sheet_smart(FILE_PATH, "discipline", "code")
+    df_pkg   = read_sheet_smart(FILE_PATH, "po_package", "code")
+
     with engine.begin() as conn:
-        for key in all_keys:
-            in_tag = key in df_tag_map['key'].values
-            in_eq = key in df_eq_map['key'].values
-            
-            concept = "Functional Physical" if (in_tag and in_eq) else ("Functional" if in_tag else "Physical")
-            class_code, prop_code = key.split("|")
-            
+        # site
+        count = 0
+        for _, r in df_site.dropna(subset=["code"]).iterrows():
             conn.execute(text("""
-                INSERT INTO ontology_core.class_property (class_id, property_id, mapping_concept)
+                INSERT INTO reference_core.site (code, name, object_status)
+                VALUES (:c, :n, :os)
+                ON CONFLICT (code) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    object_status = EXCLUDED.object_status
+            """), {"c": _nc(r["code"]), "n": _nn(r["name"]),
+                   "os": get_object_status(r.get("object_status"))})
+            count += 1
+        stats["site"] = count
+
+        # company
+        count = 0
+        for _, r in df_co.dropna(subset=["code"]).iterrows():
+            conn.execute(text("""
+                INSERT INTO reference_core.company (
+                    code, name, address, town_city, zip_code, country_code,
+                    phone, email, website, contact_person,
+                    is_manufacturer, is_supplier, object_status
+                )
                 VALUES (
-                    (SELECT id FROM ontology_core.class WHERE code = :cc),
-                    (SELECT id FROM ontology_core.property WHERE code = :pc),
-                    :mc
-                ) ON CONFLICT (class_id, property_id) DO UPDATE SET mapping_concept = EXCLUDED.mapping_concept
-            """), {"cc": class_code.upper(), "pc": prop_code.upper(), "mc": concept})
-    logger.info("Unified Mapping Matrix synchronized.")
+                    :c, :n, :addr, :city, :zip, :ctry,
+                    :ph, :em, :web, :cp,
+                    :is_mfr, :is_sup, :os
+                )
+                ON CONFLICT (code) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    address = EXCLUDED.address,
+                    town_city = EXCLUDED.town_city,
+                    zip_code = EXCLUDED.zip_code,
+                    country_code = EXCLUDED.country_code,
+                    phone = EXCLUDED.phone,
+                    email = EXCLUDED.email,
+                    website = EXCLUDED.website,
+                    contact_person = EXCLUDED.contact_person,
+                    is_manufacturer = EXCLUDED.is_manufacturer,
+                    is_supplier = EXCLUDED.is_supplier,
+                    object_status = EXCLUDED.object_status
+            """), {
+                "c": _nc(r["code"]),
+                "n": _nn(r["name"]),
+                "addr": _nn(r.get("address")),
+                "city": _nn(r.get("town_city")),
+                "zip": _nn(r.get("zip_code")),
+                "ctry": _nn(r.get("country_code")),
+                "ph": _nn(r.get("phone")),
+                "em": _nn(r.get("email")),
+                "web": _nn(r.get("website")),
+                "cp": _nn(r.get("contact_person")),
+                "is_mfr": parse_bool(r.get("is_manufacturer")),
+                "is_sup": parse_bool(r.get("is_supplier")),
+                "os": get_object_status(r.get("object_status")),
+            })
+            count += 1
+        stats["company"] = count
 
-@flow(name="Ontology Master Seed", log_prints=True)
-def ontology_master_flow():
-    """Main Flow for Engineering Ontology Synchronization."""
-    sync_validation_rules()
-    sync_uom_and_properties()
-    sync_unified_classes()
-    sync_class_property_matrix()
+        # sece
+        count = 0
+        for _, r in df_sece.dropna(subset=["code"]).iterrows():
+            conn.execute(text("""
+                INSERT INTO reference_core.sece (code, name, object_status)
+                VALUES (:c, :n, :os)
+                ON CONFLICT (code) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    object_status = EXCLUDED.object_status
+            """), {"c": _nc(r["code"]), "n": _nn(r["name"]),
+                   "os": get_object_status(r.get("object_status"))})
+            count += 1
+        stats["sece"] = count
+
+        # discipline
+        count = 0
+        for _, r in df_disc.dropna(subset=["code"]).iterrows():
+            conn.execute(text("""
+                INSERT INTO reference_core.discipline (code, name, code_internal, object_status)
+                VALUES (:c, :n, :ci, :os)
+                ON CONFLICT (code) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    code_internal = EXCLUDED.code_internal,
+                    object_status = EXCLUDED.object_status
+            """), {"c": _nc(r["code"]), "n": _nn(r["name"]),
+                   "ci": _nn(r.get("code_internal")),
+                   "os": get_object_status(r.get("object_status"))})
+            count += 1
+        stats["discipline"] = count
+
+        # po_package
+        count = 0
+        for _, r in df_pkg.dropna(subset=["code"]).iterrows():
+            conn.execute(text("""
+                INSERT INTO reference_core.po_package (code, name, object_status)
+                VALUES (:c, :n, :os)
+                ON CONFLICT (code) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    object_status = EXCLUDED.object_status
+            """), {"c": _nc(r["code"]), "n": _nn(r["name"]),
+                   "os": get_object_status(r.get("object_status"))})
+            count += 1
+        stats["po_package"] = count
+
+    logger.info(f"Root tables seeded: {stats}")
+
+
+@task(name="Seed Plant and Project", cache_policy=NO_CACHE)
+def seed_plant_project(engine: Engine) -> None:
+    """
+    Upsert plant and project records linked to site via site_code FK.
+
+    Both sheets use 'site_code' column to resolve site_id.
+    Stores site_code_raw for traceability.
+
+    Returns:
+        None. Logs row counts.
+    """
+    logger = get_run_logger()
+
+    df_plant   = read_sheet_smart(FILE_PATH, "plant",   "code")
+    df_project = read_sheet_smart(FILE_PATH, "project", "code")
+
+    with engine.begin() as conn:
+        site_map = _get_id_map(conn, "site")
+
+        # plant
+        plant_count = 0
+        for _, r in df_plant.dropna(subset=["code"]).iterrows():
+            site_code = _nc(r.get("site_code"))
+            conn.execute(text("""
+                INSERT INTO reference_core.plant (code, name, site_id, site_code_raw, object_status)
+                VALUES (:c, :n, :sid, :scr, :os)
+                ON CONFLICT (code) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    site_id = EXCLUDED.site_id,
+                    site_code_raw = EXCLUDED.site_code_raw,
+                    object_status = EXCLUDED.object_status
+            """), {
+                "c": _nc(r["code"]), "n": _nn(r["name"]),
+                "sid": site_map.get(site_code),
+                "scr": site_code,
+                "os": get_object_status(r.get("object_status")),
+            })
+            plant_count += 1
+
+        # project
+        project_count = 0
+        for _, r in df_project.dropna(subset=["code"]).iterrows():
+            site_code = _nc(r.get("site_code"))
+            conn.execute(text("""
+                INSERT INTO reference_core.project (code, name, site_id, site_code_raw, object_status)
+                VALUES (:c, :n, :sid, :scr, :os)
+                ON CONFLICT (code) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    site_id = EXCLUDED.site_id,
+                    site_code_raw = EXCLUDED.site_code_raw,
+                    object_status = EXCLUDED.object_status
+            """), {
+                "c": _nc(r["code"]), "n": _nn(r["name"]),
+                "sid": site_map.get(site_code),
+                "scr": site_code,
+                "os": get_object_status(r.get("object_status")),
+            })
+            project_count += 1
+
+    logger.info(f"Plant seeded: {plant_count}, Project seeded: {project_count}")
+
+
+@task(name="Seed Area and Process Unit", cache_policy=NO_CACHE)
+def seed_area_process_unit(engine: Engine) -> None:
+    """
+    Upsert area and process_unit records linked to plant via plant_code FK.
+
+    Both sheets use 'plant_code' column to resolve plant_id.
+    area additionally stores main_area_code and plant_code_raw.
+
+    Returns:
+        None. Logs row counts.
+    """
+    logger = get_run_logger()
+
+    df_area = read_sheet_smart(FILE_PATH, "area",         "code")
+    df_pu   = read_sheet_smart(FILE_PATH, "process_unit", "code")
+
+    with engine.begin() as conn:
+        plant_map = _get_id_map(conn, "plant")
+
+        # area
+        area_count = 0
+        for _, r in df_area.dropna(subset=["code"]).iterrows():
+            plant_code = _nc(r.get("plant_code"))
+            conn.execute(text("""
+                INSERT INTO reference_core.area (
+                    code, name, plant_id, plant_code_raw, main_area_code, object_status
+                )
+                VALUES (:c, :n, :pid, :pcr, :mac, :os)
+                ON CONFLICT (code) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    plant_id = EXCLUDED.plant_id,
+                    plant_code_raw = EXCLUDED.plant_code_raw,
+                    main_area_code = EXCLUDED.main_area_code,
+                    object_status = EXCLUDED.object_status
+            """), {
+                "c": _nc(r["code"]), "n": _nn(r["name"]),
+                "pid": plant_map.get(plant_code),
+                "pcr": plant_code,
+                "mac": _nc(r.get("main_area_code")),
+                "os": get_object_status(r.get("object_status")),
+            })
+            area_count += 1
+
+        # process_unit
+        pu_count = 0
+        for _, r in df_pu.dropna(subset=["code"]).iterrows():
+            plant_code = _nc(r.get("plant_code"))
+            conn.execute(text("""
+                INSERT INTO reference_core.process_unit (
+                    code, name, plant_id, plant_code_raw, object_status
+                )
+                VALUES (:c, :n, :pid, :pcr, :os)
+                ON CONFLICT (code) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    plant_id = EXCLUDED.plant_id,
+                    plant_code_raw = EXCLUDED.plant_code_raw,
+                    object_status = EXCLUDED.object_status
+            """), {
+                "c": _nc(r["code"]), "n": _nn(r["name"]),
+                "pid": plant_map.get(plant_code),
+                "pcr": plant_code,
+                "os": get_object_status(r.get("object_status")),
+            })
+            pu_count += 1
+
+    logger.info(f"Area seeded: {area_count}, Process unit seeded: {pu_count}")
+
+
+@task(name="Seed Model Part", cache_policy=NO_CACHE)
+def seed_model_part(engine: Engine) -> None:
+    """
+    Upsert model_part records linked to company via manuf_company_raw FK.
+
+    Unique constraint is (manuf_company_raw, code) — not just code alone,
+    since the same part code may exist across different manufacturers.
+
+    Returns:
+        None. Logs row count.
+    """
+    logger = get_run_logger()
+
+    df_mp = read_sheet_smart(FILE_PATH, "model_part", "code")
+
+    with engine.begin() as conn:
+        company_map = _get_id_map(conn, "company")
+
+        count = 0
+        for _, r in df_mp.dropna(subset=["code"]).iterrows():
+            manuf_raw = _nc(r.get("manuf_company_raw"))
+            conn.execute(text("""
+                INSERT INTO reference_core.model_part (
+                    code, name, definition, manufacturer_id, manuf_company_raw, object_status
+                )
+                VALUES (:c, :n, :def, :mid, :mcr, :os)
+                ON CONFLICT (manuf_company_raw, code) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    definition = EXCLUDED.definition,
+                    manufacturer_id = EXCLUDED.manufacturer_id,
+                    object_status = EXCLUDED.object_status
+            """), {
+                "c": _nc(r["code"]),
+                "n": _nn(r["name"]),
+                "def": _nn(r.get("definition")),
+                "mid": company_map.get(manuf_raw),
+                "mcr": manuf_raw,
+                "os": get_object_status(r.get("object_status")),
+            })
+            count += 1
+
+    logger.info(f"Model part seeded: {count}")
+
+
+@task(name="Seed Purchase Order", cache_policy=NO_CACHE)
+def seed_purchase_order(engine: Engine) -> None:
+    """
+    Upsert purchase_order records linked to po_package and company (issuer + receiver).
+
+    Raw FK columns in Excel: package_code_raw, issuer_company_raw, receiver_company_raw.
+    Resolves UUID FKs via pre-loaded po_package and company maps.
+
+    Returns:
+        None. Logs row count.
+    """
+    logger = get_run_logger()
+
+    df_po = read_sheet_smart(FILE_PATH, "purchase_order", "code")
+
+    with engine.begin() as conn:
+        pkg_map     = _get_id_map(conn, "po_package")
+        company_map = _get_id_map(conn, "company")
+
+        count = 0
+        for _, r in df_po.dropna(subset=["code"]).iterrows():
+            pkg_raw      = _nc(r.get("package_code_raw"))
+            issuer_raw   = _nc(r.get("issuer_company_raw"))
+            receiver_raw = _nc(r.get("receiver_company_raw"))
+            conn.execute(text("""
+                INSERT INTO reference_core.purchase_order (
+                    code, name, definition, po_date,
+                    package_id, issuer_id, receiver_id,
+                    package_code_raw, issuer_company_raw, receiver_company_raw,
+                    object_status
+                )
+                VALUES (
+                    :c, :n, :def, :dt,
+                    :pkid, :isid, :rcid,
+                    :pkr, :isr, :rcr,
+                    :os
+                )
+                ON CONFLICT (code) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    definition = EXCLUDED.definition,
+                    po_date = EXCLUDED.po_date,
+                    package_id = EXCLUDED.package_id,
+                    issuer_id = EXCLUDED.issuer_id,
+                    receiver_id = EXCLUDED.receiver_id,
+                    package_code_raw = EXCLUDED.package_code_raw,
+                    issuer_company_raw = EXCLUDED.issuer_company_raw,
+                    receiver_company_raw = EXCLUDED.receiver_company_raw,
+                    object_status = EXCLUDED.object_status
+            """), {
+                "c": _nc(r["code"]),
+                "n": _nn(r["name"]),
+                "def": _nn(r.get("definition")),
+                "dt": _nn(r.get("po_date")),
+                "pkid": pkg_map.get(pkg_raw),
+                "isid": company_map.get(issuer_raw),
+                "rcid": company_map.get(receiver_raw),
+                "pkr": pkg_raw,
+                "isr": issuer_raw,
+                "rcr": receiver_raw,
+                "os": get_object_status(r.get("object_status")),
+            })
+            count += 1
+
+    logger.info(f"Purchase order seeded: {count}")
+
+
+@task(name="Seed Article", cache_policy=NO_CACHE)
+def seed_article(engine: Engine) -> None:
+    """
+    Upsert article records linked to company (manufacturer) and model_part.
+
+    Raw FK columns in Excel: manufacturer_company_name_raw, model_part_code_raw.
+    Numeric fields: cable_cross_sectional_area, cable_outer_diameter (float, nullable).
+
+    Returns:
+        None. Logs row count.
+    """
+    logger = get_run_logger()
+
+    df_art = read_sheet_smart(FILE_PATH, "article", "code")
+
+    with engine.begin() as conn:
+        company_map    = _get_id_map(conn, "company")
+        model_part_map = _get_id_map(conn, "model_part")
+
+        count = 0
+        for _, r in df_art.dropna(subset=["code"]).iterrows():
+            mfr_raw = _nc(r.get("manufacturer_company_name_raw"))
+            mp_raw  = _nc(r.get("model_part_code_raw"))
+            conn.execute(text("""
+                INSERT INTO reference_core.article (
+                    code, name, definition, article_type, basic_construction,
+                    cable_cross_sectional_area, cable_outer_diameter,
+                    commodity_code,
+                    manufacturer_id, manufacturer_el_number, manufacturer_material,
+                    manufacturer_sap_code, product_family,
+                    model_part_id,
+                    manufacturer_company_name_raw, model_part_code_raw,
+                    object_status
+                )
+                VALUES (
+                    :c, :n, :def, :at, :bc,
+                    :ccs, :cod,
+                    :cc,
+                    :mid, :mel, :mmt,
+                    :msc, :pf,
+                    :mpid,
+                    :mcnr, :mpcr,
+                    :os
+                )
+                ON CONFLICT (code) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    definition = EXCLUDED.definition,
+                    article_type = EXCLUDED.article_type,
+                    basic_construction = EXCLUDED.basic_construction,
+                    cable_cross_sectional_area = EXCLUDED.cable_cross_sectional_area,
+                    cable_outer_diameter = EXCLUDED.cable_outer_diameter,
+                    commodity_code = EXCLUDED.commodity_code,
+                    manufacturer_id = EXCLUDED.manufacturer_id,
+                    manufacturer_el_number = EXCLUDED.manufacturer_el_number,
+                    manufacturer_material = EXCLUDED.manufacturer_material,
+                    manufacturer_sap_code = EXCLUDED.manufacturer_sap_code,
+                    product_family = EXCLUDED.product_family,
+                    model_part_id = EXCLUDED.model_part_id,
+                    manufacturer_company_name_raw = EXCLUDED.manufacturer_company_name_raw,
+                    model_part_code_raw = EXCLUDED.model_part_code_raw,
+                    object_status = EXCLUDED.object_status
+            """), {
+                "c": _nc(r["code"]),
+                "n": _nn(r["name"]),
+                "def": _nn(r.get("definition")),
+                "at": _nn(r.get("article_type")),
+                "bc": _nn(r.get("basic_construction")),
+                "ccs": _float(r.get("cable_cross_sectional_area")),
+                "cod": _float(r.get("cable_outer_diameter")),
+                "cc": _nc(r.get("commodity_code")),
+                "mid": company_map.get(mfr_raw),
+                "mel": _nn(r.get("manufacturer_el_number")),
+                "mmt": _nn(r.get("manufacturer_material")),
+                "msc": _nn(r.get("manufacturer_sap_code")),
+                "pf": _nn(r.get("product_family")),
+                "mpid": model_part_map.get(mp_raw),
+                "mcnr": mfr_raw,
+                "mpcr": mp_raw,
+                "os": get_object_status(r.get("object_status")),
+            })
+            count += 1
+
+    logger.info(f"Article seeded: {count}")
+
+
+# ---------------------------------------------------------------------------
+# Prefect flow
+# ---------------------------------------------------------------------------
+
+@flow(name="Reference Data Seed", log_prints=True)
+def seed_reference_flow() -> None:
+    """
+    Full reference_core seed pipeline from Master Reference Data Excel.
+
+    Execution order follows FK dependency tree:
+    1. seed_root_tables     — site, company, sece, discipline, po_package (no FKs)
+    2. seed_plant_project   — plant, project (→ site)
+    3. seed_area_process_unit — area, process_unit (→ plant)
+    4. seed_model_part      — model_part (→ company)
+    5. seed_purchase_order  — purchase_order (→ po_package + company)
+    6. seed_article         — article (→ company + model_part)
+
+    Returns:
+        None.
+
+    Raises:
+        SystemExit: If master_reference_file is not found at configured path.
+
+    Example:
+        >>> seed_reference_flow()
+    """
+    logger = get_run_logger()
+
+    if FILE_PATH is None or not os.path.exists(FILE_PATH):
+        logger.error(f"Master reference file not found at '{FILE_PATH}' — aborting")
+        return
+
+    engine = create_engine(DB_URL)
+
+    seed_root_tables(engine)
+    seed_plant_project(engine)
+    seed_area_process_unit(engine)
+    seed_model_part(engine)
+    seed_purchase_order(engine)
+    seed_article(engine)
+
 
 if __name__ == "__main__":
-    os.chdir(Path(__file__).resolve().parent.parent)
-    ontology_master_flow.serve(name="ontology-seeder")
+    seed_reference_flow.from_source(
+        source="/mnt/shared-data/ram-user/Jackdaw/prefect-worker/scripts",
+        entrypoint="etl/flows/seed_reference.py:seed_reference_flow",
+    ).deploy(
+        name="reference-data-seeder",
+        work_pool_name="default-agent-pool",
+    )

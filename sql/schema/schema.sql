@@ -67,6 +67,7 @@ CREATE TABLE "reference_core"."article" (
   "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
   "code" TEXT NOT NULL,
   "name" TEXT NULL,
+  "definition" TEXT NULL,
   "article_type" TEXT NULL,
   "basic_construction" TEXT NULL,
   "cable_cross_sectional_area" REAL NULL,
@@ -147,7 +148,7 @@ CREATE TABLE "reference_core"."purchase_order" (
   "package_code_raw" TEXT NULL,
   "code" TEXT NOT NULL,
   CONSTRAINT "purchase_order_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "purchase_order_code_key" UNIQUE ("name")
+  CONSTRAINT "purchase_order_code_key" UNIQUE ("code")
 );
 CREATE TABLE "ontology_core"."uom_group" ( 
   "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
