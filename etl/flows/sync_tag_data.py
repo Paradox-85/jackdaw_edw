@@ -35,8 +35,9 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
     # --- PHASE 1: PRE-LOAD EVERYTHING ---
     logger.info("PHASE 1: Pre-loading registries into memory...")
     with engine.connect() as conn:
-        # source_id is the stable system key; tag_name may change across syncs
-        tag_registry = {row[1]: (row[2], row[3], row[4]) for row in conn.execute(
+        # source_id is the stable system key; tuple stores (id, row_hash, sync_status, tag_name)
+        # tag_name included to detect prohibited name changes for the same source_id
+        tag_registry = {row[1]: (row[2], row[3], row[4], row[0]) for row in conn.execute(
             text("SELECT tag_name, source_id, id, row_hash, sync_status FROM project_core.tag"))}
         doc_lookup = {row[0]: row[1] for row in conn.execute(text("SELECT doc_number, id FROM project_core.document"))}
         sece_lookup = {row[0]: row[1] for row in conn.execute(text("SELECT code, id FROM reference_core.sece"))}
@@ -64,6 +65,9 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
 
     df = pd.read_excel(current_file, sheet_name=0, dtype=str, na_filter=False).dropna(subset=['TAG_NAME', 'ID'])
     
+    validation_session_id = str(uuid.uuid4())
+    tag_name_violations: list[dict] = []
+
     tags_to_update = []
     tags_status_only = []
     doc_maps_to_insert = []
@@ -159,6 +163,31 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
 
                 if existing:
                     tag_uuid = existing[0]
+                    tag_name_in_db = existing[3]
+
+                    # Detect prohibited tag name change — tag_name must be immutable per source system
+                    if tag_name_in_db and tag_name_in_db != tn:
+                        logger.warning(
+                            f"TAG_NAME_CHANGED: source_id={sid!r} "
+                            f"db_name={tag_name_in_db!r} source_name={tn!r}"
+                        )
+                        tag_name_violations.append({
+                            "session_id": validation_session_id,
+                            "run_time": sync_time,
+                            "rule_code": "TAG_NAME_CHANGED",
+                            "scope": "sync",
+                            "severity": "Critical",
+                            "object_type": "tag",
+                            "object_id": str(tag_uuid),
+                            "object_name": tag_name_in_db,
+                            "column_name": "tag_name",
+                            "original_value": tn,
+                            "violation_detail": (
+                                f"tag_name changed from {tag_name_in_db!r} to {tn!r} "
+                                f"for source_id={sid!r} — prohibited in source system"
+                            ),
+                        })
+
                     if existing[1] == curr_hash:
                         stats["No Changes"] += 1
                         tags_status_only.append({"ts": sync_time, "id": tag_uuid})
@@ -289,6 +318,21 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                     (tag_id, tag_name, source_id, sync_status, sync_timestamp, run_id, row_hash, snapshot)
                 VALUES (:tid, :tn, :sid, :ss, :ts, :rid, :h, :snap)
             """), history_to_insert)
+
+        # Store tag_name change violations detected during this sync run
+        if tag_name_violations:
+            conn.execute(text("""
+                INSERT INTO audit_core.validation_result
+                    (session_id, run_time, rule_code, scope, severity, object_type,
+                     object_id, object_name, column_name, original_value, violation_detail)
+                VALUES
+                    (:session_id, :run_time, :rule_code, :scope, :severity, :object_type,
+                     :object_id::uuid, :object_name, :column_name, :original_value, :violation_detail)
+            """), tag_name_violations)
+            logger.warning(
+                f"TAG_NAME_CHANGED violations recorded: {len(tag_name_violations)} "
+                f"(session_id={validation_session_id})"
+            )
 
         # --- PHASE 5: CLEANUP (Within the same transaction) ---
         deleted_rows = conn.execute(text("""

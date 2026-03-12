@@ -427,3 +427,36 @@ ALTER TABLE "project_core"."property_value" ADD CONSTRAINT "property_value_tag_i
 ALTER TABLE "project_core"."property_value" ADD CONSTRAINT "property_value_class_id_fkey" FOREIGN KEY ("class_id") REFERENCES "ontology_core"."class" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
 ALTER TABLE "project_core"."property_value" ADD CONSTRAINT "property_value_property_id_fkey" FOREIGN KEY ("property_id") REFERENCES "ontology_core"."property" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
 ALTER TABLE "project_core"."property_value" ADD CONSTRAINT "property_value_mapping_id_fkey" FOREIGN KEY ("mapping_id") REFERENCES "ontology_core"."class_property" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
+CREATE TABLE "audit_core"."export_validation_rule" (
+  "id"              UUID    NOT NULL DEFAULT gen_random_uuid(),
+  "rule_code"       TEXT    NOT NULL,
+  "scope"           TEXT    NOT NULL,
+  "object_field"    TEXT    NULL,
+  "description"     TEXT    NULL,
+  "rule_expression" TEXT    NOT NULL,
+  "fix_expression"  TEXT    NULL,
+  "is_builtin"      BOOLEAN NOT NULL DEFAULT false,
+  "is_blocking"     BOOLEAN NOT NULL DEFAULT false,
+  "severity"        TEXT    NOT NULL DEFAULT 'Warning',
+  "object_status"   TEXT    NOT NULL DEFAULT 'Active',
+  CONSTRAINT "export_validation_rule_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "export_validation_rule_code_key" UNIQUE ("rule_code")
+);
+CREATE TABLE "audit_core"."validation_result" (
+  "id"               UUID      NOT NULL DEFAULT gen_random_uuid(),
+  "session_id"       UUID      NOT NULL,
+  "run_time"         TIMESTAMP NOT NULL DEFAULT now(),
+  "rule_code"        TEXT      NOT NULL,
+  "scope"            TEXT      NOT NULL,
+  "severity"         TEXT      NOT NULL DEFAULT 'Warning',
+  "object_type"      TEXT      NULL,
+  "object_id"        UUID      NULL,
+  "object_name"      TEXT      NULL,
+  "violation_detail" TEXT      NULL,
+  "column_name"      TEXT      NULL,
+  "original_value"   TEXT      NULL,
+  "is_resolved"      BOOLEAN   NOT NULL DEFAULT false,
+  CONSTRAINT "validation_result_pkey" PRIMARY KEY ("id")
+);
+CREATE INDEX "idx_val_result_session"   ON "audit_core"."validation_result" ("session_id");
+CREATE INDEX "idx_val_result_object_id" ON "audit_core"."validation_result" ("object_id");

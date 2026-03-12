@@ -19,7 +19,8 @@ if str(script_root) not in sys.path:
     sys.path.append(str(script_root))
 
 from tasks.common import load_config, get_db_engine_url
-from tasks.export_transforms import transform_tag_register, write_csv
+from tasks.export_transforms import sanitize_dataframe, transform_tag_register, write_csv
+from tasks.export_validation import load_validation_rules, apply_builtin_fixes
 
 # Module-level config — same pattern as sync_tag_data.py and other flows
 config = load_config()
@@ -62,6 +63,16 @@ SELECT
     )                                           AS SAFETY_CRITICAL_ITEM_GROUP,
     t.safety_critical_item_reason_awarded       AS SAFETY_CRITICAL_ITEM_REASON_AWARDED,
     t.description                               AS TAG_DESCRIPTION,
+    -- raw FK fields below: used by built-in FK validation rules, dropped by transform before CSV write
+    t.area_code_raw                             AS area_code_raw,
+    t.tag_class_raw                             AS tag_class_raw,
+    t.process_unit_raw                          AS process_unit_raw,
+    t.plant_raw                                 AS plant_raw,
+    t.design_company_name_raw                   AS design_company_name_raw,
+    t.po_code_raw                               AS po_code_raw,
+    t.article_code_raw                          AS article_code_raw,
+    t.parent_tag_raw                            AS parent_tag_raw,
+    t.discipline_code_raw                       AS discipline_code_raw,
     t.sync_status,
     t.sync_timestamp,
     t.object_status
@@ -121,15 +132,21 @@ def _log_audit_start(engine: Engine, run_id: str, source_file: str) -> None:
         })
 
 
-def _log_audit_end(engine: Engine, run_id: str, row_count: int) -> None:
-    """Update audit record with end time and exported row count."""
+def _log_audit_end(
+    engine: Engine,
+    run_id: str,
+    row_count: int,
+    count_errors: int = 0,
+) -> None:
+    """Update audit record with end time, exported row count, and error count."""
     with engine.begin() as conn:
         conn.execute(text("""
             UPDATE audit_core.sync_run_stats
-               SET end_time       = :et,
-                   count_unchanged = :rc
+               SET end_time        = :et,
+                   count_unchanged = :rc,
+                   count_errors    = :er
              WHERE run_id = :rid
-        """), {"et": datetime.now(), "rc": row_count, "rid": run_id})
+        """), {"et": datetime.now(), "rc": row_count, "er": count_errors, "rid": run_id})
 
 
 # ---------------------------------------------------------------------------
@@ -180,12 +197,20 @@ def export_tag_register_flow(
     _log_audit_start(engine, run_id, str(output_path))
 
     raw_df = extract_tag_register(engine)
-    clean_df = transform_tag_register(raw_df)
+    # Sanitize before validation to eliminate encoding false-positives
+    sanitized_df = sanitize_dataframe(raw_df)
 
+    # Built-in validation: auto-fix violations, block on unfixable critical rules
+    builtin_rules = load_validation_rules(engine, scope="tag", builtin_only=True)
+    fixed_df, all_violations = apply_builtin_fixes(
+        sanitized_df, builtin_rules, "tag_register", logger
+    )
+
+    clean_df = transform_tag_register(fixed_df)
     row_count = write_csv(clean_df, output_path)
     logger.info(f"Exported {row_count} rows to {output_path}")
 
-    _log_audit_end(engine, run_id, row_count)
+    _log_audit_end(engine, run_id, row_count, count_errors=len(all_violations))
     return {"exported": row_count}
 
 

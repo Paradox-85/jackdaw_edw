@@ -19,7 +19,8 @@ if str(script_root) not in sys.path:
     sys.path.append(str(script_root))
 
 from tasks.common import load_config, get_db_engine_url
-from tasks.export_transforms import transform_equipment_register, write_csv
+from tasks.export_transforms import sanitize_dataframe, transform_equipment_register, write_csv
+from tasks.export_validation import load_validation_rules, apply_builtin_fixes
 
 # Module-level config — same pattern as export_tag_register.py
 config = load_config()
@@ -37,6 +38,7 @@ Gate:    t.object_status = 'Active' AND t.equip_no IS NOT NULL — equipment row
 Note:    STARTUP_DATE, PRICE, WARRANTY_END_DATE, TECHIDENTNO, ALIAS always exported as 'NA'.
          PART_OF = po_package.name via purchase_order.package_id.
 Changes: 2026-03-10 — Initial implementation.
+         2026-03-12 — PART_OF: pkg.name → pkg.code per EIS specification.
 */
 SELECT
     t.equip_no                              AS equipment_number,
@@ -52,10 +54,15 @@ SELECT
     'NA'                                    AS startup_date,
     'NA'                                    AS price,
     'NA'                                    AS warranty_end_date,
-    COALESCE(pkg.name, '')                  AS part_of,
+    COALESCE(pkg.code, '')                  AS part_of,
     'NA'                                    AS techidentno,
     'NA'                                    AS alias,
     t.description                           AS equipment_description,
+    -- raw FK fields below: used by built-in FK validation rules, dropped by transform before CSV write
+    t.model_part_raw                        AS model_part_raw,
+    t.manufacturer_company_raw              AS manufacturer_company_raw,
+    t.vendor_company_raw                    AS vendor_company_raw,
+    t.plant_raw                             AS plant_raw,
     t.sync_status,
     t.sync_timestamp,
     t.tag_status,
@@ -115,15 +122,21 @@ def _log_audit_start(engine: Engine, run_id: str, source_file: str) -> None:
         })
 
 
-def _log_audit_end(engine: Engine, run_id: str, row_count: int) -> None:
-    """Update audit record with end time and exported row count."""
+def _log_audit_end(
+    engine: Engine,
+    run_id: str,
+    row_count: int,
+    count_errors: int = 0,
+) -> None:
+    """Update audit record with end time, exported row count, and error count."""
     with engine.begin() as conn:
         conn.execute(text("""
             UPDATE audit_core.sync_run_stats
-               SET end_time       = :et,
-                   count_unchanged = :rc
+               SET end_time        = :et,
+                   count_unchanged = :rc,
+                   count_errors    = :er
              WHERE run_id = :rid
-        """), {"et": datetime.now(), "rc": row_count, "rid": run_id})
+        """), {"et": datetime.now(), "rc": row_count, "er": count_errors, "rid": run_id})
 
 
 # ---------------------------------------------------------------------------
@@ -174,12 +187,20 @@ def export_equipment_register_flow(
     _log_audit_start(engine, run_id, str(output_path))
 
     raw_df = extract_equipment_register(engine)
-    clean_df = transform_equipment_register(raw_df)
+    # Sanitize before validation to eliminate encoding false-positives
+    sanitized_df = sanitize_dataframe(raw_df)
 
+    # Built-in validation: auto-fix violations, block on unfixable critical rules
+    builtin_rules = load_validation_rules(engine, scope="equipment", builtin_only=True)
+    fixed_df, all_violations = apply_builtin_fixes(
+        sanitized_df, builtin_rules, "equipment_register", logger
+    )
+
+    clean_df = transform_equipment_register(fixed_df)
     row_count = write_csv(clean_df, output_path)
     logger.info(f"Exported {row_count} rows to {output_path}")
 
-    _log_audit_end(engine, run_id, row_count)
+    _log_audit_end(engine, run_id, row_count, count_errors=len(all_violations))
     return {"exported": row_count}
 
 
