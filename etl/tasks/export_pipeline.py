@@ -129,6 +129,9 @@ def run_export_pipeline(
                 "violation_detail": v.get("detail"),
                 "column_name":      v.get("column_name"),
                 "original_value":   v.get("original_value"),
+                "tier":             rule_meta.get(v["rule_code"], {}).get("tier"),
+                "category":         rule_meta.get(v["rule_code"], {}).get("category"),
+                "check_type":       rule_meta.get(v["rule_code"], {}).get("check_type", "dsl"),
             }
             for v in all_violations
         ]

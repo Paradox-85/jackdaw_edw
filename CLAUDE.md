@@ -6,7 +6,7 @@ Ingests EIS Excel/CSV exports → structured PostgreSQL → EIS CSV outputs.
 ---
 
 ## Architecture Tracking
-- After each planning session and decision on changes, add comments to the @architecture.md file.
+- After each planning session and decision on changes, add comments to the architecture.md file.
 - Analyze the content in @architecture.md before each change for potential conflicts and errors, and only add consistent and relevant architectural decisions.
 - If there are outdated blocks, delete or update them based on the latest planning sessions.
 - Comments and descriptions should be concise, in English, and without loss of meaning.

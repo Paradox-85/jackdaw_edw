@@ -142,7 +142,7 @@ def _eval_single_clause(
                 "\u00c2\xa0", "\u00c2", "\u00e2",                   # NBSP, orphan leading bytes
                 "\x93", "\x9d",                                     # Win-1252 raw quote bytes
             )
-            return series.astype(str).apply(
+            return series.fillna("").astype(str).apply(
                 lambda v: any(p in v for p in _ENCODING_PATTERNS)
             )
         raise ExpressionParseError(f"Unknown operator: {op!r}")
@@ -269,12 +269,14 @@ def load_validation_rules(
     builtin_clause = "AND is_builtin = true" if builtin_only else ""
     sql = text(f"""
         SELECT rule_code, scope, object_field, description,
-               rule_expression, fix_expression, is_builtin, is_blocking, severity
+               rule_expression, fix_expression, is_builtin, is_blocking, severity,
+               tier, category, check_type, source_ref
         FROM audit_core.export_validation_rule
         WHERE object_status = 'Active'
           AND scope IN ('common', :scope)
+          AND COALESCE(check_type, 'dsl') = 'dsl'
           {builtin_clause}
-        ORDER BY scope, rule_code
+        ORDER BY tier NULLS LAST, scope, rule_code
     """)
     # SELECT-only: engine.connect() is sufficient
     with engine.connect() as conn:
@@ -427,6 +429,9 @@ def run_full_scan(
         rule_code = rule["rule_code"]
         severity = rule.get("severity", "Warning")
         scope = rule.get("scope", "common")
+        tier = rule.get("tier")
+        category = rule.get("category")
+        check_type = rule.get("check_type", "dsl")
 
         try:
             clause = _parse_expression(rule["rule_expression"])
@@ -473,6 +478,9 @@ def run_full_scan(
                 ),
                 "column_name": col_name,
                 "original_value": original_val,
+                "tier": tier,
+                "category": category,
+                "check_type": check_type,
             })
 
     return results
@@ -497,10 +505,12 @@ def store_validation_results(engine: Engine, results: list[dict[str, Any]]) -> N
             text("""
                 INSERT INTO audit_core.validation_result
                     (session_id, run_time, rule_code, scope, severity, object_type,
-                     object_id, object_name, violation_detail, column_name, original_value)
+                     object_id, object_name, violation_detail, column_name, original_value,
+                     tier, category, check_type)
                 VALUES
                     (:session_id, :run_time, :rule_code, :scope, :severity, :object_type,
-                     :object_id::uuid, :object_name, :violation_detail, :column_name, :original_value)
+                     :object_id::uuid, :object_name, :violation_detail, :column_name, :original_value,
+                     :tier, :category, :check_type)
             """),
             results,
         )
