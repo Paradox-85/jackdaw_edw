@@ -553,8 +553,7 @@ eis_registers = {
 
 ## Reference Documentation
 
-- **Architecture & Infrastructure**: `@docs/architecture.md`
-- **Logic Rules & SCD**: `@docs/logic-manifesto.md`
+- **Architecture**: `@docs/architecture.md`
+- **Infrastructure**: `@docs/infrastructure.md`
 - **Database Schema**: `@docs/schema.sql`
-- **Integration Examples**: `@docs/eis-mapping-integration-guide.md`
 

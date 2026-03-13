@@ -422,3 +422,206 @@ def transform_equipment_register(df: pd.DataFrame) -> pd.DataFrame:
     # Reorder to strict EIS column sequence
     available = [c for c in _EQUIPMENT_REGISTER_COLUMNS if c in df.columns]
     return df[available]
+
+
+# ---------------------------------------------------------------------------
+# Area Register domain transform (seq 203)
+# ---------------------------------------------------------------------------
+
+_AREA_REGISTER_COLUMNS: list[str] = [
+    "PLANT_CODE",
+    "AREA_CODE",
+    "AREA_NAME",
+    "MAIN_AREA_CODE",
+    "PLANT_REF",
+]
+
+
+def transform_area_register(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS Area Register export (seq 203).
+
+    Layers:
+    1. Normalise column names to UPPER_CASE.
+    2. Reorder columns to EIS-specified output order.
+
+    Args:
+        df: Raw DataFrame from extract_area_register SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Example:
+        >>> result = transform_area_register(raw_df)
+        >>> list(result.columns)
+        ['PLANT_CODE', 'AREA_CODE', 'AREA_NAME', 'MAIN_AREA_CODE', 'PLANT_REF']
+    """
+    df = df.copy()
+    df.columns = df.columns.str.upper()
+    available = [c for c in _AREA_REGISTER_COLUMNS if c in df.columns]
+    return df[available]
+
+
+# ---------------------------------------------------------------------------
+# Process Unit Register domain transform (seq 204)
+# ---------------------------------------------------------------------------
+
+_PROCESS_UNIT_COLUMNS: list[str] = [
+    "PLANT_CODE",
+    "PROCESS_UNIT_CODE",
+    "PROCESS_UNIT_NAME",
+    "COUNT_OF_TAGS",
+]
+
+
+def transform_process_unit(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS Process Unit Register export (seq 204).
+
+    Layers:
+    1. Normalise column names to UPPER_CASE.
+    2. Reorder columns to EIS-specified output order.
+
+    Args:
+        df: Raw DataFrame from extract_process_unit SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Example:
+        >>> result = transform_process_unit(raw_df)
+        >>> list(result.columns)
+        ['PLANT_CODE', 'PROCESS_UNIT_CODE', 'PROCESS_UNIT_NAME', 'COUNT_OF_TAGS']
+    """
+    df = df.copy()
+    df.columns = df.columns.str.upper()
+    available = [c for c in _PROCESS_UNIT_COLUMNS if c in df.columns]
+    return df[available]
+
+
+# ---------------------------------------------------------------------------
+# Purchase Order Register domain transform (seq 214)
+# ---------------------------------------------------------------------------
+
+_PURCHASE_ORDER_COLUMNS: list[str] = [
+    "PLANT_CODE",
+    "PO_CODE",
+    "PO_TITLE",
+    "PO_DATE",
+    "PO_STATUS",
+]
+
+
+def transform_purchase_order(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS Purchase Order Register export (seq 214).
+
+    Layers:
+    1. Normalise column names to UPPER_CASE.
+    2. Drop raw FK columns used by validation rules (issuer/receiver company raw).
+    3. Drop OBJECT_STATUS (already output as PO_STATUS, column aliased in SQL).
+    4. Reorder columns to EIS-specified output order.
+
+    Args:
+        df: Raw DataFrame from extract_purchase_order SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Example:
+        >>> result = transform_purchase_order(raw_df)
+        >>> list(result.columns)
+        ['PLANT_CODE', 'PO_CODE', 'PO_TITLE', 'PO_DATE', 'PO_STATUS']
+    """
+    df = df.copy()
+    df.columns = df.columns.str.upper()
+    internal_cols = ["ISSUER_COMPANY_RAW", "RECEIVER_COMPANY_RAW"]
+    df = df.drop(columns=internal_cols, errors="ignore")
+    available = [c for c in _PURCHASE_ORDER_COLUMNS if c in df.columns]
+    return df[available]
+
+
+# ---------------------------------------------------------------------------
+# Model Part Register domain transform (seq 209)
+# ---------------------------------------------------------------------------
+
+_MODEL_PART_COLUMNS: list[str] = [
+    "PLANT_CODE",
+    "MODEL_PART_CODE",
+    "MODEL_PART_NAME",
+    "SPECIFICATIONS",
+]
+
+
+def transform_model_part(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS Model Part Register export (seq 209).
+
+    Layers:
+    1. Normalise column names to UPPER_CASE.
+    2. Drop raw FK columns used by validation rules (manufacturer raw).
+    3. Drop OBJECT_STATUS (already filtered in SQL WHERE clause).
+    4. Reorder columns to EIS-specified output order.
+
+    Note: PART_TYPE column does not exist in reference_core.model_part schema.
+          SPECIFICATIONS maps to model_part.definition (technical description).
+
+    Args:
+        df: Raw DataFrame from extract_model_part SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Example:
+        >>> result = transform_model_part(raw_df)
+        >>> list(result.columns)
+        ['PLANT_CODE', 'MODEL_PART_CODE', 'MODEL_PART_NAME', 'SPECIFICATIONS']
+    """
+    df = df.copy()
+    df.columns = df.columns.str.upper()
+    internal_cols = ["MANUF_COMPANY_RAW", "OBJECT_STATUS"]
+    df = df.drop(columns=internal_cols, errors="ignore")
+    available = [c for c in _MODEL_PART_COLUMNS if c in df.columns]
+    return df[available]
+
+
+# ---------------------------------------------------------------------------
+# Tag Class Properties domain transform (seq 307)
+# ---------------------------------------------------------------------------
+
+_TAG_CLASS_PROP_COLUMNS: list[str] = [
+    "TAG_CLASS_NAME",
+    "PROPERTY_CODE",
+    "PROPERTY_NAME",
+    "DATA_TYPE",
+    "IS_MANDATORY",
+    "VALID_VALUES",
+]
+
+
+def transform_tag_class_properties(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS Tag Class Properties export (seq 307).
+
+    Layers:
+    1. Normalise column names to UPPER_CASE.
+    2. Reorder columns to EIS-specified output order.
+
+    Note: IS_MANDATORY = 'Y'/'N' (derived in SQL from mapping_presence = 'Mandatory').
+          VALID_VALUES = picklist regex from ontology_core.validation_rule (may be empty).
+
+    Args:
+        df: Raw DataFrame from extract_tag_class_properties SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Example:
+        >>> result = transform_tag_class_properties(raw_df)
+        >>> list(result.columns)
+        ['TAG_CLASS_NAME', 'PROPERTY_CODE', 'PROPERTY_NAME', 'DATA_TYPE', 'IS_MANDATORY', 'VALID_VALUES']
+    """
+    df = df.copy()
+    df.columns = df.columns.str.upper()
+    available = [c for c in _TAG_CLASS_PROP_COLUMNS if c in df.columns]
+    return df[available]
