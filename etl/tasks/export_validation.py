@@ -238,6 +238,27 @@ def _apply_fix(df: pd.DataFrame, col_spec: str, fix_expr: str) -> pd.DataFrame:
         if m:
             n = int(m.group(1))
             return s.astype(str).str[:n]
+        # normalize_na — replace all NA-variant strings with strict "NA"
+        # (Power Query equivalent: N/A → NA, N.A. → NA, na → NA)
+        if fix_expr == "normalize_na":
+            return s.astype(str).str.replace(r"(?i)^(N\.A\.?|N/A|na|n/a)$", "NA", regex=True)
+        # normalize_boolean_case — Title-case EIS boolean picklist values
+        # (Power Query: YES → Yes, NO → No — ALL CAPS rejected by EIS picklist validator)
+        if fix_expr == "normalize_boolean_case":
+            return s.replace({"YES": "Yes", "NO": "No"})
+        # normalize_uom_longform — replace SI unit long-forms with abbreviations
+        # (Power Query UoM normalization: ampere→A, volt→V, pascal→Pa, hertz→Hz, kilowatt→kW)
+        if fix_expr == "normalize_uom_longform":
+            _UOM_MAP = {
+                "ampere": "A", "volt": "V", "pascal": "Pa",
+                "hertz": "Hz", "kilowatt": "kW",
+            }
+            _pattern = "|".join(re.escape(k) for k in _UOM_MAP)
+            return s.astype(str).str.replace(
+                r"(?i)\b(" + _pattern + r")\b",
+                lambda m_: _UOM_MAP.get(m_.group(0).lower(), m_.group(0)),
+                regex=True,
+            )
         raise ExpressionParseError(f"Unknown fix_expression: {fix_expr!r}")
 
     for col in target_cols:

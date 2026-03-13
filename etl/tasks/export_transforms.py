@@ -55,6 +55,17 @@ def clean_engineering_text(value: str) -> str:
     # Step 10: Win-1252 smart quotes as raw bytes (survived as latin-1 chars)
     s = s.replace("\x93", '"').replace("\x9d", '"')
 
+    # Step 10b: Unicode hyphens and dashes → ASCII hyphen
+    # Power Query: Text.Replace([TAG_NAME], "‐", "-") — affects TAG_NAME and DOCUMENT_NUMBER matching
+    s = s.replace("\u2010", "-")   # Unicode hyphen (U+2010)
+    s = s.replace("\u2013", "-")   # En-dash (U+2013)
+    s = s.replace("\u2014", "-")   # Em-dash (U+2014)
+
+    # Step 10c: Engineering unit superscript artefacts → ASCII equivalents
+    # Power Query: Text.Replace([TAG_DESCRIPTION], "MM²", "mm2") — Aveva format requirement
+    s = s.replace("MM\u00b2", "mm2")  # MM² → mm2
+    s = s.replace("mm\u00b2", "mm2")  # mm² → mm2 (lowercase variant)
+
     # Step 11: Collapse multiple spaces to single
     s = re.sub(r" {2,}", " ", s)
 

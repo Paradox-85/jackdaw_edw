@@ -447,6 +447,7 @@ Raw fields are included in the export SQL SELECT but dropped by `transform_*` be
 | `migration_005_update_existing_rules.sql` | 2026-03-13 | Backfill tier/category/check_type/source_ref on all 42 existing rules |
 | `migration_005_new_validation_rules.sql` | 2026-03-13 | INSERT 27 new rules (L0×3, L1×8, L2×9, L3×6, L4×2) from gap analysis |
 | `migration_006_property_value_validation_rules.sql` | 2026-03-13 | INSERT 10 rules for scopes 'tag_property' and 'equipment_property' (L0×4, L1×4, L2×2) |
+| `migration_007_validation_rules_cleanup.sql` | 2026-03-13 | DELETE 5 rules (4 duplicates + DESC_NO_DOUBLE_SPACE); UPDATE 6 rules (typo fix, tune, engine extensions); INSERT 6 new rules (5 DSL + 1 aggregate metadata) |
 
 ### Key Code Locations
 
@@ -462,6 +463,12 @@ Raw fields are included in the export SQL SELECT but dropped by `transform_*` be
 | `docs/validation_rules_gap_analysis.md` | Full gap analysis vs QA spec; source for migration_005 rules |
 
 ---
+
+## ADR-009: Validation Rules Cleanup & Power Query Gap Closure
+- **Date**: 2026-03-13
+- **Decision**: Удалены 4 дублирующих правила (`PROCESS_UNIT_MANDATORY`, `AREA_CODE_EXPECTED`, `PO_CODE_NOT_VOID`, `TAG_MIN_ONE_DOCUMENT`) и устаревшее `DESC_NO_DOUBLE_SPACE`. Исправлена опечатка в `DISCIPLINE_FK_RESOLVED`. Расширен `clean_engineering_text()` на покрытие Unicode hyphens, en/em-dashes, MM² artefacts и consecutive spaces. Добавлены 3 новые fix-операции в DSL-движок (`normalize_na`, `normalize_boolean_case`, `normalize_uom_longform`). Вместо отдельных правил на каждый символ введено универсальное `NO_INVALID_CHARS` + `UNSET_VALUE_IN_ANY_FIELD` для покрытия всех полей всех отчётов.
+- **Reason**: Ревью `docs/validation_rules_review_summary.md` выявило дублирование правил, опечатку, пробелы в покрытии Power Query логики из `ex-data-extractor-help.txt`. Структурные символы (дефисы, пробелы, MM²) должны устраняться единым pipeline, а не отдельными правилами.
+- **Impact**: `migration_007`, `etl/tasks/export_validation.py` (`_fix_series`), `etl/tasks/export_transforms.py` (`clean_engineering_text`).
 
 ## ADR-008: Property Value Export Routing by mapping_concept
 - **Date**: 2026-03-13
