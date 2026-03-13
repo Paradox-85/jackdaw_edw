@@ -53,8 +53,11 @@ def main_sync_flow():
     logger.info("Integrated Master Sync Pipeline completed successfully.")
 
 if __name__ == "__main__":
-    # Create or update the sequential deployment in Prefect
-    main_sync_flow.serve(
+    main_sync_flow.from_source(
+        source="/mnt/shared-data/ram-user/Jackdaw/prefect-worker/scripts",
+        entrypoint="etl/flows/main_sync.py:main_sync_flow",
+    ).deploy(
         name="sequential-master-sync",
-        tags=["production", "master-data", "integrated-pipeline"]
+        work_pool_name="default-agent-pool",
+        tags=["production", "master-data", "integrated-pipeline"],
     )

@@ -259,6 +259,18 @@ def _apply_fix(df: pd.DataFrame, col_spec: str, fix_expr: str) -> pd.DataFrame:
                 lambda m_: _UOM_MAP.get(m_.group(0).lower(), m_.group(0)),
                 regex=True,
             )
+        # normalize_pseudo_null — replace entire value with "NA" for all pseudo-null placeholders:
+        # numeric (9{5,} + optional unit suffix), domain-prefix NAs (Area-NA, PU-NA, PO-NA,
+        # SECE-NA), epoch date placeholder (01/01/1990), single dash.
+        # Each matched value is replaced wholesale — non-matching values are left unchanged.
+        if fix_expr == "normalize_pseudo_null":
+            _NULL_RE = re.compile(
+                r"^9{5,}[\d./a-zA-Z ]*$"    # numeric: 9{5,} + optional unit/digit suffix
+                r"|^(Area|PU|PO|SECE)-NA$"  # domain-prefixed NA variants from EIS source
+                r"|^01/01/1990"              # epoch date placeholder (source default "no date")
+                r"|^-$"                      # single dash pseudo-null
+            )
+            return s.astype(str).apply(lambda v: "NA" if _NULL_RE.match(v) else v)
         raise ExpressionParseError(f"Unknown fix_expression: {fix_expr!r}")
 
     for col in target_cols:

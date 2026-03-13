@@ -401,5 +401,10 @@ def tag_sync_flow():
     build_hierarchy()
 
 if __name__ == "__main__":
-    os.chdir(Path(__file__).resolve().parent.parent)
-    tag_sync_flow.serve(name="tag-sync-deployment")
+    tag_sync_flow.from_source(
+        source="/mnt/shared-data/ram-user/Jackdaw/prefect-worker/scripts",
+        entrypoint="etl/flows/sync_tag_data.py:tag_sync_flow",
+    ).deploy(
+        name="tag-sync-deployment",
+        work_pool_name="default-agent-pool",
+    )

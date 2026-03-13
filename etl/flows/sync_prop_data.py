@@ -165,5 +165,10 @@ def properties_sync_flow():
     sync_properties_task(rid)
 
 if __name__ == "__main__":
-    os.chdir(Path(__file__).resolve().parent.parent)
-    properties_sync_flow.serve(name="prop-sync-deployment")
+    properties_sync_flow.from_source(
+        source="/mnt/shared-data/ram-user/Jackdaw/prefect-worker/scripts",
+        entrypoint="etl/flows/sync_prop_data.py:properties_sync_flow",
+    ).deploy(
+        name="prop-sync-deployment",
+        work_pool_name="default-agent-pool",
+    )
