@@ -1,0 +1,550 @@
+# EIS File Specification Reference — Complete Input & Output Guide
+
+> Comprehensive specification for both source (input XLSX) and report (output CSV) files in Jackdaw EDW.
+> All files accessed via `./data/` symlinks pointing to `/mnt/shared-data/`.
+> Read source XLSX with: `pd.read_excel(path, dtype=str, na_filter=False)`
+
+---
+
+## Part 1: Source Files (Input XLSX) — Complete Inventory
+
+Only 3 XLSX files are actively ingested as source data in Jackdaw EDW:
+
+1. **`MDR.xlsx`** — Master Document Register (18,654 documents)
+2. **`Master-Reference-Data.xlsx`** — Consolidated reference tables (site, plant, area, company, PO, discipline, etc.)
+3. **`JDAW-PT-D-JA-7880-00001_A05.xlsx`** — CFIHOS RDL Ontology (tag classes, equipment classes, properties, UOM)
+
+All source files are read with **`dtype=str, na_filter=False`** to preserve literal "NA" strings and prevent unintended type conversions.
+
+### 1.1 Master Document Register (MDR.xlsx)
+
+#### `MDR.xlsx` — Master Document Register
+18,654 rows. Target: `project_core.document`. Primary source for all document metadata.
+
+**Sheet**: `Sheet1` (standard single-sheet format)
+
+| Source Column | DB Field | Type | Constraint | Notes |
+|---|---|---|---|---|
+| `DOCUMENT_NUMBER` | `doc_number` | TEXT | **UNIQUE** | Unique document identifier (e.g., `JDAW-KVE-E-IN-2347-00002-174`) |
+| `DOCUMENT_TITLE` | `title` | TEXT | | Full descriptive title |
+| `REVISION_CODE` | `rev` | TEXT | | Revision identifier (e.g., `C03`, `Z01`, `A35`) |
+| `REVISION_DATE` | `rev_date` | DATE | format: `MM/DD/YYYY` | use `to_dt(val, format='%m/%d/%Y')` |
+| `DOCUMENT_STATUS` | `status` | TEXT | e.g. `AFC`, `ASB`, `IFA` | Engineering lifecycle status |
+| `REVISION_COMMENT` | `rev_comment` | TEXT | | Revision notes or change log |
+| `REVISION_AUTHOR` | `rev_author` | TEXT | | Responsible person/team |
+| `SITE_CODE` | → `site_id` FK | UUID | | Links to `reference_core.site` |
+| `PLANT_CODE` | → `plant_id` FK | UUID | always `JDA` | Links to `reference_core.plant` |
+| `PROJECT_CODE` | → `project_id` FK | UUID | e.g. `JDAW` | Links to `reference_core.project` |
+| `AREA_CODE` | → `area_id` FK | UUID | | Links to `reference_core.area` |
+| `DOCUMENT_TYPE_CODE` | `doc_type_code` | TEXT | e.g. `2347`, `B01`, `K05` | Document classification |
+| `PO_CODE` | → `po_id` FK | UUID | | Links to `reference_core.purchase_order`; use `mapping.document_po` for N:M |
+| `COMPANY_NAME` | → `company_id` FK | UUID | | Issuing company; links to `reference_core.company` |
+| `MDR` | `mdr_flag` | BOOLEAN | **default: False** | Extract from `MDR` column (True/False); if empty/NA → False |
+| `CREATED_DATE` | `created_date` | TIMESTAMP | | Document creation timestamp |
+| `LAST_MODIFICATION_DATE` | `modified_date` | TIMESTAMP | | Last update timestamp |
+| `DOCUMENT_TO_TAG_COUNT` | (informational) | INT | | Not stored; used for validation only |
+
+**Processing Rules**:
+- **MDR Flag**: Parse `MDR` column as boolean (case-insensitive: "True", "YES", "1" → True; else False)
+- **Row Hashing**: Compute MD5 hash of all columns except timestamps to detect changes (SCD tracking)
+- **Status Filter**: Only import rows with `object_status = 'Active'` at export time
+- **N:M Document-PO Mapping**: Store in `mapping.document_po` (one document can link to multiple POs)
+
+---
+
+### 1.2 Tag Register (MTR-dataset.xlsx)
+
+#### `MTR-dataset.xlsx` (or `205-Tag-register.xlsx` in EIS convention)
+~18,000–25,000 rows. Target: `project_core.tag` + all related FK lookups.
+
+**Sheet**: Varies (check for headers; may be named `Sheet1`, `Tag Register`, or derived)
+
+| Source Column | DB Field | Type | Constraint | Notes |
+|---|---|---|---|---|
+| `TAG_NAME` | `tag_name` | TEXT | **UNIQUE** | Unique business key (e.g., `01-LIT-101`, `ESB1_BUSCABLE6_0202`) |
+| `TAG_STATUS` | `tag_status` | TEXT | e.g. `Active`, `Void`, `ASB` | Engineering lifecycle status |
+| `TAG_CLASS_NAME` | → `class_id` FK | UUID | | Link to `ontology_core.class`; store raw in `class_code_raw` |
+| `TAG_DESCRIPTION` | `description` | TEXT | max 255 | Free-form technical description |
+| `PARENT_TAG_NAME` | → `parent_tag_id` FK | UUID | | Self-join: resolve in second pass after all tags inserted |
+| `AREA_CODE` | → `area_id` FK | UUID | | Link to `reference_core.area`; store raw in `area_code_raw` |
+| `PROCESS_UNIT_CODE` | → `process_unit_id` FK | UUID | e.g. `1`=WELLS, `86`=HVAC | Link to `reference_core.process_unit`; store raw in `unit_code_raw` |
+| `DISCIPLINE_CODE` | → `discipline_id` FK | UUID | | Link to discipline lookup; store raw in `discipline_code_raw` |
+| `PO_CODE` | → `po_id` FK | UUID | | Link to `reference_core.purchase_order`; store raw in `po_code_raw` |
+| `DESIGNED_BY_COMPANY_NAME` | → `design_company_id` FK | UUID | | Link to `reference_core.company` (design contractor) |
+| `MANUFACTURER_COMPANY_NAME` | → `article_id` FK | UUID | | Link via `reference_core.article.manufacturer_id`; store raw in `mfr_raw` |
+| `VENDOR_COMPANY_NAME` | → `vendor_id` FK | UUID | | Link to `reference_core.company` (supplier); store raw in `vendor_raw` |
+| `COMPANY_NAME` | → `company_id` FK | UUID | | Manufacturing/operational company; store raw in `company_raw` |
+| `ARTICLE_CODE` | → `article_id` FK | UUID | | Part/product code from vendor; store raw in `article_raw` |
+| `TAG_DOC` | → `mapping.tag_document` | N:M | space-separated codes | Split on whitespace; create one mapping row per document code |
+| `SAFETY_CRITICAL_ITEM_GROUP` | → `mapping.tag_sece` | N:M | space-separated codes | **⚠️ Column has trailing space in name** — use `row.get('SAFETY_CRITICAL_ITEM _GROUP')` |
+| `SAFETY_CRITICAL_ITEM` | `safety_critical_flag` | BOOLEAN | Y/N or T/F | Safety classification |
+| `PRODUCTION_CRITICAL_ITEM` | `production_critical_flag` | BOOLEAN | Y/N or T/F | Production criticality |
+| `SAFETY_CRITICAL_ITEM_REASON_AWARDED` | `safety_reason` | TEXT | | Explanation for safety classification |
+| `FROM_TAG` / `TO_TAG` | → `mapping.tag_connection` | N:M | cable connections | Create one row per (FROM_TAG, TO_TAG) pair |
+| `MC_PACKAGE_CODE` | `mc_package_code` | TEXT | | Maintenance code package |
+| `EX CLASS` | `ex_class` | TEXT | **⚠️ Column has internal space** — use `row.get('EX CLASS')` | Explosive atmosphere classification |
+| `IP_GRADE` | `ip_grade` | TEXT | e.g. `IP65`, `IP67` | Ingress protection rating |
+| `MANUFACTURER_SERIAL_NUMBER` | `mfr_serial_number` | TEXT | | Manufacturer-assigned serial |
+| `INSTALLATION_DATE` | `installed_date` | TIMESTAMP | parse via `to_dt()` | Installation timestamp |
+| `PLANT_CODE` | → `plant_id` FK | UUID | always `JDA` | Link to `reference_core.plant` |
+| (implicit) | `row_hash` | TEXT | computed | MD5 hash for SCD change tracking |
+| (implicit) | `sync_status` | TEXT | `New|Updated|Unchanged|Deleted` | SCD status from flow |
+| (implicit) | `sync_timestamp` | TIMESTAMP | `now()` | Last sync time |
+
+**Processing Rules**:
+- **dtype=str, na_filter=False**: Preserve all string types; never auto-convert to NaN
+- **Column Name Quirks**:
+  - `SAFETY_CRITICAL_ITEM _GROUP` has **trailing space** — must use exact string
+  - `EX CLASS` has **internal space** — must use exact string
+- **Multi-value Fields**: `TAG_DOC` and `SAFETY_CRITICAL_ITEM_GROUP` are space-separated; split each and create separate mapping rows
+- **Two-Phase Ingestion**:
+  - **Phase 1**: Insert all tags, resolving all FKs except `parent_tag_id` (which may not be in DB yet)
+  - **Phase 2**: Run separate `sync_tag_hierarchy` task to resolve parent-child relationships
+- **FK Fallback**: If FK lookup fails, store the raw value in `_raw` column and leave the `_id` column NULL; record as warning/error in audit
+- **Row Hashing**: Compute MD5 of all content columns (exclude timestamps, sync_status) to detect changes
+
+---
+
+### 1.3 Ontology & Reference Data (Master-Reference-Data.xlsx)
+
+#### `Master-Reference-Data.xlsx` — Consolidated Reference Tables
+This file contains ALL static reference data in separate sheets. Target: `reference_core.*` and ontology seeds.
+
+**Sheets and Targets**:
+
+| Sheet | Key Columns | Target Table | Rows | Purpose |
+|---|---|---|---|---|
+| `site` | `code`, `name`, `object_status` | `reference_core.site` | ~5 | Geographic sites (e.g., JD=Jackdaw, sw=Shearwater) |
+| `plant` | `code`, `name`, `site_code`, `object_status` | `reference_core.plant` | ~5 | Production plants (e.g., JDA=Jackdaw plant) |
+| `project` | `code`, `name`, `site_code`, `object_status` | `reference_core.project` | ~2 | Projects (e.g., JDAW=Jackdaw project) |
+| `area` | `code`, `name`, `main_area_code`, `plant_code`, `object_status` | `reference_core.area` | ~205 | Area/zone hierarchy (e.g., F100, G100) |
+| `sece` | `code`, `name`, `object_status` | `reference_core.sece` | ~35 | Safety/Environment/Criticality/Equipment codes (DS01, ER01, etc.) |
+| `process_unit` | `code`, `name`, `plant_code`, `object_status` | `reference_core.process_unit` | ~37 | Process unit breakdown (e.g., 01=WELLS, 02=MANIFOLD) |
+| `article` | `code`, `name`, `definition`, `article_type`, `manufacturer_company_name_raw`, `model_part_code_raw`, `object_status` | `reference_core.article` | ~4,960 | Vendor parts/equipment specifications (SKU catalog) |
+| `company` | `code`, `name`, `address`, `town_city`, `country_code`, `is_manufacturer`, `is_supplier`, `object_status` | `reference_core.company` | ~660 | Companies (manufacturers, suppliers, contractors) |
+| `purchase_order` | `code`, `name`, `definition`, `po_date`, `issuer_company_raw`, `receiver_company_raw`, `object_status` | `reference_core.purchase_order` | ~1,730 | Purchase orders (procurement documents) |
+| `po_package` | `code`, `name`, `object_status` | `reference_core.po_package` | ~250 | PO groupings/packages (e.g., BL775=PIPE SUPPORTS) |
+| `discipline` | `code`, `name`, `code_internal`, `object_status` | `reference_core.discipline` | ~10 | Engineering disciplines (EA=Electrical, MX=Mechanical, IN=Instrumentation) |
+| `model_part` | `code`, `name`, `definition`, `manuf_company_raw`, `object_status` | `reference_core.model_part` | ~1,275 | Component models and parts (technical catalog) |
+| `summary` | (metadata table) | (informational) | ~70 | Field listing for verification |
+
+**Processing Rules**:
+- All sheets have **headers in Row 1** (standard format)
+- **FK columns with `_raw` suffix**: Store original text value; FK resolution via lookup (e.g., `manufacturer_company_name_raw` → lookup in company table)
+- **`object_status` column**: Always `Active` in this reference file; used to filter at export time
+- **Hierarchy**: `area.main_area_code` creates self-join parent-child relationship
+- Read with: `pd.read_excel(file, sheet_name='sheet_name', dtype=str, na_filter=False)`
+
+---
+
+### 1.4 CFIHOS/RDL Ontology Master (JDAW-PT-D-JA-7880-00001_A05.xlsx)
+
+#### `JDAW-PT-D-JA-7880-00001_A05.xlsx` — RDL (Reference Data Library)
+This file contains CFIHOS ontology definition. Populates `ontology_core.*`. Version: v1.4, Date: 2019-10-17.
+
+| Sheet | Key Columns | Target Table | Rows | Purpose |
+|---|---|---|---|---|
+| `Tag class` | Tag Class ID, Name, Definition, Description, Notes | `ontology_core.class` | ~300 | **Functional** tag classifications per CFIHOS (e.g., Pump, Valve, Transmitter) |
+| `Tag class properties` | Tag Class Code, Property Code, Property Name, Is Mandatory | `ontology_core.class_property` + `mapping.class_property` | ~2,230 | **Functional**: property definitions required for each tag class |
+| `Equipment class` | Equipment Class ID, Name, Definition, Description | `ontology_core.class` | ~330 | **Physical** equipment classifications (e.g., Rotating Machinery, Static Equipment) |
+| `Equipment class props` | Equipment Class Code, Property Code, Property Name, Is Mandatory | `ontology_core.class_property` + `mapping.class_property` | ~3,650 | **Physical**: property definitions required for each equipment class |
+| `Property` | Property ID, Name, Definition, Data Type, Unit of Measure Dimension, Picklist Name | `ontology_core.property` | ~800 | Property/attribute master (base definitions) |
+| `Property picklist` | Picklist ID, Picklist Name, Description | `ontology_core.validation_rule` | ~200 | Enumeration sets (for constrained properties) |
+| `Property picklist value` | Picklist ID, Picklist Item Code, Picklist Item Name | `ontology_core.validation_rule.validation_value` | ~5,340 | Individual enum values; generates regex `(val1\|val2\|val3)` |
+| `Unit of measure` | UOM Code, UOM Name, UOM Symbol, Dimension Code | `ontology_core.uom` | ~138 | Individual UOM (bar, Pa, mm, kg, °C, kW, etc.) |
+| `Unit of measure dimension` | Dimension Code, Dimension Name | `ontology_core.uom_group` | ~55 | UOM groupings (Pressure, Temperature, Length, Mass, Power, etc.) |
+
+**Important Processing Notes**:
+
+1. **Headers are NOT in Row 1**: Use dynamic header detection:
+   - Search for row containing first data header (e.g., "Tag Class", "Property ID")
+   - All metadata rows above headers (Document Version, Date Issued, etc.) should be skipped
+   
+2. **Class Concept Merging**:
+   - If class appears in **both** `Tag class` AND `Equipment class`: `concept = 'Functional Physical'`
+   - If only in `Tag class`: `concept = 'Functional'`
+   - If only in `Equipment class`: `concept = 'Physical'`
+   - Store as single row in `ontology_core.class` with deduplicated logic
+
+3. **Class-Property Mapping** (conceptual):
+   - For each (TagClass, Property) pair from `Tag class properties`: create mapping with `mapping_concept = 'Functional'`
+   - For each (EquipmentClass, Property) pair from `Equipment class props`: create mapping with `mapping_concept = 'Physical'`
+   - If same property maps to both Tag and Equipment class: merge row with `mapping_concept = 'Functional Physical'`
+   - Store in `ontology_core.class_property` (or `mapping.class_property` depending on schema)
+
+4. **Property Validation**:
+   - If Property has non-empty `Picklist Name` (column G): Create `validation_rule` with:
+     - `validation_type = 'picklist'`
+     - `validation_value = regex` generated from all values in `Property picklist value` sheet
+     - Example: For CFIHOS-50000003, extract all enum values → `(dry service|wet service)`
+   - Link property → validation_rule via FK `property.validation_rule_id`
+
+5. **UOM Mapping**:
+   - Create `ontology_core.uom_group` rows (Pressure, Length, etc.)
+   - Create `ontology_core.uom` rows (bar, Pa, mm, kg, etc.)
+   - Each UOM links to its dimension group via `uom.uom_group_id`
+   - Link property → UOM dimension via `property.uom_group_id` (or property → uom directly if needed)
+
+6. **Read Pattern**:
+   ```python
+   def read_rdl_sheet(file, sheet_name, header_keyword):
+       """Dynamically locate headers in RDL sheets."""
+       df_raw = pd.read_excel(file, sheet_name=sheet_name, header=None, dtype=str)
+       # Find row containing header_keyword
+       header_row = None
+       for idx, row in df_raw.iterrows():
+           if header_keyword in str(row.values):
+               header_row = idx
+               break
+       if header_row is not None:
+           df = pd.read_excel(file, sheet_name=sheet_name, 
+                             header=header_row, dtype=str, na_filter=False)
+           return df.dropna(how='all')
+       return None
+   ```
+
+---
+
+## Part 2: Report Files (Output CSV)
+
+All export CSVs use standard naming: `JDAW-KVE-E-JA-6944-00001-{SEQ}-{REVISION}.CSV`
+
+- **Encoding**: UTF-8 with BOM (`utf-8-sig`) — mandatory for Excel compatibility
+- **Delimiter**: comma (`,`)
+- **Quote**: double-quote (`"`)
+- **Null**: empty string (not `NULL`, `NA`, or `#N/A`)
+- **Dates**: ISO 8601 format `YYYY-MM-DD`
+- **Timestamps**: `YYYY-MM-DD HH:MM:SS`
+- **Booleans**: Y/N or True/False (per export spec)
+
+---
+
+### 2.1 Spatial Reference Exports
+
+#### EIS Seq 203 — Area Register
+**File**: `JDAW-KVE-E-JA-6944-00001-017-{revision}.CSV`
+**Flow**: `export_area_register_flow`
+**Source**: `reference_core.area` WHERE `object_status = 'Active'`
+
+| Column | Source | Notes |
+|---|---|---|
+| `PLANT_CODE` | `plant.code` | always `JDA` |
+| `AREA_CODE` | `area.code` | unique per plant |
+| `AREA_NAME` | `area.name` | |
+| `MAIN_AREA_CODE` | `parent_area.code` (self-join) | hierarchy parent; empty if NULL |
+| `PLANT_REF` | computed `'PLANT-' \|\| plant.code` | `PLANT-JDA` |
+
+---
+
+#### EIS Seq 204 — Process Unit Register
+**File**: `JDAW-KVE-E-JA-6944-00001-018-{revision}.CSV`
+**Flow**: `export_process_unit_flow`
+**Source**: `reference_core.process_unit` WHERE `object_status = 'Active'`
+
+| Column | Source | Notes |
+|---|---|---|
+| `PLANT_CODE` | `plant.code` | always `JDA` |
+| `PROCESS_UNIT_CODE` | `process_unit.code` | integer identifier |
+| `PROCESS_UNIT_NAME` | `process_unit.name` | |
+| `COUNT_OF_TAGS` | SELECT COUNT(*) FROM `project_core.tag` | informational |
+
+---
+
+### 2.2 Primary Project Data Exports
+
+#### **EIS Seq 205 — Tag Register (Primary Export)**
+**File**: `JDAW-KVE-E-JA-6944-00001-003-{revision}.CSV`
+**Flow**: `export_tag_register_flow`
+**Source**: `project_core.tag` JOIN reference tables WHERE `object_status = 'Active'`
+
+**Column order** (strict per JDAW-PT-D-JA-7739-00003):
+```
+PLANT_CODE · TAG_NAME · PARENT_TAG_NAME · AREA_CODE · PROCESS_UNIT_CODE ·
+TAG_CLASS_NAME · TAG_STATUS · REQUISITION_CODE · DESIGNED_BY_COMPANY_NAME ·
+COMPANY_NAME · PO_CODE · PRODUCTION_CRITICAL_ITEM · SAFETY_CRITICAL_ITEM ·
+SAFETY_CRITICAL_ITEM_GROUP · SAFETY_CRITICAL_ITEM_REASON_AWARDED ·
+TAG_DESCRIPTION · ACTION_STATUS · ACTION_DATE
+```
+
+| Column | Source | Notes |
+|---|---|---|
+| `PLANT_CODE` | `plant.code` | always `JDA` |
+| `TAG_NAME` | `tag.tag_name` | unique identifier |
+| `PARENT_TAG_NAME` | `parent_tag.tag_name` (self-join) | empty string if NULL (never literal 'unset') |
+| `AREA_CODE` | `area.code` | FK resolve; empty if unmatched |
+| `PROCESS_UNIT_CODE` | `process_unit.code` | FK resolve; empty if unmatched |
+| `TAG_CLASS_NAME` | `tag_class.class_name` | FK resolve |
+| `TAG_STATUS` | `tag.tag_status` | e.g. `Active`, `Retired`, `Void` |
+| `REQUISITION_CODE` | `tag.requisition_code` | |
+| `DESIGNED_BY_COMPANY_NAME` | `company.name` (via `tag.design_company_id`) | FK resolve |
+| `COMPANY_NAME` | `company.name` (via `tag.company_id`) | manufacturing company |
+| `PO_CODE` | `purchase_order.code` | FK resolve; empty if unmatched |
+| `PRODUCTION_CRITICAL_ITEM` | `tag.production_critical_flag` | Boolean (Y/N) |
+| `SAFETY_CRITICAL_ITEM` | `tag.safety_critical_flag` | Boolean (Y/N) |
+| `SAFETY_CRITICAL_ITEM_GROUP` | aggregated subquery | via `mapping.tag_sece` |
+| `SAFETY_CRITICAL_ITEM_REASON_AWARDED` | `tag.safety_critical_reason` | free text |
+| `TAG_DESCRIPTION` | `tag.description` | |
+| `ACTION_STATUS` | `tag.sync_status` | SCD status: `New`, `Updated`, `Unchanged`, `Deleted` |
+| `ACTION_DATE` | `tag.sync_timestamp` | formatted `YYYY-MM-DD` |
+
+**SCD Tracking**: All tag changes logged to `project_core.tag_history` (Status = New/Updated/Deleted).
+
+---
+
+#### EIS Seq 206 — Equipment Register
+**File**: `JDAW-KVE-E-JA-6944-00001-004-{revision}.CSV`
+**Flow**: `export_equipment_register_flow`
+**Source**: `project_core.equipment` WHERE `object_status = 'Active'`
+
+| Column | Source | Notes |
+|---|---|---|
+| `PLANT_CODE` | `plant.code` | |
+| `EQUIPMENT_NUMBER` | `equipment.equipment_number` | format: `Equip_{tag_name}` |
+| `EQUIPMENT_NAME` | `equipment.name` | |
+| `MODEL_PART_CODE` | `model_part.code` (FK resolve) | empty if unmatched |
+| `MANUFACTURER` | `company.name` (via `equipment.manufacturer_id`) | FK resolve |
+| `VENDOR` | `company.name` (via `equipment.vendor_id`) | FK resolve |
+| `SERIAL_NUMBER` | `equipment.serial_number` | |
+| `EQUIPMENT_STATUS` | `equipment.status` | e.g. `Active`, `Spare` |
+
+---
+
+#### EIS Seq 209 — Model Part Register
+**File**: `JDAW-KVE-E-JA-6944-00001-005-{revision}.CSV`
+**Flow**: `export_model_part_flow`
+**Source**: `reference_core.model_part` WHERE `object_status = 'Active'`
+
+| Column | Source | Notes |
+|---|---|---|
+| `PLANT_CODE` | `plant.code` | always `JDA` |
+| `MODEL_PART_CODE` | `model_part.code` | unique identifier |
+| `MODEL_PART_NAME` | `model_part.name` | |
+| `PART_TYPE` | `model_part.part_type` | e.g., Pump, Valve, Motor |
+| `SPECIFICATIONS` | `model_part.specs` | technical details |
+
+---
+
+### 2.3 Property & Classification Exports
+
+#### EIS Seq 303 — Tag Property Values (EAV)
+**File**: `JDAW-KVE-E-JA-6944-00001-010-{revision}.CSV`
+**Flow**: `export_tag_properties_flow`
+**Source**: `project_core.tag_property_value` WHERE `object_status = 'Active'`
+
+| Column | Source | Notes |
+|---|---|---|
+| `PLANT_CODE` | `plant.code` | |
+| `TAG_NAME` | `tag.tag_name` | FK resolve |
+| `PROPERTY_CODE` | `tag_class_property.code` | CFIHOS code (e.g., `CFIHOS-12345678`) |
+| `PROPERTY_VALUE` | `tag_property_value.value` | actual value |
+| `UNIT` | `tag_property_value.unit` | optional unit |
+
+---
+
+#### EIS Seq 301 — Equipment Property Values (EAV)
+**File**: `JDAW-KVE-E-JA-6944-00001-011-{revision}.CSV`
+**Flow**: `export_equipment_properties_flow`
+**Source**: `project_core.equipment_property_value` WHERE `object_status = 'Active'`
+
+| Column | Source | Notes |
+|---|---|---|
+| `PLANT_CODE` | `plant.code` | |
+| `EQUIPMENT_NUMBER` | `equipment.equipment_number` | FK resolve |
+| `PROPERTY_CODE` | `equipment_class_property.code` | property name/id |
+| `PROPERTY_VALUE` | `equipment_property_value.value` | actual value |
+| `UNIT` | `equipment_property_value.unit` | measurement unit |
+
+---
+
+#### EIS Seq 307 — Tag Class Properties (Schema Definition)
+**File**: `JDAW-KVE-E-JA-6944-00001-009-{revision}.CSV`
+**Flow**: `export_tag_class_properties_flow`
+**Source**: `ontology_core.tag_class_property` WHERE `object_status = 'Active'`
+
+| Column | Source | Notes |
+|---|---|---|
+| `TAG_CLASS_NAME` | `tag_class.class_name` | e.g., Pressure Transmitter, Valve |
+| `PROPERTY_CODE` | `tag_class_property.code` | CFIHOS code or internal ID |
+| `PROPERTY_NAME` | `tag_class_property.name` | human-readable name |
+| `DATA_TYPE` | `tag_class_property.data_type` | String, Number, Boolean, Enum |
+| `IS_MANDATORY` | `tag_class_property.is_mandatory` | Boolean |
+| `VALID_VALUES` | `tag_class_property.valid_values_json` | JSON enum or free-form |
+
+---
+
+### 2.4 Physical Connections & References
+
+#### EIS Seq 212 — Tag Physical Connections
+**File**: `JDAW-KVE-E-JA-6944-00001-006-{revision}.CSV`
+**Flow**: `export_tag_connections_flow`
+**Source**: `mapping.tag_connection` WHERE `connection_type = 'Signal Cable'`
+
+| Column | Source | Notes |
+|---|---|---|
+| `FROM_TAG_NAME` | `from_tag.tag_name` | source of signal |
+| `TO_TAG_NAME` | `to_tag.tag_name` | destination of signal |
+| `CONNECTION_TYPE` | `tag_connection.connection_type` | Signal Cable, etc. |
+| `CABLE_NUMBER` | `tag_connection.cable_number` | reference |
+| `PLANT_CODE` | `plant.code` | |
+
+---
+
+#### EIS Seq 214 — Purchase Order Register
+**File**: `JDAW-KVE-E-JA-6944-00001-008-{revision}.CSV`
+**Flow**: `export_purchase_order_flow`
+**Source**: `reference_core.purchase_order` WHERE `object_status = 'Active'`
+
+| Column | Source | Notes |
+|---|---|---|
+| `PLANT_CODE` | `plant.code` | |
+| `PO_CODE` | `purchase_order.code` | unique identifier |
+| `PO_TITLE` | `purchase_order.title` | |
+| `PO_DATE` | `purchase_order.po_date` | formatted `YYYY-MM-DD` |
+| `PO_STATUS` | `purchase_order.status` | e.g., Active, Closed |
+
+---
+
+### 2.5 Document Cross-Reference Exports
+
+#### EIS Seq 412 — Document References to Tag
+**File**: `JDAW-KVE-E-JA-6944-00001-016-{revision}.CSV`
+**Flow**: `export_document_tag_mapping_flow`
+**Source**: `mapping.document_tag` JOIN `project_core.document` WHERE `object_status = 'Active'`
+
+| Column | Source | Notes |
+|---|---|---|
+| `DOCUMENT_NUMBER` | `document.doc_number` | |
+| `PLANT_CODE` | `plant.code` | |
+| `TAG_NAME` | `tag.tag_name` | FK resolve |
+
+---
+
+#### EIS Seq 413 — Document References to Equipment
+**File**: `JDAW-KVE-E-JA-6944-00001-019-{revision}.CSV`
+**Flow**: `export_document_equipment_mapping_flow`
+**Source**: `mapping.document_equipment` JOIN `project_core.document` WHERE `object_status = 'Active'`
+
+| Column | Source | Notes |
+|---|---|---|
+| `DOCUMENT_NUMBER` | `document.doc_number` | |
+| `PLANT_CODE` | `plant.code` | |
+| `EQUIPMENT_NUMBER` | `equipment.equipment_number` | format: `Equip_{tag_name}` |
+
+---
+
+#### EIS Seq 414 — Document References to Model Part
+**File**: `JDAW-KVE-E-JA-6944-00001-020-{revision}.CSV`
+**Flow**: `export_document_model_part_mapping_flow`
+**Source**: `mapping.document_model_part` JOIN `project_core.document` WHERE `object_status = 'Active'`
+
+| Column | Source | Notes |
+|---|---|---|
+| `DOCUMENT_NUMBER` | `document.doc_number` | |
+| `PLANT_CODE` | `plant.code` | |
+| `MODEL_PART_CODE` | `model_part.code` | FK resolve |
+
+---
+
+#### EIS Seq 408–411 — Document References to Site/Plant/Area/ProcessUnit
+**Files**:
+- `408`: `JDAW-KVE-E-JA-6944-00001-024-{revision}.CSV` → Doc→Site
+- `409`: `JDAW-KVE-E-JA-6944-00001-023-{revision}.CSV` → Doc→Plant
+- `410`: `JDAW-KVE-E-JA-6944-00001-018-{revision}.CSV` → Doc→ProcessUnit (merged with 204)
+- `411`: `JDAW-KVE-E-JA-6944-00001-017-{revision}.CSV` → Doc→Area (merged with 203)
+
+**Standard columns per type**:
+| Doc→Site | Doc→Plant | Doc→Area | Doc→ProcessUnit |
+|---|---|---|---|
+| `DOCUMENT_NUMBER`, `SITE_CODE` | `DOCUMENT_NUMBER`, `PLANT_CODE` | `DOCUMENT_NUMBER`, `AREA_CODE` | `DOCUMENT_NUMBER`, `PROCESS_UNIT_CODE` |
+
+---
+
+#### EIS Seq 420 — Document References to Purchase Order
+**File**: `JDAW-KVE-E-JA-6944-00001-022-{revision}.CSV`
+**Flow**: `export_document_purchase_order_mapping_flow`
+**Source**: `mapping.document_purchase_order` JOIN `project_core.document` WHERE `object_status = 'Active'`
+
+| Column | Source | Notes |
+|---|---|---|
+| `DOCUMENT_NUMBER` | `document.doc_number` | |
+| `PLANT_CODE` | `plant.code` | |
+| `PO_CODE` | `purchase_order.code` | FK resolve |
+
+---
+
+## JDAW EIS Code Matrix
+
+Unified mapping between EIS sequence numbers, input sources, and output codes:
+
+| EIS Seq | Source XLSX | Output CSV Code | Output Filename | Semantic Content | Data Layer |
+|---|---|---|---|---|---|
+| 203 | 203-Area.xlsx | `-017-` | Area.CSV | Area spatial hierarchy | reference |
+| 204 | 204-ProcessUnit.xlsx | `-018-` | ProcessUnit.CSV | Process unit breakdown | reference |
+| 205 | 205-Tag-register.xlsx | `-003-` | Tag-register.CSV | **Tag master data** | **project** |
+| 206 | 206-Equipment-register.xlsx | `-004-` | Equipment.CSV | Equipment assets | project |
+| 209 | 209-Model-Part-register.xlsx | `-005-` | ModelPart.CSV | Component catalog | reference |
+| 212 | 212-Tag Physical Connection.xlsx | `-006-` | TagConnections.CSV | Signal cables/wiring | mapping |
+| 214 | 214-Purchase-order.xlsx | `-008-` | PurchaseOrder.CSV | Purchase orders | reference |
+| 301 | 301-Equipment-property-value.xlsx | `-011-` | EquipmentProperties.CSV | Equipment EAV | project |
+| 303 | 303-Tag-property-value.xlsx | `-010-` | TagProperties.CSV | Tag EAV (CFIHOS) | project |
+| 307 | 307-Tag-class-properties.xlsx | `-009-` | TagClassProperties.CSV | Class property schema | ontology |
+| 408 | 408-Document_References_to_Site.xlsx | `-024-` | DocToSite.CSV | Doc↔Site links | mapping |
+| 409 | 409-Document_References_to_PlantCode.xlsx | `-023-` | DocToPlant.CSV | Doc↔Plant links | mapping |
+| 410 | 410-Document_References_to_ProcessUnit.xlsx | `-018-` | (merged into 204) | Doc↔ProcessUnit links | mapping |
+| 411 | 411-Document_References_to_Area.xlsx | `-017-` | (merged into 203) | Doc↔Area links | mapping |
+| 412 | 412-Document_References_to_Tag.xlsx | `-016-` | DocToTag.CSV | Doc↔Tag links | mapping |
+| 413 | 413-Document_References_to_Equipment.xlsx | `-019-` | DocToEquipment.CSV | Doc↔Equipment links | mapping |
+| 414 | 414-Document_References_to_ModelPart.xlsx | `-020-` | DocToModelPart.CSV | Doc↔ModelPart links | mapping |
+| 420 | 420-Document_References_to_PurchaseOrder.xlsx | `-022-` | DocToPurchaseOrder.CSV | Doc↔PO links | mapping |
+
+---
+
+## Export Invariants (All EIS Outputs)
+
+- **Encoding**: always `utf-8-sig` (UTF-8 with BOM for Excel)
+- **Sanitization**: `sanitize_dataframe()` called unconditionally before write
+- **Status filter**: `object_status = 'Active'` enforced at both SQL and Python layers
+- **File extension**: uppercase `.CSV` not `.csv`
+- **Audit record**: every export run writes to `audit_core.sync_run_stats` with revision metadata
+- **Revision pattern**: `{doc_revision}` = document revision code (e.g., `A36`, `B01`)
+- **Null handling**: SQL NULLs → empty string in CSV; literal 'NA' → preserved as-is (dtype=str, na_filter=False)
+- **FK resolution**: unresolved FKs result in empty column value; original raw value always stored in `_raw` column for audit
+- **Validation**: Built-in rules applied via `apply_builtin_fixes()` (see `etl/tasks/export_validation.py`)
+
+---
+
+## Python Code Mapping (from eis-csv-creator.py)
+
+```python
+doc_revision = "A36"
+eis_registers = {
+    "203-Area.xlsx": "JDAW-KVE-E-JA-6944-00001-017-{0}.CSV",
+    "204-ProcessUnit.xlsx": "JDAW-KVE-E-JA-6944-00001-018-{0}.CSV",
+    "205-Tag-register.xlsx": "JDAW-KVE-E-JA-6944-00001-003-{0}.CSV",
+    "206-Equipment-register.xlsx": "JDAW-KVE-E-JA-6944-00001-004-{0}.CSV",
+    "209-Model-Part-register.xlsx": "JDAW-KVE-E-JA-6944-00001-005-{0}.CSV",
+    "212-Tag Physical Connection.xlsx": "JDAW-KVE-E-JA-6944-00001-006-{0}.CSV",
+    "214-Purchase-order.xlsx": "JDAW-KVE-E-JA-6944-00001-008-{0}.CSV",
+    "301-Equipment-property-value.xlsx": "JDAW-KVE-E-JA-6944-00001-011-{0}.CSV",
+    "303-Tag-property-value.xlsx": "JDAW-KVE-E-JA-6944-00001-010-{0}.CSV",
+    "307-Tag-class-properties.xlsx": "JDAW-KVE-E-JA-6944-00001-009-{0}.CSV",
+    "408-Document_References_to_Site.xlsx": "JDAW-KVE-E-JA-6944-00001-024-{0}.CSV",
+    "409-Document_References_to_PlantCode.xlsx": "JDAW-KVE-E-JA-6944-00001-023-{0}.CSV",
+    "410-Document_References_to_ProcessUnit.xlsx": "JDAW-KVE-E-JA-6944-00001-018-{0}.CSV",
+    "411-Document_References_to_Area.xlsx": "JDAW-KVE-E-JA-6944-00001-017-{0}.CSV",
+    "412-Document_References_to_Tag.xlsx": "JDAW-KVE-E-JA-6944-00001-016-{0}.CSV",
+    "413-Document_References_to_Equipment.xlsx": "JDAW-KVE-E-JA-6944-00001-019-{0}.CSV",
+    "414-Document_References_to_ModelPart.xlsx": "JDAW-KVE-E-JA-6944-00001-020-{0}.CSV",
+    "420-Document_References_to_PurchaseOrder.xlsx": "JDAW-KVE-E-JA-6944-00001-022-{0}.CSV",
+}
+```
+
+---
+
+## Reference Documentation
+
+- **Architecture & Infrastructure**: `@docs/architecture.md`
+- **Logic Rules & SCD**: `@docs/logic-manifesto.md`
+- **Database Schema**: `@docs/schema.sql`
+- **Integration Examples**: `@docs/eis-mapping-integration-guide.md`
+
