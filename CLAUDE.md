@@ -5,15 +5,6 @@ Ingests EIS Excel/CSV exports → structured PostgreSQL → EIS CSV outputs.
 
 ---
 
-## Architecture Tracking
-- After each planning session and decision on changes, add comments to the architecture.md file.
-- Analyze the content in @architecture.md before each change for potential conflicts and errors, and only add consistent and relevant architectural decisions.
-- If there are outdated blocks, delete or update them based on the latest planning sessions.
-- Comments and descriptions should be concise, in English, and without loss of meaning.
-
----
-
-
 ## Language Policy
 - **Responses to user**: Russian only
 - **Code** (Python, SQL, YAML, Bash, Cypher): all comments, docstrings, variable names in English
@@ -54,7 +45,23 @@ sql/schema/schema.sql # CANONICAL schema — only source of truth for table/colu
 config/db_config.yaml # DB connection, file paths, schema names
 data/current/         # Symlinks → /mnt/shared-data/ram-user/Jackdaw/
 data/_history/        # Symlinks → historical snapshots
+docs/                 # Technical documentation — always read before changing architecture
 ```
+
+---
+
+## Documentation Index (docs/)
+
+**Always read relevant docs BEFORE making changes. Always update relevant docs AFTER making changes.**
+
+| File | Purpose | Read when... |
+|---|---|---|
+| `docs/architecture.md` | Data flow diagram, flow execution order, ADR log, key design decisions | Before any structural change to flows, schema, or domain logic |
+| `docs/infrastructure.md` | Hardware, Proxmox/LXC layout, Docker services, networking (Tailscale/Caddy), AI/ML stack, storage paths | Before any infra, Docker, or path-related change |
+| `docs/file-specification.md` | Full spec for all source XLSX inputs (MDR, MTR, Reference Data, CFIHOS RDL) and EIS CSV outputs — column mappings, processing rules, FK resolution | Before touching any ETL read/write/export logic |
+
+> **Rule**: If `docs/` content contradicts the code after a change — update `docs/` to match code, not the other way around.
+> **Rule**: Do not append contradictions — delete or replace outdated blocks.
 
 ---
 
@@ -77,10 +84,31 @@ seed_ontology → sync_tag_data → sync_tag_hierarchy → export_tag_register
 
 ---
 
-## Reference Docs (load on demand with @)
-- Architecture + infra: `@docs/architecture.md`
-- Source file schemas (inputs): `@docs/source-files.md`
-- EIS output schemas (reports): `@docs/report-files.md`
+## Doc Maintenance Protocol (MANDATORY)
+
+After **every** code change or planning session, Claude MUST:
+
+1. **Read** `docs/architecture.md` — check for conflicts with the change just made
+2. **Update** the relevant `docs/` file(s):
+   - New flow or task added → update `docs/architecture.md` (Data Flow section)
+   - ETL logic changed (SCD, hashing, FK) → update `docs/logic-manifesto.md`
+   - Source/output file format changed → update `docs/file-specification.md`
+   - New Docker service or infra change → update `docs/architecture.md` (Docker Services table)
+3. **Rules for doc updates**:
+   - Delete or replace outdated blocks — do not append contradictions
+   - Keep descriptions concise, in English, without loss of meaning
+   - Add an ADR (Architecture Decision Record) entry in `docs/architecture.md` for any significant structural decision
+
+**Format for ADR entries in architecture.md:**
+```
+## ADR-NNN: [Short Title]
+- **Date**: YYYY-MM-DD
+- **Decision**: What was decided
+- **Reason**: Why
+- **Impact**: Which files/tables/flows are affected
+```
+
+---
 
 ## Coding Rules (always loaded)
 See `.claude/rules/` — loaded automatically:
