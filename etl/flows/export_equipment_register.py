@@ -2,8 +2,6 @@
 
 import re
 import sys
-import uuid
-from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -19,8 +17,8 @@ if str(script_root) not in sys.path:
     sys.path.append(str(script_root))
 
 from tasks.common import load_config, get_db_engine_url
-from tasks.export_transforms import sanitize_dataframe, transform_equipment_register, write_csv
-from tasks.export_validation import load_validation_rules, apply_builtin_fixes
+from tasks.export_transforms import transform_equipment_register
+from tasks.export_pipeline import run_export_pipeline
 
 # Module-level config — same pattern as export_tag_register.py
 config = load_config()
@@ -107,38 +105,6 @@ def extract_equipment_register(engine: Engine) -> pd.DataFrame:
     return df
 
 
-def _log_audit_start(engine: Engine, run_id: str, source_file: str) -> None:
-    """Insert audit start record into sync_run_stats."""
-    with engine.begin() as conn:
-        conn.execute(text("""
-            INSERT INTO audit_core.sync_run_stats
-                (run_id, target_table, start_time, source_file)
-            VALUES (:rid, :tbl, :st, :sf)
-        """), {
-            "rid": run_id,
-            "tbl": "project_core.tag",
-            "st": datetime.now(),
-            "sf": source_file,
-        })
-
-
-def _log_audit_end(
-    engine: Engine,
-    run_id: str,
-    row_count: int,
-    count_errors: int = 0,
-) -> None:
-    """Update audit record with end time, exported row count, and error count."""
-    with engine.begin() as conn:
-        conn.execute(text("""
-            UPDATE audit_core.sync_run_stats
-               SET end_time        = :et,
-                   count_unchanged = :rc,
-                   count_errors    = :er
-             WHERE run_id = :rid
-        """), {"et": datetime.now(), "rc": row_count, "er": count_errors, "rid": run_id})
-
-
 # ---------------------------------------------------------------------------
 # Prefect flow
 # ---------------------------------------------------------------------------
@@ -161,14 +127,14 @@ def export_equipment_register_flow(
         output_dir: Destination directory. Defaults to config storage.export_dir.
 
     Returns:
-        dict with key "exported" = number of rows written to CSV.
+        dict with keys "exported" (rows written) and "violations" (total violations found).
 
     Raises:
         ValueError: If doc_revision does not match [A-Z]\\d{2} pattern.
 
     Example:
         >>> export_equipment_register_flow(doc_revision="A01")
-        {'exported': 850}
+        {'exported': 850, 'violations': 0}
     """
     logger = get_run_logger()
 
@@ -179,29 +145,17 @@ def export_equipment_register_flow(
         )
 
     engine = create_engine(DB_URL)
-    resolved_dir = output_dir or _EXPORT_DIR
-    output_path = Path(resolved_dir) / _FILE_TEMPLATE.format(revision=doc_revision)
+    output_path = Path(output_dir or _EXPORT_DIR) / _FILE_TEMPLATE.format(revision=doc_revision)
 
-    run_id = str(uuid.uuid4())
-    logger.info(f"Starting export run {run_id} → {output_path}")
-    _log_audit_start(engine, run_id, str(output_path))
-
-    raw_df = extract_equipment_register(engine)
-    # Sanitize before validation to eliminate encoding false-positives
-    sanitized_df = sanitize_dataframe(raw_df)
-
-    # Built-in validation: auto-fix violations, block on unfixable critical rules
-    builtin_rules = load_validation_rules(engine, scope="equipment", builtin_only=True)
-    fixed_df, all_violations = apply_builtin_fixes(
-        sanitized_df, builtin_rules, "equipment_register", logger
+    return run_export_pipeline(
+        engine=engine,
+        scope="equipment",
+        extract_fn=extract_equipment_register,
+        transform_fn=transform_equipment_register,
+        output_path=output_path,
+        report_name="equipment_register",
+        logger=logger,
     )
-
-    clean_df = transform_equipment_register(fixed_df)
-    row_count = write_csv(clean_df, output_path)
-    logger.info(f"Exported {row_count} rows to {output_path}")
-
-    _log_audit_end(engine, run_id, row_count, count_errors=len(all_violations))
-    return {"exported": row_count}
 
 
 if __name__ == "__main__":

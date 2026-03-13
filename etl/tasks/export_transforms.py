@@ -119,10 +119,55 @@ def write_csv(df: pd.DataFrame, path: Path) -> int:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Sanitize encoding artefacts before writing — mandatory, cannot be skipped
+    # Second sanitize pass — mandatory safety net. Cannot be removed.
+    # First pass (in flow, before validation) eliminates encoding false-positives.
+    # This pass guarantees no artefacts survive transform_*() column renames and row filters.
     clean_df = sanitize_dataframe(df)
     clean_df.to_csv(path, index=False, encoding="utf-8-sig")
     return len(clean_df)
+
+
+# ---------------------------------------------------------------------------
+# Shared EIS transform logic
+# ---------------------------------------------------------------------------
+
+def _apply_common_eis_transforms(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply the subset of EIS transforms shared by all register exports.
+
+    Steps performed (in order):
+    1. Normalise column names to UPPER_CASE (PostgreSQL returns lowercase aliases).
+    2. Second-level defence: retain only object_status = 'Active' rows.
+    3. Compute ACTION_STATUS: Void tag_status → 'Deleted', otherwise SYNC_STATUS.
+    4. Compute ACTION_DATE from SYNC_TIMESTAMP (DD.MM.YYYY).
+    5. Drop internal columns: OBJECT_STATUS, SYNC_STATUS, SYNC_TIMESTAMP.
+
+    Register-specific filtering and column reordering are the caller's responsibility.
+
+    Args:
+        df: Raw DataFrame with columns as returned by the SQL extract query.
+
+    Returns:
+        New DataFrame with common EIS columns applied.
+    """
+    df = df.copy()
+    df.columns = df.columns.str.upper()
+
+    # Second-level defence: only Active records exported
+    df = df[df["OBJECT_STATUS"] == "Active"]
+
+    # ACTION_STATUS: Void tag_status always maps to Deleted regardless of sync_status
+    # Case-insensitive check — DB may store 'Void', 'VOID', or 'void' depending on source
+    df["ACTION_STATUS"] = df.apply(
+        lambda row: "Deleted" if str(row.get("TAG_STATUS") or "").upper() == "VOID"
+                    else row.get("SYNC_STATUS", ""),
+        axis=1,
+    )
+
+    # Convert timestamp to date-only string for EIS format
+    df["ACTION_DATE"] = pd.to_datetime(df["SYNC_TIMESTAMP"], errors="coerce").dt.strftime("%d.%m.%Y")
+
+    return df.drop(columns=["OBJECT_STATUS", "SYNC_STATUS", "SYNC_TIMESTAMP"], errors="ignore")
 
 
 # ---------------------------------------------------------------------------
@@ -178,29 +223,10 @@ def transform_tag_register(df: pd.DataFrame) -> pd.DataFrame:
         >>> list(result.columns)[:3]
         ['PLANT_CODE', 'TAG_NAME', 'PARENT_TAG_NAME']
     """
-    # PostgreSQL returns unquoted aliases in lowercase; normalise to UPPER for EIS columns
-    df = df.copy()
-    df.columns = df.columns.str.upper()
-
-    # Second-level defence: only Active records exported
-    df = df[df["OBJECT_STATUS"] == "Active"]
-
-    # ACTION_STATUS: Void tag_status always maps to Deleted regardless of sync_status
-    # Case-insensitive check — DB may store 'Void', 'VOID', or 'void' depending on source
-    df["ACTION_STATUS"] = df.apply(
-        lambda row: "Deleted" if str(row.get("TAG_STATUS") or "").upper() == "VOID" else row.get("SYNC_STATUS", ""),
-        axis=1,
-    )
-    df = df.drop(columns=["SYNC_STATUS"], errors="ignore")
-
-    # Convert timestamp to date-only string for EIS format
-    df["ACTION_DATE"] = pd.to_datetime(df["SYNC_TIMESTAMP"], errors="coerce").dt.strftime("%d.%m.%Y")
+    df = _apply_common_eis_transforms(df)
 
     # Normalise PARENT_TAG_NAME: literal 'unset' → empty string
     df["PARENT_TAG_NAME"] = df["PARENT_TAG_NAME"].replace("unset", "")
-
-    # Drop internal columns not exported to EIS
-    df = df.drop(columns=["OBJECT_STATUS", "SYNC_TIMESTAMP"], errors="ignore")
 
     # Reorder to strict EIS column sequence
     available = [c for c in _TAG_REGISTER_COLUMNS if c in df.columns]
@@ -260,28 +286,13 @@ def transform_equipment_register(df: pd.DataFrame) -> pd.DataFrame:
         >>> list(result.columns)[:3]
         ['EQUIPMENT_NUMBER', 'PLANT_CODE', 'TAG_NAME']
     """
-    # PostgreSQL returns unquoted aliases in lowercase; normalise to UPPER for EIS columns
-    df = df.copy()
-    df.columns = df.columns.str.upper()
+    df = _apply_common_eis_transforms(df)
 
-    # Second-level defence: only Active records with equipment number exported
-    df = df[df["OBJECT_STATUS"] == "Active"]
+    # Equipment-specific second-level defence: reject rows without equipment number
     df = df[df["EQUIPMENT_NUMBER"].notna() & (df["EQUIPMENT_NUMBER"] != "")]
 
-    # ACTION_STATUS: Void tag_status always maps to Deleted regardless of sync_status
-    # Case-insensitive check — DB may store 'Void', 'VOID', or 'void' depending on source
-    df["ACTION_STATUS"] = df.apply(
-        lambda row: "Deleted" if str(row.get("TAG_STATUS") or "").upper() == "VOID"
-                    else row.get("SYNC_STATUS", ""),
-        axis=1,
-    )
-    df = df.drop(columns=["SYNC_STATUS"], errors="ignore")
-
-    # Convert timestamp to date-only string for EIS format
-    df["ACTION_DATE"] = pd.to_datetime(df["SYNC_TIMESTAMP"], errors="coerce").dt.strftime("%d.%m.%Y")
-
-    # Drop internal columns not exported to EIS
-    df = df.drop(columns=["OBJECT_STATUS", "SYNC_TIMESTAMP", "TAG_STATUS"], errors="ignore")
+    # TAG_STATUS is internal; not part of EIS equipment schema
+    df = df.drop(columns=["TAG_STATUS"], errors="ignore")
 
     # Reorder to strict EIS column sequence
     available = [c for c in _EQUIPMENT_REGISTER_COLUMNS if c in df.columns]

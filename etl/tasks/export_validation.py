@@ -191,7 +191,8 @@ def _apply_fix(df: pd.DataFrame, col_spec: str, fix_expr: str) -> pd.DataFrame:
     """
     Apply a fix_expression to df columns matching col_spec.
 
-    Modifies a copy of df. The original DataFrame (and the DB) are unchanged.
+    Mutates df in-place. Caller is responsible for passing a copy if immutability
+    of the original is required (apply_builtin_fixes owns this invariant).
 
     Supported fix_expression syntax:
         replace "X" "Y"   — replace substring X with Y in target columns
@@ -200,14 +201,13 @@ def _apply_fix(df: pd.DataFrame, col_spec: str, fix_expr: str) -> pd.DataFrame:
         truncate N        — truncate string to at most N characters
 
     Args:
-        df:        Source DataFrame (will not be mutated).
+        df:        DataFrame to fix (mutated in-place).
         col_spec:  '*' or specific column name (case-insensitive).
         fix_expr:  Fix expression string.
 
     Returns:
-        New DataFrame with fix applied.
+        The same df object after applying the fix.
     """
-    df = df.copy()
     fix_expr = fix_expr.strip()
 
     # Determine target columns
@@ -315,6 +315,9 @@ def apply_builtin_fixes(
         Tuple of (fixed_df, all_violations).
         fixed_df has auto-fixes applied; all_violations lists every violation found.
     """
+    # Guard: scope='sync' rules carry plain-English rule_expression not parseable by DSL
+    rules = [r for r in rules if r.get("scope") != "sync"]
+
     fixed_df = df.copy()
     all_violations: list[dict[str, Any]] = []
 
@@ -334,21 +337,39 @@ def apply_builtin_fixes(
         if violating_rows.empty:
             continue
 
-        # Collect violation details
+        # Determine target column for enriched violation records
+        col_spec = clause.get("col", "*") if clause["type"] == "simple" else "*"
+
+        # Resolve identity columns once per rule (case-insensitive, nullable)
+        _tag_col = next((c for c in fixed_df.columns if c.upper() == "TAG_NAME"), None)
+        _equip_col = next((c for c in fixed_df.columns if c.upper() == "EQUIPMENT_NUMBER"), None)
+
+        # Collect violation details with row identity for observability
         row_violations = [
             {
-                "rule_code": rule_code,
-                "row_index": idx,
-                "detail": f"Rule {rule_code!r} violated at row {idx}",
+                "rule_code":      rule_code,
+                "row_index":      idx,
+                "object_name":    str(
+                    (fixed_df.at[idx, _tag_col] if _tag_col else None)
+                    or (fixed_df.at[idx, _equip_col] if _equip_col else None)
+                    or idx
+                ),
+                "column_name":    col_spec if col_spec != "*" else None,
+                "original_value": str(fixed_df.at[idx, col_spec])[:200] if col_spec != "*" else None,
+                "detail":         f"Rule {rule_code!r} violated at row {idx}",
             }
             for idx in violating_rows.index
         ]
         all_violations.extend(row_violations)
 
         if fix_expr:
-            # Apply auto-fix — determine target column from parsed clause
-            col_spec = clause.get("col", "*") if clause["type"] == "simple" else "*"
-            fixed_df = _apply_fix(fixed_df, col_spec, fix_expr)
+            # AND-clause fix applies to all string columns — warn if this is unexpected
+            if clause["type"] == "and":
+                logger.warning(
+                    f"[{report_name}] Rule {rule_code!r}: AND-clause with fix_expression — "
+                    f"fix will be applied to ALL string columns. Verify this is intentional."
+                )
+            _apply_fix(fixed_df, col_spec, fix_expr)
             logger.info(
                 f"[{report_name}] Rule {rule_code!r}: auto-fixed {len(row_violations)} "
                 f"violation(s) using fix_expression={fix_expr!r}"
@@ -396,6 +417,9 @@ def run_full_scan(
     Returns:
         List of violation dicts ready for store_validation_results().
     """
+    # Guard: scope='sync' rules carry plain-English rule_expression not parseable by DSL
+    rules = [r for r in rules if r.get("scope") != "sync"]
+
     results: list[dict[str, Any]] = []
     run_time = datetime.now()
 
