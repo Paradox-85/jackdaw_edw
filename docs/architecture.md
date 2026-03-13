@@ -57,6 +57,10 @@ sync_tag_hierarchy flow
         ↓  second pass → resolves tag.parent_tag_id
 export_tag_register flow
         ↓  Reverse ETL → EIS CSV (UTF-8 BOM, seq 003)
+export_tag_properties flow
+        ↓  Reverse ETL → EIS CSV (UTF-8 BOM, seq 303, Functional concept)
+export_equipment_properties flow
+        ↓  Reverse ETL → EIS CSV (UTF-8 BOM, seq 301, Physical concept)
 
 Parallel enrichment:
   Neo4j  ← Tag→Parent, Tag→Doc graph edges
@@ -442,6 +446,7 @@ Raw fields are included in the export SQL SELECT but dropped by `transform_*` be
 | `migration_005_validation_rule_schema_v2.sql` | 2026-03-13 | ADD tier, category, check_type, source_ref, sort_order to rule table; tier/category/check_type to validation_result |
 | `migration_005_update_existing_rules.sql` | 2026-03-13 | Backfill tier/category/check_type/source_ref on all 42 existing rules |
 | `migration_005_new_validation_rules.sql` | 2026-03-13 | INSERT 27 new rules (L0×3, L1×8, L2×9, L3×6, L4×2) from gap analysis |
+| `migration_006_property_value_validation_rules.sql` | 2026-03-13 | INSERT 10 rules for scopes 'tag_property' and 'equipment_property' (L0×4, L1×4, L2×2) |
 
 ### Key Code Locations
 
@@ -451,5 +456,19 @@ Raw fields are included in the export SQL SELECT but dropped by `transform_*` be
 | `etl/tasks/export_pipeline.py` | run_export_pipeline orchestrator — extract → sanitize → validate → transform → write → audit |
 | `etl/tasks/export_transforms.py` | clean_engineering_text(), sanitize_dataframe(), EIS column transforms |
 | `etl/flows/export_tag_register.py` | Prefect @flow entry point — passes config to run_export_pipeline |
+| `etl/flows/export_tag_properties.py` | Tag Property Values export (EIS seq 303, scope='tag_property') |
+| `etl/flows/export_equipment_properties.py` | Equipment Property Values export (EIS seq 301, scope='equipment_property') |
 | `sql/schema/schema.sql` | Canonical table definitions (single source of truth) |
 | `docs/validation_rules_gap_analysis.md` | Full gap analysis vs QA spec; source for migration_005 rules |
+
+---
+
+## ADR-008: Property Value Export Routing by mapping_concept
+- **Date**: 2026-03-13
+- **Decision**: `project_core.property_value` строки маршрутизируются в два отдельных EIS-файла на основе `ontology_core.class_property.mapping_concept`:
+  - `ILIKE '%Functional%' AND NOT ILIKE '%common%'` → seq 303 (file `-010-`)
+  - `ILIKE '%Physical%' AND NOT ILIKE '%common%'` → seq 301 (file `-011-`)
+  - Строки с `mapping_concept = 'common'` из обоих файлов исключены — они уже присутствуют в Tag/Equipment Register.
+  - Строки с `mapping_concept = 'Functional Physical'` попадают в оба файла одновременно (корректное поведение по спецификации CFIHOS).
+- **Reason**: `mapping_concept` может содержать составные значения (`'Functional Physical'`), поэтому точное равенство неприемлемо — используется `ILIKE '%...%'`.
+- **Impact**: новые файлы `etl/flows/export_tag_properties.py`, `etl/flows/export_equipment_properties.py`; новые transform-функции в `etl/tasks/export_transforms.py`; новые validation rule scope `'tag_property'` и `'equipment_property'` в `migration_006`.

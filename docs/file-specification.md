@@ -329,30 +329,40 @@ TAG_DESCRIPTION · ACTION_STATUS · ACTION_DATE
 #### EIS Seq 303 — Tag Property Values (EAV)
 **File**: `JDAW-KVE-E-JA-6944-00001-010-{revision}.CSV`
 **Flow**: `export_tag_properties_flow`
-**Source**: `project_core.tag_property_value` WHERE `object_status = 'Active'`
+**Source**: `project_core.property_value` JOIN `ontology_core.class_property`
+WHERE `pv.object_status = 'Active'`
+  AND `cp.mapping_concept ILIKE '%Functional%'`
+  AND `cp.mapping_concept NOT ILIKE '%common%'`
+
+**Routing logic**: строки из `project_core.property_value` направляются в этот файл если их маппинг (`ontology_core.class_property.mapping_concept`) содержит подстроку `Functional` (без учёта регистра). Строки с `mapping_concept` содержащим `common` исключены из обоих property-регистров. Строки с составным `'Functional Physical'` попадают как в seq 303, так и в seq 301.
 
 | Column | Source | Notes |
 |---|---|---|
-| `PLANT_CODE` | `plant.code` | |
-| `TAG_NAME` | `tag.tag_name` | FK resolve |
-| `PROPERTY_CODE` | `tag_class_property.code` | CFIHOS code (e.g., `CFIHOS-12345678`) |
-| `PROPERTY_VALUE` | `tag_property_value.value` | actual value |
-| `UNIT` | `tag_property_value.unit` | optional unit |
+| `PLANT_CODE` | `plant.code` | via `tag.plant_id` LEFT JOIN |
+| `TAG_NAME` | `tag.tag_name` | INNER JOIN (обязателен) |
+| `PROPERTY_CODE` | `ontology_core.property.code` | CFIHOS code (e.g., `CFIHOS-12345678`) |
+| `PROPERTY_VALUE` | `property_value.property_value` | actual value |
+| `UNIT` | `property_value.property_uom_raw` | optional unit |
 
 ---
 
 #### EIS Seq 301 — Equipment Property Values (EAV)
 **File**: `JDAW-KVE-E-JA-6944-00001-011-{revision}.CSV`
 **Flow**: `export_equipment_properties_flow`
-**Source**: `project_core.equipment_property_value` WHERE `object_status = 'Active'`
+**Source**: `project_core.property_value` JOIN `ontology_core.class_property`
+WHERE `pv.object_status = 'Active'`
+  AND `cp.mapping_concept ILIKE '%Physical%'`
+  AND `cp.mapping_concept NOT ILIKE '%common%'`
+
+**Routing logic**: строки из `project_core.property_value` направляются в этот файл если их маппинг содержит подстроку `Physical`. Логика зеркальна seq 303. Строки с `'Functional Physical'` дублируются в оба файла.
 
 | Column | Source | Notes |
 |---|---|---|
-| `PLANT_CODE` | `plant.code` | |
-| `EQUIPMENT_NUMBER` | `equipment.equipment_number` | FK resolve |
-| `PROPERTY_CODE` | `equipment_class_property.code` | property name/id |
-| `PROPERTY_VALUE` | `equipment_property_value.value` | actual value |
-| `UNIT` | `equipment_property_value.unit` | measurement unit |
+| `PLANT_CODE` | `plant.code` | via `tag.plant_id` LEFT JOIN |
+| `TAG_NAME` | `tag.tag_name` | INNER JOIN (обязателен) |
+| `PROPERTY_CODE` | `ontology_core.property.code` | property CFIHOS code |
+| `PROPERTY_VALUE` | `property_value.property_value` | actual value |
+| `UNIT` | `property_value.property_uom_raw` | measurement unit |
 
 ---
 

@@ -234,6 +234,120 @@ def transform_tag_register(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Tag Property Values domain transform (seq 303)
+# ---------------------------------------------------------------------------
+
+_TAG_PROPERTY_COLUMNS: list[str] = [
+    "PLANT_CODE",
+    "TAG_NAME",
+    "PROPERTY_CODE",
+    "PROPERTY_VALUE",
+    "UNIT",
+]
+
+
+def transform_tag_properties(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS Tag Property Values export (seq 303).
+
+    Layers:
+    1. Normalise column names to UPPER_CASE.
+    2. Second-level defence: keep only object_status = 'Active' rows.
+    3. Drop internal columns used by validation rules (mapping_concept_raw,
+       object_id, object_name) and EIS audit columns not in seq-303 schema.
+    4. Reorder columns to EIS-specified output order.
+
+    Note: ACTION_STATUS / ACTION_DATE are intentionally excluded from this
+    register — property value rows carry no independent sync lifecycle beyond
+    the parent tag's. The seq-303 schema specifies only 5 output columns.
+
+    Args:
+        df: Raw DataFrame from extract_tag_properties SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Example:
+        >>> result = transform_tag_properties(raw_df)
+        >>> list(result.columns)
+        ['PLANT_CODE', 'TAG_NAME', 'PROPERTY_CODE', 'PROPERTY_VALUE', 'UNIT']
+    """
+    df = df.copy()
+    df.columns = df.columns.str.upper()
+
+    # Second-level defence: only Active records exported
+    if "OBJECT_STATUS" in df.columns:
+        df = df[df["OBJECT_STATUS"] == "Active"]
+
+    # Drop all internal/validation helper columns not part of EIS output schema
+    internal_cols = [
+        "OBJECT_STATUS", "SYNC_STATUS", "SYNC_TIMESTAMP",
+        "MAPPING_CONCEPT_RAW", "OBJECT_ID", "OBJECT_NAME",
+    ]
+    df = df.drop(columns=internal_cols, errors="ignore")
+
+    # Reorder to strict EIS column sequence; silently skip absent columns
+    available = [c for c in _TAG_PROPERTY_COLUMNS if c in df.columns]
+    return df[available]
+
+
+# ---------------------------------------------------------------------------
+# Equipment Property Values domain transform (seq 301)
+# ---------------------------------------------------------------------------
+
+_EQUIPMENT_PROPERTY_COLUMNS: list[str] = [
+    "PLANT_CODE",
+    "TAG_NAME",
+    "PROPERTY_CODE",
+    "PROPERTY_VALUE",
+    "UNIT",
+]
+
+
+def transform_equipment_properties(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS Equipment Property Values export (seq 301).
+
+    Identical column schema to seq-303 but sourced from Physical-concept mappings.
+    Equipment properties describe the physical asset, not the functional tag.
+
+    Layers:
+    1. Normalise column names to UPPER_CASE.
+    2. Second-level defence: keep only object_status = 'Active' rows.
+    3. Drop internal columns used by validation rules.
+    4. Reorder columns to EIS-specified output order.
+
+    Args:
+        df: Raw DataFrame from extract_equipment_properties SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Example:
+        >>> result = transform_equipment_properties(raw_df)
+        >>> list(result.columns)
+        ['PLANT_CODE', 'TAG_NAME', 'PROPERTY_CODE', 'PROPERTY_VALUE', 'UNIT']
+    """
+    df = df.copy()
+    df.columns = df.columns.str.upper()
+
+    # Second-level defence: only Active records exported
+    if "OBJECT_STATUS" in df.columns:
+        df = df[df["OBJECT_STATUS"] == "Active"]
+
+    # Drop all internal/validation helper columns not part of EIS output schema
+    internal_cols = [
+        "OBJECT_STATUS", "SYNC_STATUS", "SYNC_TIMESTAMP",
+        "MAPPING_CONCEPT_RAW", "OBJECT_ID", "OBJECT_NAME",
+    ]
+    df = df.drop(columns=internal_cols, errors="ignore")
+
+    # Reorder to strict EIS column sequence; silently skip absent columns
+    available = [c for c in _EQUIPMENT_PROPERTY_COLUMNS if c in df.columns]
+    return df[available]
+
+
+# ---------------------------------------------------------------------------
 # Equipment Register domain transform (seq 004)
 # ---------------------------------------------------------------------------
 

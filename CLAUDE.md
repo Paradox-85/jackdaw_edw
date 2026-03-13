@@ -91,9 +91,9 @@ After **every** code change or planning session, Claude MUST:
 1. **Read** `docs/architecture.md` — check for conflicts with the change just made
 2. **Update** the relevant `docs/` file(s):
    - New flow or task added → update `docs/architecture.md` (Data Flow section)
-   - ETL logic changed (SCD, hashing, FK) → update `docs/logic-manifesto.md`
+   - ETL logic changed (SCD, hashing, FK) → update `docs/architecture.md`
    - Source/output file format changed → update `docs/file-specification.md`
-   - New Docker service or infra change → update `docs/architecture.md` (Docker Services table)
+   - New Docker service or infra change → update `docs/infrastructure.md` (Docker Services table)
 3. **Rules for doc updates**:
    - Delete or replace outdated blocks — do not append contradictions
    - Keep descriptions concise, in English, without loss of meaning
