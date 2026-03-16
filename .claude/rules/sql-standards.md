@@ -8,7 +8,7 @@ description: SQL standards for PostgreSQL (engineering_core)
 - **Always schema-prefix**: `project_core.tag` — never bare `tag`
 - **All PKs/FKs**: `UUID` with `DEFAULT gen_random_uuid()`
 - **Timestamps**: `TIMESTAMP DEFAULT now()` (not TIMESTAMPTZ unless explicitly needed)
-- **Soft deletes**: set `object_status = 'Deleted'` — never `DELETE FROM project_core.*`
+- **Soft deletes**: set `object_status = 'Inactive'` — never `DELETE FROM project_core.*`
 - **No SELECT ***: always list columns explicitly in production queries
 
 ## Schema Map (from schema.sql — never invent tables or columns)
@@ -52,7 +52,10 @@ WHERE project_core.tag.row_hash != EXCLUDED.row_hash;  -- guard: skip if hash un
 | `'Deleted'` | Present in DB, absent in source file |
 
 ## object_status Canonical Values
-`'Active'` (default) · `'Deleted'` (soft delete, never physical delete)
+`'Active'` (default) · `'Inactive'` (soft delete when record removed from source — never physical delete)
+
+> DB audit 2026-03-16: `project_core.tag` stores `'Inactive'` for removed rows, not `'Deleted'`.
+> `sync_status = 'Deleted'` marks records absent from the latest source file — separate field.
 
 ## Tag Hierarchy Resolution (second pass)
 ```sql

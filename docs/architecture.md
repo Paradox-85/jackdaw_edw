@@ -55,12 +55,23 @@ sync_tag_data flow
         ↓  every change → audit_core.tag_status_history (JSONB snapshot)
 sync_tag_hierarchy flow
         ↓  second pass → resolves tag.parent_tag_id
-export_tag_register flow
-        ↓  Reverse ETL → EIS CSV (UTF-8 BOM, seq 003)
-export_tag_properties flow
-        ↓  Reverse ETL → EIS CSV (UTF-8 BOM, seq 303, Functional concept)
-export_equipment_properties flow
-        ↓  Reverse ETL → EIS CSV (UTF-8 BOM, seq 301, Physical concept)
+
+Tag & Equipment Registers:
+export_tag_register flow         → EIS CSV (UTF-8 BOM, seq 003, -003-)
+export_equipment_register flow   → EIS CSV (UTF-8 BOM, seq 004, -004-)
+
+Property Values:
+export_tag_properties flow       → EIS CSV (UTF-8 BOM, seq 303, -010-, Functional concept)
+export_equipment_properties flow → EIS CSV (UTF-8 BOM, seq 301, -011-, Physical concept)
+
+Reference Data:
+export_area_register flow        → EIS CSV (UTF-8 BOM, seq 203, -017-)
+export_process_unit flow         → EIS CSV (UTF-8 BOM, seq 204, -018-)
+export_purchase_order flow       → EIS CSV (UTF-8 BOM, seq 214, -008-)
+export_model_part flow           → EIS CSV (UTF-8 BOM, seq 209, -005-)
+
+Ontology:
+export_tag_class_properties flow → EIS CSV (UTF-8 BOM, seq 307, -009-)
 
 Parallel enrichment:
   Neo4j  ← Tag→Parent, Tag→Doc graph edges
@@ -141,9 +152,23 @@ No tag update is blocked — the violation is recorded for audit. The tag contin
 
 ## Export Flows
 
-### export_tag_register / export_equipment_register
+### Export Flows — All 9 outputs
 
-Both flows implement the same pipeline via `run_export_pipeline()` in `etl/tasks/export_pipeline.py`:
+All flows implement the same pipeline via `run_export_pipeline()` in `etl/tasks/export_pipeline.py`.
+
+| Flow file | EIS seq | File template | Scope | Default rev |
+|---|---|---|---|---|
+| `export_tag_register.py` | 003 | `-003-` | `tag` | A35 |
+| `export_equipment_register.py` | 004 | `-004-` | `equipment` | A01 |
+| `export_tag_properties.py` | 303 | `-010-` | `tag_property` | A01 |
+| `export_equipment_properties.py` | 301 | `-011-` | `equipment_property` | A01 |
+| `export_area_register.py` | 203 | `-017-` | `area` | A35 |
+| `export_process_unit.py` | 204 | `-018-` | `process_unit` | A35 |
+| `export_purchase_order.py` | 214 | `-008-` | `purchase_order` | A35 |
+| `export_model_part.py` | 209 | `-005-` | `model_part` | A35 |
+| `export_tag_class_properties.py` | 307 | `-009-` | `tag_class_property` | A35 |
+
+Both tag and equipment register flows implement the same pipeline via `run_export_pipeline()` in `etl/tasks/export_pipeline.py`:
 
 ```
 extract (SQL → raw DataFrame, WHERE object_status = 'Active')
@@ -217,9 +242,19 @@ audit_core.export_validation_rule (
 
 `scope` controls which exports load the rule:
 - `common` — loaded by all export flows (tag + equipment)
-- `tag` — tag register export only
-- `equipment` — equipment register export only
+- `tag` — tag register export only (`export_tag_register`)
+- `equipment` — equipment register export only (`export_equipment_register`)
+- `tag_property` — tag property values export (`export_tag_properties`, seq 303)
+- `equipment_property` — equipment property values export (`export_equipment_properties`, seq 301)
+- `area` — area register export (`export_area_register`, seq 203)
+- `process_unit` — process unit register export (`export_process_unit`, seq 204)
+- `purchase_order` — purchase order register export (`export_purchase_order`, seq 214)
+- `model_part` — model part register export (`export_model_part`, seq 209)
+- `tag_class_property` — tag class properties export (`export_tag_class_properties`, seq 307)
 - `sync` — sync-time rules (e.g. TAG_NAME_CHANGED); not evaluated via DSL engine
+
+**Note:** scopes `area`, `process_unit`, `purchase_order`, `model_part`, `tag_class_property` have no
+rules seeded yet — `load_validation_rules()` will return an empty list and log a warning.
 
 ### Validation Result Table Schema
 
@@ -456,13 +491,31 @@ Raw fields are included in the export SQL SELECT but dropped by `transform_*` be
 | `etl/tasks/export_validation.py` | DSL parser, evaluator, fix interpreter, load_validation_rules, run_full_scan, store_validation_results |
 | `etl/tasks/export_pipeline.py` | run_export_pipeline orchestrator — extract → sanitize → validate → transform → write → audit |
 | `etl/tasks/export_transforms.py` | clean_engineering_text(), sanitize_dataframe(), EIS column transforms |
-| `etl/flows/export_tag_register.py` | Prefect @flow entry point — passes config to run_export_pipeline |
+| `etl/flows/export_tag_register.py` | Tag Register export (EIS seq 003, scope='tag') |
+| `etl/flows/export_equipment_register.py` | Master Equipment Register export (EIS seq 004, scope='equipment') |
 | `etl/flows/export_tag_properties.py` | Tag Property Values export (EIS seq 303, scope='tag_property') |
 | `etl/flows/export_equipment_properties.py` | Equipment Property Values export (EIS seq 301, scope='equipment_property') |
+| `etl/flows/export_area_register.py` | Area Register export (EIS seq 203, scope='area') |
+| `etl/flows/export_process_unit.py` | Process Unit Register export (EIS seq 204, scope='process_unit') |
+| `etl/flows/export_purchase_order.py` | Purchase Order Register export (EIS seq 214, scope='purchase_order') |
+| `etl/flows/export_model_part.py` | Model Part Register export (EIS seq 209, scope='model_part') |
+| `etl/flows/export_tag_class_properties.py` | Tag Class Properties export (EIS seq 307, scope='tag_class_property') |
 | `sql/schema/schema.sql` | Canonical table definitions (single source of truth) |
 | `docs/validation_rules_gap_analysis.md` | Full gap analysis vs QA spec; source for migration_005 rules |
 
 ---
+
+## ADR-010: object_status Soft-Delete Value Discrepancy
+- **Date**: 2026-03-16
+- **Decision**: Canonical soft-delete value for `project_core.tag.object_status` is `'Inactive'`, not `'Deleted'`.
+- **Reason**: Audit via MCP-server query confirmed actual data: 23 071 rows with `'Active'`, 1 034 rows with `'Inactive'`. Value `'Deleted'` does not exist in the table. The `sync_status` column uses `'Deleted'` to mark removed tags, while `object_status` transitions to `'Inactive'`. Documentation and `sql-standards.md` were incorrect.
+- **Impact**: `docs/architecture.md` updated. `.claude/rules/sql-standards.md` updated. Export filters `WHERE object_status = 'Active'` remain correct — they already exclude `'Inactive'` rows.
+
+## ADR-011: tag_status Canonical Values in Source Data
+- **Date**: 2026-03-16
+- **Decision**: `project_core.tag.tag_status` stores EIS-source values verbatim. Actual values confirmed via MCP: `'ACTIVE'` (uppercase), `'VOID'` (uppercase), `'ASB'`, `'AFC'`, `'Future'`, NULL.
+- **Reason**: The validation rule `TAG_STATUS_VALID_VALUES` was written assuming EIS delivers lowercase `'Active'`, `'Void'`, `'Future'`, `'Hold'` — which does not match the real data. `'ASB'` and `'AFC'` are legitimate EIS project statuses not in the original rule. Normalization of tag_status requires business decision; deferred to separate task.
+- **Impact**: Rule `TAG_STATUS_VALID_VALUES` will produce false-positive violations for all `'ACTIVE'`/`'VOID'` tags. No code change in this ADR — tracked as a separate fix task.
 
 ## ADR-009: Validation Rules Cleanup & Power Query Gap Closure
 - **Date**: 2026-03-13

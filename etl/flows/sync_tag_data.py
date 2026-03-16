@@ -32,6 +32,18 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
     current_file = override_file if override_file else FILE_PATH
     execution_start = datetime.now()
 
+    # Register run start — must exist before the UPDATE at the end of this task
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO audit_core.sync_run_stats
+                (run_id, target_table, start_time, source_file)
+            VALUES (:rid, 'project_core.tag', :st, :sf)
+        """), {
+            "rid": run_id,
+            "st":  execution_start,
+            "sf":  os.path.basename(current_file) if current_file else "unknown",
+        })
+
     # --- PHASE 1: PRE-LOAD EVERYTHING ---
     logger.info("PHASE 1: Pre-loading registries into memory...")
     with engine.connect() as conn:

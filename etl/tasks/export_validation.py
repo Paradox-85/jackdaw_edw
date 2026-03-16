@@ -132,7 +132,8 @@ def _eval_single_clause(
         if op == "not_null":
             return ~(series.isna() | (s.str.strip() == "") | (s.str.lower() == "none"))
         if op == "matches_regex":
-            return s.str.contains(value or "", na=False, regex=True)
+            # Case-insensitive: DB may store ACTIVE/VOID (uppercase) while rules reference Active/Void
+            return s.str.contains(value or "", na=False, regex=True, flags=re.IGNORECASE)
         if op == "has_encoding_artefacts":
             # Detect any known encoding corruption pattern from clean_engineering_text pipeline
             _ENCODING_PATTERNS = (
@@ -314,7 +315,16 @@ def load_validation_rules(
     # SELECT-only: engine.connect() is sufficient
     with engine.connect() as conn:
         rows = conn.execute(sql, {"scope": scope}).fetchall()
-    return [dict(r._mapping) for r in rows]
+    rules = [dict(r._mapping) for r in rows]
+    if not rules:
+        import logging
+        logging.getLogger(__name__).warning(
+            "No DSL validation rules found for scope=%r. "
+            "Export will proceed without built-in validation. "
+            "Seed rules in audit_core.export_validation_rule to enable.",
+            scope,
+        )
+    return rules
 
 
 # ---------------------------------------------------------------------------
