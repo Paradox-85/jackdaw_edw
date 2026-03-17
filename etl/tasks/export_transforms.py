@@ -548,8 +548,10 @@ def transform_purchase_order(df: pd.DataFrame) -> pd.DataFrame:
 _MODEL_PART_COLUMNS: list[str] = [
     "PLANT_CODE",
     "MODEL_PART_CODE",
+    "MANUFACTURER_COMPANY_NAME",
     "MODEL_PART_NAME",
-    "SPECIFICATIONS",
+    "EQUIPMENT_CLASS_NAME",
+    "MODEL_DESCRIPTION",
 ]
 
 
@@ -557,14 +559,13 @@ def transform_model_part(df: pd.DataFrame) -> pd.DataFrame:
     """
     Apply domain-specific transforms for EIS Model Part Register export (seq 209).
 
+    Source: project_core.tag joined to reference_core.model_part via tag.model_id.
+    FK columns (MANUFACTURER_COMPANY_NAME, EQUIPMENT_CLASS_NAME) are empty string when unresolved.
+
     Layers:
     1. Normalise column names to UPPER_CASE.
-    2. Drop raw FK columns used by validation rules (manufacturer raw).
-    3. Drop OBJECT_STATUS (already filtered in SQL WHERE clause).
-    4. Reorder columns to EIS-specified output order.
-
-    Note: PART_TYPE column does not exist in reference_core.model_part schema.
-          SPECIFICATIONS maps to model_part.definition (technical description).
+    2. Drop OBJECT_STATUS (already filtered in SQL WHERE clause).
+    3. Reorder columns to EIS-specified output order.
 
     Args:
         df: Raw DataFrame from extract_model_part SQL query.
@@ -575,12 +576,11 @@ def transform_model_part(df: pd.DataFrame) -> pd.DataFrame:
     Example:
         >>> result = transform_model_part(raw_df)
         >>> list(result.columns)
-        ['PLANT_CODE', 'MODEL_PART_CODE', 'MODEL_PART_NAME', 'SPECIFICATIONS']
+        ['PLANT_CODE', 'MODEL_PART_CODE', 'MANUFACTURER_COMPANY_NAME', 'MODEL_PART_NAME', 'EQUIPMENT_CLASS_NAME', 'MODEL_DESCRIPTION']
     """
     df = df.copy()
     df.columns = df.columns.str.upper()
-    internal_cols = ["MANUF_COMPANY_RAW", "OBJECT_STATUS"]
-    df = df.drop(columns=internal_cols, errors="ignore")
+    df = df.drop(columns=["OBJECT_STATUS"], errors="ignore")
     available = [c for c in _MODEL_PART_COLUMNS if c in df.columns]
     return df[available]
 
@@ -625,3 +625,210 @@ def transform_tag_class_properties(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = df.columns.str.upper()
     available = [c for c in _TAG_CLASS_PROP_COLUMNS if c in df.columns]
     return df[available]
+
+
+# ---------------------------------------------------------------------------
+# Tag Physical Connections domain transform (seq 212)
+# ---------------------------------------------------------------------------
+
+_TAG_CONNECTIONS_COLUMNS: list[str] = [
+    "PLANT_CODE",
+    "FROM_TAG_NAME",
+    "TO_TAG_NAME",
+]
+
+
+def transform_tag_connections(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS Tag Physical Connections export (seq 212).
+
+    Layers:
+    1. Normalise column names to UPPER_CASE.
+    2. Reorder columns to EIS-specified output order.
+
+    Args:
+        df: Raw DataFrame from extract_tag_connections SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Example:
+        >>> result = transform_tag_connections(raw_df)
+        >>> list(result.columns)
+        ['PLANT_CODE', 'FROM_TAG_NAME', 'TO_TAG_NAME']
+    """
+    df = df.copy()
+    df.columns = df.columns.str.upper()
+    available = [c for c in _TAG_CONNECTIONS_COLUMNS if c in df.columns]
+    return df[available]
+
+
+# ---------------------------------------------------------------------------
+# Document Cross-Reference domain transforms (seq 408, 409, 410, 411, 412, 413, 414, 420)
+# ---------------------------------------------------------------------------
+
+_DOC_TO_SITE_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "SITE_CODE"]
+_DOC_TO_PLANT_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE"]
+_DOC_TO_PROCESS_UNIT_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PROCESS_UNIT_CODE"]
+_DOC_TO_AREA_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "AREA_CODE"]
+_DOC_TO_TAG_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "TAG_NAME"]
+_DOC_TO_EQUIPMENT_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "EQUIPMENT_NUMBER"]
+_DOC_TO_MODEL_PART_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "MODEL_PART_CODE"]
+_DOC_TO_PO_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "PO_CODE"]
+
+# Shared helper — keeps each transform DRY
+def _transform_doc_crossref(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    """Uppercase columns, drop OBJECT_STATUS, reorder to EIS spec."""
+    df = df.copy()
+    df.columns = df.columns.str.upper()
+    df = df.drop(columns=["OBJECT_STATUS"], errors="ignore")
+    available = [c for c in columns if c in df.columns]
+    return df[available]
+
+
+def transform_doc_to_site(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS Doc→Site export (seq 408).
+
+    Args:
+        df: Raw DataFrame from extract_doc_to_site SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Example:
+        >>> list(transform_doc_to_site(raw_df).columns)
+        ['DOCUMENT_NUMBER', 'SITE_CODE']
+    """
+    return _transform_doc_crossref(df, _DOC_TO_SITE_COLUMNS)
+
+
+def transform_doc_to_plant(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS Doc→Plant export (seq 409).
+
+    Args:
+        df: Raw DataFrame from extract_doc_to_plant SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Example:
+        >>> list(transform_doc_to_plant(raw_df).columns)
+        ['DOCUMENT_NUMBER', 'PLANT_CODE']
+    """
+    return _transform_doc_crossref(df, _DOC_TO_PLANT_COLUMNS)
+
+
+def transform_doc_to_process_unit(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS Doc→ProcessUnit export (seq 410).
+
+    Source: mapping.tag_document → tag.process_unit_id → process_unit.
+    DISTINCT applied in SQL to prevent duplicate (doc, unit) pairs.
+
+    Args:
+        df: Raw DataFrame from extract_doc_to_process_unit SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Example:
+        >>> list(transform_doc_to_process_unit(raw_df).columns)
+        ['DOCUMENT_NUMBER', 'PROCESS_UNIT_CODE']
+    """
+    return _transform_doc_crossref(df, _DOC_TO_PROCESS_UNIT_COLUMNS)
+
+
+def transform_doc_to_area(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS Doc→Area export (seq 411).
+
+    Source: mapping.tag_document → tag.area_id → area.
+    DISTINCT applied in SQL to prevent duplicate (doc, area) pairs.
+
+    Args:
+        df: Raw DataFrame from extract_doc_to_area SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Example:
+        >>> list(transform_doc_to_area(raw_df).columns)
+        ['DOCUMENT_NUMBER', 'AREA_CODE']
+    """
+    return _transform_doc_crossref(df, _DOC_TO_AREA_COLUMNS)
+
+
+def transform_doc_to_tag(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS Doc→Tag export (seq 412).
+
+    Args:
+        df: Raw DataFrame from extract_doc_to_tag SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Example:
+        >>> list(transform_doc_to_tag(raw_df).columns)
+        ['DOCUMENT_NUMBER', 'PLANT_CODE', 'TAG_NAME']
+    """
+    return _transform_doc_crossref(df, _DOC_TO_TAG_COLUMNS)
+
+
+def transform_doc_to_equipment(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS Doc→Equipment export (seq 413).
+
+    Only Physical-class tags included (class.concept ILIKE '%Physical%').
+    EQUIPMENT_NUMBER sourced from tag.equip_no.
+
+    Args:
+        df: Raw DataFrame from extract_doc_to_equipment SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Example:
+        >>> list(transform_doc_to_equipment(raw_df).columns)
+        ['DOCUMENT_NUMBER', 'PLANT_CODE', 'EQUIPMENT_NUMBER']
+    """
+    return _transform_doc_crossref(df, _DOC_TO_EQUIPMENT_COLUMNS)
+
+
+def transform_doc_to_model_part(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS Doc→ModelPart export (seq 414).
+
+    Source: mapping.tag_document → tag.model_id → model_part.
+    DISTINCT applied in SQL to prevent duplicate (doc, model_part) pairs.
+
+    Args:
+        df: Raw DataFrame from extract_doc_to_model_part SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Example:
+        >>> list(transform_doc_to_model_part(raw_df).columns)
+        ['DOCUMENT_NUMBER', 'PLANT_CODE', 'MODEL_PART_CODE']
+    """
+    return _transform_doc_crossref(df, _DOC_TO_MODEL_PART_COLUMNS)
+
+
+def transform_doc_to_po(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS Doc→PurchaseOrder export (seq 420).
+
+    Args:
+        df: Raw DataFrame from extract_doc_to_po SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Example:
+        >>> list(transform_doc_to_po(raw_df).columns)
+        ['DOCUMENT_NUMBER', 'PLANT_CODE', 'PO_CODE']
+    """
+    return _transform_doc_crossref(df, _DOC_TO_PO_COLUMNS)

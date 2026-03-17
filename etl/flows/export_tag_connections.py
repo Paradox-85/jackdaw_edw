@@ -1,4 +1,4 @@
-"""Reverse ETL export flow: Model Part Register (EIS seq 209)."""
+"""Reverse ETL export flow: Tag Physical Connections (EIS seq 212)."""
 
 import re
 import sys
@@ -17,7 +17,7 @@ if str(script_root) not in sys.path:
     sys.path.append(str(script_root))
 
 from tasks.common import load_config, get_db_engine_url
-from tasks.export_transforms import transform_model_part
+from tasks.export_transforms import transform_tag_connections
 from tasks.export_pipeline import run_export_pipeline
 
 # Module-level config — same pattern as other export flows
@@ -26,60 +26,58 @@ DB_URL = get_db_engine_url(config)
 _EXPORT_DIR = config.get("storage", {}).get("export_dir", ".")
 
 # ---------------------------------------------------------------------------
-# SQL: Extract active model parts
+# SQL: Extract physical connections for active non-VOID/Future tags
 # ---------------------------------------------------------------------------
 
-_MODEL_PART_SQL = """
+_TAG_CONNECTIONS_SQL = """
 /*
-Purpose: Model Part Register extract for EIS snapshot export (seq 209).
-Gate:    t.object_status = 'Active', tag_status NOT IN ('VOID', ''), t.model_id NOT NULL.
-Note:    Source is project_core.tag joined to model_part via tag.model_id (direct FK).
-         MANUFACTURER_COMPANY_NAME and EQUIPMENT_CLASS_NAME are LEFT JOIN — empty if FK unresolved.
-Changes: 2026-03-13 — Initial implementation.
-         2026-03-17 — Reworked: source changed to project_core.tag via tag.model_id FK;
-                      added MANUFACTURER_COMPANY_NAME, EQUIPMENT_CLASS_NAME, MODEL_DESCRIPTION.
+Purpose: Tag physical connections export for EIS snapshot (seq 212).
+Gate:    t.object_status = 'Active' AND tag_status not VOID/Future/empty
+         AND at least one connection field (from_tag_raw / to_tag_raw) is non-empty.
+Note:    from_tag_raw / to_tag_raw exported verbatim — no FK resolution.
+         Values may contain open-end labels, zone comments, or free text from source.
+Changes: 2026-03-16 — Initial implementation.
 */
 SELECT
-    COALESCE(pl.code, 'JDA')            AS PLANT_CODE,
-    mp.code                             AS MODEL_PART_CODE,
-    COALESCE(c_mfr.name, '')            AS MANUFACTURER_COMPANY_NAME,
-    COALESCE(mp.name, '')               AS MODEL_PART_NAME,
-    COALESCE(cls.name, '')              AS EQUIPMENT_CLASS_NAME,
-    COALESCE(mp.definition, '')         AS MODEL_DESCRIPTION,
-    mp.object_status
+    p.code          AS plant_code,
+    t.from_tag_raw  AS from_tag_name,
+    t.to_tag_raw    AS to_tag_name
 FROM project_core.tag t
-INNER JOIN reference_core.model_part mp  ON t.model_id         = mp.id
-LEFT  JOIN reference_core.company c_mfr  ON mp.manufacturer_id = c_mfr.id
-LEFT  JOIN ontology_core.class cls       ON t.class_id         = cls.id
-LEFT  JOIN reference_core.plant pl       ON t.plant_id         = pl.id
+-- Why LEFT JOIN: tag must not disappear if plant FK is missing
+LEFT JOIN reference_core.plant p ON t.plant_id = p.id
 WHERE t.object_status = 'Active'
-  AND UPPER(COALESCE(t.tag_status, '')) NOT IN ('VOID', '')
-  AND t.model_id IS NOT NULL
-ORDER BY mp.code, t.tag_name
+  AND t.tag_status NOT IN ('VOID', 'Future')
+  AND t.tag_status IS NOT NULL
+  AND t.tag_status != ''
+  AND (
+       (t.from_tag_raw IS NOT NULL AND t.from_tag_raw != '')
+    OR (t.to_tag_raw  IS NOT NULL AND t.to_tag_raw  != '')
+  )
+ORDER BY t.tag_name
 """
 
-_FILE_TEMPLATE = "JDAW-KVE-E-JA-6944-00001-005-{revision}.CSV"
+_FILE_TEMPLATE = "JDAW-KVE-E-JA-6944-00001-006-{revision}.CSV"
 
 
 # ---------------------------------------------------------------------------
 # Prefect tasks
 # ---------------------------------------------------------------------------
 
-@task(name="extract-model-part", retries=1, cache_policy=NO_CACHE)
-def extract_model_part(engine: Engine) -> pd.DataFrame:
+@task(name="extract-tag-connections", retries=1, cache_policy=NO_CACHE)
+def extract_tag_connections(engine: Engine) -> pd.DataFrame:
     """
-    Run the Model Part Register SQL query and return a raw DataFrame.
+    Run the Tag Physical Connections SQL query and return a raw DataFrame.
 
     Args:
         engine: SQLAlchemy engine connected to engineering_core.
 
     Returns:
-        DataFrame with all active model part rows.
+        DataFrame with active tag connection rows (from_tag_raw / to_tag_raw).
     """
     logger = get_run_logger()
     with engine.connect() as conn:
-        df = pd.read_sql(text(_MODEL_PART_SQL), conn)
-    logger.info(f"Extracted {len(df)} active model part rows")
+        df = pd.read_sql(text(_TAG_CONNECTIONS_SQL), conn)
+    logger.info(f"Extracted {len(df)} tag connection rows")
     return df
 
 
@@ -87,17 +85,17 @@ def extract_model_part(engine: Engine) -> pd.DataFrame:
 # Prefect flow
 # ---------------------------------------------------------------------------
 
-@flow(name="export-model-part", log_prints=True)
-def export_model_part_flow(
+@flow(name="export-tag-connections", log_prints=True)
+def export_tag_connections_flow(
     doc_revision: str = "A35",
     output_dir: str | None = None,
 ) -> dict[str, int]:
     """
-    Export Model Part Register to EIS CSV snapshot (seq 209).
+    Export Tag Physical Connections to EIS CSV snapshot (seq 212).
 
-    Output file: JDAW-KVE-E-JA-6944-00001-005-{doc_revision}.CSV
+    Output file: JDAW-KVE-E-JA-6944-00001-006-{doc_revision}.CSV
     Encoding:    UTF-8 BOM (utf-8-sig) for Excel/EIS compatibility.
-    Filter gate: object_status = 'Active' (SQL layer).
+    Filter gate: object_status = 'Active', tag_status NOT IN ('VOID', 'Future').
     Audit:       Start/end recorded in audit_core.sync_run_stats.
 
     Args:
@@ -111,8 +109,8 @@ def export_model_part_flow(
         ValueError: If doc_revision does not match [A-Z]\\d{2} pattern.
 
     Example:
-        >>> export_model_part_flow(doc_revision="A35")
-        {'exported': 1275, 'violations': 0}
+        >>> export_tag_connections_flow(doc_revision="A35")
+        {'exported': 4591, 'violations': 0}
     """
     logger = get_run_logger()
 
@@ -126,11 +124,11 @@ def export_model_part_flow(
 
     return run_export_pipeline(
         engine=engine,
-        scope="model_part",
-        extract_fn=extract_model_part,
-        transform_fn=transform_model_part,
+        scope="tag_connection",
+        extract_fn=extract_tag_connections,
+        transform_fn=transform_tag_connections,
         output_path=output_path,
-        report_name="model_part",
+        report_name="tag_connections",
         logger=logger,
     )
 
@@ -138,4 +136,4 @@ def export_model_part_flow(
 if __name__ == "__main__":
     import os
     os.chdir(Path(__file__).resolve().parent.parent)
-    export_model_part_flow.serve(name="export-model-part-deployment")
+    export_tag_connections_flow.serve(name="export-tag-connections-deployment")

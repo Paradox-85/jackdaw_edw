@@ -312,15 +312,17 @@ TAG_DESCRIPTION · ACTION_STATUS · ACTION_DATE
 #### EIS Seq 209 — Model Part Register
 **File**: `JDAW-KVE-E-JA-6944-00001-005-{revision}.CSV`
 **Flow**: `export_model_part_flow`
-**Source**: `reference_core.model_part` WHERE `object_status = 'Active'`
+**Source**: `project_core.tag` INNER JOIN `reference_core.model_part` ON `tag.model_id = model_part.id`
+WHERE `tag.object_status = 'Active'` AND `tag.tag_status NOT IN ('VOID', '')`
 
 | Column | Source | Notes |
 |---|---|---|
-| `PLANT_CODE` | `plant.code` | always `JDA` |
+| `PLANT_CODE` | `plant.code` via `tag.plant_id` | LEFT JOIN; empty if NULL |
 | `MODEL_PART_CODE` | `model_part.code` | unique identifier |
+| `MANUFACTURER_COMPANY_NAME` | `company.name` via `model_part.manufacturer_id` | LEFT JOIN; empty if FK NULL |
 | `MODEL_PART_NAME` | `model_part.name` | |
-| `PART_TYPE` | `model_part.part_type` | e.g., Pump, Valve, Motor |
-| `SPECIFICATIONS` | `model_part.specs` | technical details |
+| `EQUIPMENT_CLASS_NAME` | `class.name` via `tag.class_id` | LEFT JOIN; empty if FK NULL |
+| `MODEL_DESCRIPTION` | `model_part.definition` | empty string if NULL |
 
 ---
 
@@ -387,15 +389,13 @@ WHERE `pv.object_status = 'Active'`
 #### EIS Seq 212 — Tag Physical Connections
 **File**: `JDAW-KVE-E-JA-6944-00001-006-{revision}.CSV`
 **Flow**: `export_tag_connections_flow`
-**Source**: `mapping.tag_connection` WHERE `connection_type = 'Signal Cable'`
+**Source**: `project_core.tag` WHERE `object_status = 'Active'` AND `tag_status NOT IN ('VOID', 'Future')` AND (`from_tag_raw` OR `to_tag_raw` non-empty)
 
 | Column | Source | Notes |
 |---|---|---|
-| `FROM_TAG_NAME` | `from_tag.tag_name` | source of signal |
-| `TO_TAG_NAME` | `to_tag.tag_name` | destination of signal |
-| `CONNECTION_TYPE` | `tag_connection.connection_type` | Signal Cable, etc. |
-| `CABLE_NUMBER` | `tag_connection.cable_number` | reference |
-| `PLANT_CODE` | `plant.code` | |
+| `PLANT_CODE` | `plant.code` via `tag.plant_id` | always `JDA` |
+| `FROM_TAG_NAME` | `tag.from_tag_raw` | exported verbatim — may be open-end label or zone comment |
+| `TO_TAG_NAME` | `tag.to_tag_raw` | exported verbatim — may be open-end label or zone comment |
 
 ---
 
@@ -416,69 +416,118 @@ WHERE `pv.object_status = 'Active'`
 
 ### 2.5 Document Cross-Reference Exports
 
-#### EIS Seq 412 — Document References to Tag
-**File**: `JDAW-KVE-E-JA-6944-00001-016-{revision}.CSV`
-**Flow**: `export_document_tag_mapping_flow`
-**Source**: `mapping.document_tag` JOIN `project_core.document` WHERE `object_status = 'Active'`
+**Flow**: `export_document_crossref_flow` (`etl/flows/export_document_crossref.py`) — runs all 8 registers; each also available as standalone flow.
+
+**Common document filter gate (all 8 exports)**:
+- `document.object_status = 'Active'`
+- `document.mdr_flag = TRUE`
+- `document.status IS NOT NULL` AND `UPPER(document.status) != 'CAN'`
+
+**Common tag filter (seq 410, 411, 412, 413, 414)**:
+- `tag.object_status = 'Active'`
+- `UPPER(COALESCE(tag.tag_status, '')) NOT IN ('VOID', '')`
+
+**FK resolution**: unresolved FKs → empty string in CSV (no raw values exported).
+
+---
+
+#### EIS Seq 408 — Document References to Site
+**File**: `JDAW-KVE-E-JA-6944-00001-024-{revision}.CSV`
+**Flow**: `export_doc_to_site_flow`
+**Source**: `project_core.document` → `plant.site_id` → `reference_core.site` (LEFT JOIN chain)
 
 | Column | Source | Notes |
 |---|---|---|
 | `DOCUMENT_NUMBER` | `document.doc_number` | |
-| `PLANT_CODE` | `plant.code` | |
-| `TAG_NAME` | `tag.tag_name` | FK resolve |
+| `SITE_CODE` | `site.code` via `document.plant_id → plant.site_id` | LEFT JOIN; empty if unresolved |
+
+---
+
+#### EIS Seq 409 — Document References to Plant
+**File**: `JDAW-KVE-E-JA-6944-00001-023-{revision}.CSV`
+**Flow**: `export_doc_to_plant_flow`
+**Source**: `project_core.document` LEFT JOIN `reference_core.plant`
+
+| Column | Source | Notes |
+|---|---|---|
+| `DOCUMENT_NUMBER` | `document.doc_number` | |
+| `PLANT_CODE` | `plant.code` via `document.plant_id` | LEFT JOIN; empty if unresolved |
+
+---
+
+#### EIS Seq 410 — Document References to Process Unit
+**File**: `JDAW-KVE-E-JA-6944-00001-018-{revision}.CSV`
+**Flow**: `export_doc_to_process_unit_flow`
+**Source**: `mapping.tag_document` → `project_core.tag` → `reference_core.process_unit`; DISTINCT pairs
+
+| Column | Source | Notes |
+|---|---|---|
+| `DOCUMENT_NUMBER` | `document.doc_number` | |
+| `PROCESS_UNIT_CODE` | `process_unit.code` via `tag.process_unit_id` | LEFT JOIN; empty if FK NULL; DISTINCT |
+
+---
+
+#### EIS Seq 411 — Document References to Area
+**File**: `JDAW-KVE-E-JA-6944-00001-017-{revision}.CSV`
+**Flow**: `export_doc_to_area_flow`
+**Source**: `mapping.tag_document` → `project_core.tag` → `reference_core.area`; DISTINCT pairs
+
+| Column | Source | Notes |
+|---|---|---|
+| `DOCUMENT_NUMBER` | `document.doc_number` | |
+| `AREA_CODE` | `area.code` via `tag.area_id` | LEFT JOIN; empty if FK NULL; DISTINCT |
+
+---
+
+#### EIS Seq 412 — Document References to Tag
+**File**: `JDAW-KVE-E-JA-6944-00001-016-{revision}.CSV`
+**Flow**: `export_doc_to_tag_flow`
+**Source**: `mapping.tag_document` WHERE `mapping_status = 'Active'`
+
+| Column | Source | Notes |
+|---|---|---|
+| `DOCUMENT_NUMBER` | `document.doc_number` | |
+| `PLANT_CODE` | `plant.code` via `tag.plant_id` | LEFT JOIN; empty if unresolved |
+| `TAG_NAME` | `tag.tag_name` | |
 
 ---
 
 #### EIS Seq 413 — Document References to Equipment
 **File**: `JDAW-KVE-E-JA-6944-00001-019-{revision}.CSV`
-**Flow**: `export_document_equipment_mapping_flow`
-**Source**: `mapping.document_equipment` JOIN `project_core.document` WHERE `object_status = 'Active'`
+**Flow**: `export_doc_to_equipment_flow`
+**Source**: `mapping.tag_document` → `project_core.tag` WHERE `class.concept ILIKE '%Physical%'` AND `tag.equip_no IS NOT NULL`
 
 | Column | Source | Notes |
 |---|---|---|
 | `DOCUMENT_NUMBER` | `document.doc_number` | |
-| `PLANT_CODE` | `plant.code` | |
-| `EQUIPMENT_NUMBER` | `equipment.equipment_number` | format: `Equip_{tag_name}` |
+| `PLANT_CODE` | `plant.code` via `tag.plant_id` | LEFT JOIN; empty if unresolved |
+| `EQUIPMENT_NUMBER` | `tag.equip_no` | Only tags with Physical class (INNER JOIN on `ontology_core.class`) |
 
 ---
 
 #### EIS Seq 414 — Document References to Model Part
 **File**: `JDAW-KVE-E-JA-6944-00001-020-{revision}.CSV`
-**Flow**: `export_document_model_part_mapping_flow`
-**Source**: `mapping.document_model_part` JOIN `project_core.document` WHERE `object_status = 'Active'`
+**Flow**: `export_doc_to_model_part_flow`
+**Source**: `mapping.tag_document` → `project_core.tag` → `reference_core.model_part` (via `tag.model_id`); DISTINCT pairs
 
 | Column | Source | Notes |
 |---|---|---|
 | `DOCUMENT_NUMBER` | `document.doc_number` | |
-| `PLANT_CODE` | `plant.code` | |
-| `MODEL_PART_CODE` | `model_part.code` | FK resolve |
-
----
-
-#### EIS Seq 408–411 — Document References to Site/Plant/Area/ProcessUnit
-**Files**:
-- `408`: `JDAW-KVE-E-JA-6944-00001-024-{revision}.CSV` → Doc→Site
-- `409`: `JDAW-KVE-E-JA-6944-00001-023-{revision}.CSV` → Doc→Plant
-- `410`: `JDAW-KVE-E-JA-6944-00001-018-{revision}.CSV` → Doc→ProcessUnit (merged with 204)
-- `411`: `JDAW-KVE-E-JA-6944-00001-017-{revision}.CSV` → Doc→Area (merged with 203)
-
-**Standard columns per type**:
-| Doc→Site | Doc→Plant | Doc→Area | Doc→ProcessUnit |
-|---|---|---|---|
-| `DOCUMENT_NUMBER`, `SITE_CODE` | `DOCUMENT_NUMBER`, `PLANT_CODE` | `DOCUMENT_NUMBER`, `AREA_CODE` | `DOCUMENT_NUMBER`, `PROCESS_UNIT_CODE` |
+| `PLANT_CODE` | `plant.code` via `tag.plant_id` | LEFT JOIN; empty if unresolved |
+| `MODEL_PART_CODE` | `model_part.code` via `tag.model_id` | INNER JOIN; DISTINCT |
 
 ---
 
 #### EIS Seq 420 — Document References to Purchase Order
 **File**: `JDAW-KVE-E-JA-6944-00001-022-{revision}.CSV`
-**Flow**: `export_document_purchase_order_mapping_flow`
-**Source**: `mapping.document_purchase_order` JOIN `project_core.document` WHERE `object_status = 'Active'`
+**Flow**: `export_doc_to_po_flow`
+**Source**: `mapping.document_po` WHERE `mapping_status = 'Active'`; `purchase_order.object_status = 'Active'`
 
 | Column | Source | Notes |
 |---|---|---|
 | `DOCUMENT_NUMBER` | `document.doc_number` | |
-| `PLANT_CODE` | `plant.code` | |
-| `PO_CODE` | `purchase_order.code` | FK resolve |
+| `PLANT_CODE` | `plant.code` via `document.plant_id` | LEFT JOIN; empty if unresolved |
+| `PO_CODE` | `purchase_order.code` via `mapping.document_po.po_id` | INNER JOIN |
 
 ---
 
@@ -500,8 +549,8 @@ Unified mapping between EIS sequence numbers, input sources, and output codes:
 | 307 | 307-Tag-class-properties.xlsx | `-009-` | TagClassProperties.CSV | Class property schema | ontology |
 | 408 | 408-Document_References_to_Site.xlsx | `-024-` | DocToSite.CSV | Doc↔Site links | mapping |
 | 409 | 409-Document_References_to_PlantCode.xlsx | `-023-` | DocToPlant.CSV | Doc↔Plant links | mapping |
-| 410 | 410-Document_References_to_ProcessUnit.xlsx | `-018-` | (merged into 204) | Doc↔ProcessUnit links | mapping |
-| 411 | 411-Document_References_to_Area.xlsx | `-017-` | (merged into 203) | Doc↔Area links | mapping |
+| 410 | 410-Document_References_to_ProcessUnit.xlsx | `-018-` | DocToProcessUnit.CSV | Doc↔ProcessUnit links | mapping |
+| 411 | 411-Document_References_to_Area.xlsx | `-017-` | DocToArea.CSV | Doc↔Area links | mapping |
 | 412 | 412-Document_References_to_Tag.xlsx | `-016-` | DocToTag.CSV | Doc↔Tag links | mapping |
 | 413 | 413-Document_References_to_Equipment.xlsx | `-019-` | DocToEquipment.CSV | Doc↔Equipment links | mapping |
 | 414 | 414-Document_References_to_ModelPart.xlsx | `-020-` | DocToModelPart.CSV | Doc↔ModelPart links | mapping |
