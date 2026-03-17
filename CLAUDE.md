@@ -1,115 +1,189 @@
-# EDW for Jackdaw — Claude Code Context
+# EDW Jackdaw — Claude Code Guidelines
 
-Engineering Data Warehouse for the **Jackdaw** offshore project (North Sea, PLANT_CODE=`JDA`).
-Ingests EIS Excel/CSV exports → structured PostgreSQL → EIS CSV outputs.
+**Stack:** Prefect 3.0 | PostgreSQL (async) | Neo4j | Qdrant | Ollama | Pandas  
+**MCP:** context7 (tech docs) | pgedge (`https://ai-db.adzv-pt.dev/mcp/v1`)  
+**GitHub:** https://github.com/Paradox-85/jackdaw_edw
 
----
-
-## Language Policy
-- **Responses to user**: Russian only
-- **Code** (Python, SQL, YAML, Bash, Cypher): all comments, docstrings, variable names in English
-- No mixing: `# Extract tags` ✅ | `# Извлечь теги` ❌
+**References:** @docs/architecture.md | @docs/infrastructure.md | @sql/schema.sql
 
 ---
 
-## Stack
-| Layer | Technology | Details |
-|---|---|---|
-| Orchestration | Prefect 3.0 | `prefect-server` + `prefect-services` + `prefect-worker` |
-| Primary DB | PostgreSQL 16 (`engineering_core`) | container: `postgres_db:5432` |
-| Graph | Neo4j | Tag↔Parent, Tag↔Doc impact chains |
-| Vector | Qdrant | Semantic search on `property_value` |
-| LLM | Ollama (RTX 3090, GPU) | Local inference, no internet |
-| Transform | Pandas 2.x + SQLAlchemy 2.x | |
-| DB GUI | DbGate | port 18978, db: `engineering_core` |
+## 🔴 CRITICAL RULES (5)
 
-Full service list: `docker-compose.yml` in project root.
+1. **Never invent** DB columns, config keys, library params — query pgedge MCP or ask
+2. **Before ANY schema/architecture change** — validate against live DB via pgedge MCP
+3. **After any schema change** — update `schema.sql` immediately (same commit)
+4. **Language** — ENGLISH ONLY: all code, SQL, comments, YAML, docs
+5. **Responses to user** - RUSSIAN ONLY
+6. **Secrets** — never hardcode: use `os.getenv("DATABASE_URL")` or `.env` (never commit)
 
 ---
 
-## Domain Objects
-- **Tag** — engineering object, unique per plant (e.g. `JDA-21-LIT-101`)
-- **Document** — project deliverable with unique `doc_number` (e.g. `JDAW-KVE-E-HX-2334-00001`)
-- **Property Value** — EAV model: class → property → value (CFIHOS ontology)
-- **SECE** — Safety Critical Element (`SAFETY_CRITICAL_ITEM_GROUP` in source)
-- **Article** — vendor catalog item linked to tag via `article_id`
+## MCP Usage (MANDATORY)
+
+| Situation | Use | Invoke |
+|-----------|-----|--------|
+| Tech choice, lib API, framework comparison | context7 | Auto-consulted for keywords |
+| DB schema, cardinality, data quality check | pgedge | Query via MCP or ask Claude |
+| Architecture decision | pgedge first, then context7 | Use `/model opus` + validation |
+
+**Key URLs:**
+- pgedge: `https://ai-db.adzv-pt.dev/mcp/v1`
+- GitHub: `https://github.com/Paradox-85/jackdaw_edw`
 
 ---
 
-## Project Structure
+## Model Selection
+
+| Task | Model | Command |
+|------|-------|---------|
+| Debug, logs, syntax | Haiku 3.5 | `/model haiku` |
+| ETL, SQL, Python, docs (everyday) | Sonnet 3.5 | `/model sonnet` ← default |
+| Architecture, SCD strategy, optimization | Opus 4.6 | `/model opus` with `ultrathink` |
+
+**Session Management:**
+- `/compact` — Compact context at ~50% usage
+- `/clear` — Clear context when switching tasks
+- `/rewind` (Esc Esc) — Undo recent messages
+- `/context` — Check current usage
+- `/rename` — Label important sessions for reference
+
+---
+
+## Code Standards
+
+### Python (Mandatory)
+Type hints required, async/await for all PostgreSQL operations, Google-style docstrings.
+```python
+async def sync_tags(session: AsyncSession, tags: List[dict]) -> int:
+    """Sync tags via SCD2 hash comparison.
+    Args: session: AsyncSession. tags: list of tag dicts.
+    Returns: upserted row count.
+    """
+    async with engine.begin() as conn:
+        return (await conn.execute(upsert_stmt)).rowcount
 ```
-etl/flows/            # Prefect @flow — orchestration entry points
-etl/tasks/            # Prefect @task — atomic reusable units
-etl/tasks/common.py   # load_config(), get_db_engine_url()
-sql/schema/schema.sql # CANONICAL schema — only source of truth for table/column names
-config/db_config.yaml # DB connection, file paths, schema names
-data/current/         # Symlinks → /mnt/shared-data/ram-user/Jackdaw/
-data/_history/        # Symlinks → historical snapshots
-docs/                 # Technical documentation — always read before changing architecture
+
+### Pandas (Always)
+Always `dtype=str, na_filter=False`; `None` before DB insert:
+```python
+df = pd.read_csv("data.csv", dtype=str, na_filter=False)
+df["col"] = df["col"].str.strip().where(df["col"].notna(), None)
 ```
 
----
-
-## Documentation Index (docs/)
-
-**Always read relevant docs BEFORE making changes. Always update relevant docs AFTER making changes.**
-
-| File | Purpose | Read when... |
-|---|---|---|
-| `docs/architecture.md` | Data flow diagram, flow execution order, ADR log, key design decisions | Before any structural change to flows, schema, or domain logic |
-| `docs/infrastructure.md` | Hardware, Proxmox/LXC layout, Docker services, networking (Tailscale/Caddy), AI/ML stack, storage paths | Before any infra, Docker, or path-related change |
-| `docs/file-specification.md` | Full spec for all source XLSX inputs (MDR, MTR, Reference Data, CFIHOS RDL) and EIS CSV outputs — column mappings, processing rules, FK resolution | Before touching any ETL read/write/export logic |
-
-> **Rule**: If `docs/` content contradicts the code after a change — update `docs/` to match code, not the other way around.
-> **Rule**: Do not append contradictions — delete or replace outdated blocks.
-
----
-
-## Non-Negotiable Rules (always apply)
-1. **Zero hallucination**: never invent columns or tables. Check `schema.sql` first.
-2. **Schema prefix always**: `project_core.tag` — never bare `tag`
-3. **FK resolution**: `lookup.get(value) if value else None` — never auto-create reference data
-4. **Pandas read**: `dtype=str, na_filter=False` — always, no exceptions
-5. **Audit**: every flow writing project data MUST log to `audit_core.sync_run_stats`
-6. **SCD2**: every tag change MUST write to `audit_core.tag_status_history` (snapshot JSONB)
-7. **Transactions**: `with engine.begin() as conn:` for all DML
-
----
-
-## Flow Execution Order
+### SQL (Always Required)
+Schema-prefix mandatory (`project_core.`, `audit_core.`, `mapping.`, `ontology_core.`); UUID via `gen_random_uuid()`; timestamps as `TIMESTAMP WITH TIME ZONE`.
+```sql
+SELECT t.id, t.tag_code FROM project_core.tag t
+LEFT JOIN project_core.tag_parent p ON t.id = p.child_id
+-- CREATE TABLE: id UUID PRIMARY KEY DEFAULT gen_random_uuid(), created_at TIMESTAMPTZ DEFAULT NOW()
 ```
-seed_ontology → sync_tag_data → sync_tag_hierarchy → export_tag_register
-```
-`sync_tag_hierarchy` is always a second pass — runs after main UPSERT in same master flow.
+→ Full DDL patterns in `.claude/skills/edw-sql-schema/SKILL.md`
 
----
-
-## Doc Maintenance Protocol (MANDATORY)
-
-After **every** code change or planning session, Claude MUST:
-
-1. **Read** `docs/architecture.md` — check for conflicts with the change just made
-2. **Update** the relevant `docs/` file(s):
-   - New flow or task added → update `docs/architecture.md` (Data Flow section)
-   - ETL logic changed (SCD, hashing, FK) → update `docs/architecture.md`
-   - Source/output file format changed → update `docs/file-specification.md`
-   - New Docker service or infra change → update `docs/infrastructure.md` (Docker Services table)
-3. **Rules for doc updates**:
-   - Delete or replace outdated blocks — do not append contradictions
-   - Keep descriptions concise, in English, without loss of meaning
-   - Add an ADR (Architecture Decision Record) entry in `docs/architecture.md` for any significant structural decision
-
-**Format for ADR entries in architecture.md:**
-```
-## ADR-NNN: [Short Title]
-- **Date**: YYYY-MM-DD
-- **Decision**: What was decided
-- **Reason**: Why
-- **Impact**: Which files/tables/flows are affected
+### Foreign Key Resolution (Always)
+Use `.get(key)` with None fallback; log warning on miss; preserve raw value in `_raw` column.
+```python
+company_id = lookup.get(company_name)
+if not company_id and company_name:
+    logger.warning(f"FK miss: {company_name}")
+    record["_raw_company"] = company_name  # preserve; insert NULL FK
 ```
 
 ---
 
-## Coding Rules (always loaded)
-See `.claude/rules/` — loaded automatically:
-`python-standards` · `sql-standards` · `etl-logic` · `audit-rules` · `export-eis`
+## Domain Logic — SCD Type 2 (Slowly Changing Dimensions)
+Every change to `project_core.tag` must be logged to `project_core.tag_history` with status `New|Updated|Deleted`.
+
+### Hash Computation (Mandatory)
+```python
+def compute_row_hash(row: dict) -> str:
+    return md5(json.dumps(row, sort_keys=True, default=str).encode()).hexdigest()
+
+if new_hash != existing_hash:
+    await upsert_tag(db, record)
+    await log_change(db, record_id, "Updated")
+```
+
+### Tag History Table Pattern
+```sql
+INSERT INTO project_core.tag_history (id, tag_id, old_value, new_value, status, created_at)
+VALUES (
+    gen_random_uuid(),
+    $1,  -- tag_id (from project_core.tag.id)
+    $2,  -- old_value (JSONB row snapshot)
+    $3,  -- new_value (JSONB row snapshot)
+    'Updated',  -- status: New | Updated | Deleted
+    CURRENT_TIMESTAMP
+);
+```
+
+### Audit Logging (Always)
+```sql
+INSERT INTO audit_core.log_entry (operation, table_name, rows_affected, success, error_message, created_at)
+VALUES ('INSERT', 'project_core.tag', 1000, true, NULL, CURRENT_TIMESTAMP);
+```
+
+### Tag Hierarchy Resolution (Mandatory Order)
+**CRITICAL:** Tag-to-Parent resolution must run **AFTER** main tag sync, **WITHIN SAME Prefect flow**.
+
+```python
+@flow(name="tag-sync-master")
+async def sync_tags_master(config: dict):
+    """Master ETL flow: strict task ordering required.
+    
+    Order is critical:
+    1. Sync main tags (creates FK targets in project_core.tag)
+    2. Resolve parent-child (references must exist first)
+    3. Log changes (audit trail to tag_history + audit_core.log_entry)
+    """
+    # Step 1: Extract + Transform + Load main tags
+    sync_result = await task_sync_tags(config["source_data"])
+    
+    # Step 2: Resolve parent relationships (after tags exist!)
+    hierarchy_result = await task_resolve_hierarchy(config["hierarchy_mappings"])
+    
+    # Step 3: Log all changes
+    history_result = await task_log_changes(sync_result)
+    
+    return {
+        "tags_synced": sync_result,
+        "hierarchy_resolved": hierarchy_result,
+        "changes_logged": history_result
+    }
+```
+
+## File Layout (Actual Project Structure)
+
+```
+edw/
+├── data/            → /mnt/shared-data/{raw,processed,archive}
+├── etl/flows/       tag_sync.py (entry: main_pipeline)
+├── etl/tasks/       tag_sync.py (fetch, validate, upsert, hierarchy, log)
+├── sql/schema.sql   canonical schema — check before any DB change
+├── config/default.yaml
+├── docs/            logic-manifesto.md | environment-setup.md
+└── .claude/
+    ├── settings.json
+    ├── commands/    /new-source · /schema-change · /sync-debug
+    ├── skills/      scd2-rules · edw-sql-schema · prefect-etl-patterns
+    └── agents/      schema-validator (isolated, use: "use subagents to validate schema")
+```
+
+---
+
+## Code Review Checklist
+
+- [ ] **Type hints** on all functions; **async/await** correct (no blocking calls in async)
+- [ ] **SQL schema-prefixed** (`project_core.`, `audit_core.`, `mapping.`, `ontology_core.`)
+- [ ] **FK resolution:** `.get()` + None + warning log + `_raw` column preservation
+- [ ] **SCD2 changes** logged to `project_core.tag_history` with `old_value` + `new_value` JSONB
+- [ ] **Audit logged** to `audit_core.log_entry` (operation, table, rows, success)
+- [ ] **`schema.sql` updated** in same commit if any DB change
+- [ ] **Verification:** `pg_dump -d edw_db -s` diff clean vs `sql/schema.sql` (no drift)
+- [ ] **No secrets** in code (`.env*`, `ssh/`, `logs/prod/` not exposed)
+- [ ] **Tag hierarchy** resolved AFTER main sync (same Prefect flow, separate task)
+- [ ] **DataFrame loads** with `dtype=str, na_filter=False`; NaT → None before insert
+- [ ] **New tech used** → context7 consulted; **architecture change** → pgedge validated
+- [ ] **Error handling** with logging via `get_run_logger()` (not `print()`)
+
+---
