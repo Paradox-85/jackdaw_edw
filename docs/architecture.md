@@ -21,6 +21,37 @@
 | `qdrant` | qdrant/qdrant:latest | 6333 | Vector search, storage: `./qdrant_storage` |
 | `neo4j` | neo4j:latest | 7474 (HTTP), 7687 (Bolt) | Graph DB, data: `./neo4j_data` |
 | `dbgate_gui` | dbgate/dbgate:latest | 18978 | DB admin UI, pre-configured for `engineering_core` |
+| `jackdaw-ui` | jackdaw-control-center:2.0 | 8501 | Streamlit Control Center — ETL triggers, reports, validation, LLM chat |
+
+## Jackdaw UI — EDW Control Center
+
+Streamlit multi-page application deployed as Docker service `jackdaw-ui` on LXC 200.
+
+| Parameter | Value |
+|---|---|
+| External URL | `https://jackdaw.edw.adzv-pt.dev` |
+| Internal port | `10.10.10.50:8501` |
+| Build context | `edw/` root, Dockerfile at `docker/jackdaw-ui/Dockerfile` |
+| DB access | Viewer queries: `edw_viewer` (SELECT only); Admin triggers: `postgres_admin` |
+| Prefect API | `http://prefect-server:4200/api` |
+
+**Pages:**
+
+| Page | Role | Description |
+|---|---|---|
+| Home | Viewer | KPI dashboard: active tags, docs, service health, recent flow runs |
+| Reports | Viewer | 4 built-in SQL reports + dynamic catalogue from `audit_core.report_metadata` |
+| Tag History | Viewer | SCD audit trail from `audit_core.tag_status_history` with filters |
+| Validation | Viewer | Violation stats from `audit_core.validation_result`, rule catalogue |
+| LLM Chat | Viewer | Local Q&A via Ollama (RTX 3090) |
+| CRS Assistant | Viewer | 🚧 Phase 2 stub |
+| ETL Import | Admin | Trigger `sequential-master-sync` Prefect deployment |
+| EIS Export | Admin | Trigger `export-tag-register-deployment` / `export-equipment-register-deployment` or direct query download |
+| Services | Admin | Infra links (Prefect, DbGate), deployment health |
+
+**DB roles:**
+- `edw_viewer` — SELECT only on all 5 schemas. Used for all report/viewer queries.
+- `postgres_admin` — full access. Used only for admin-triggered ETL audit queries.
 
 ## Key Configuration Facts
 - **Prefect API URL**: `https://pve.prefect.adzv-pt.dev/api`

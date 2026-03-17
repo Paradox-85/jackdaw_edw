@@ -19,11 +19,10 @@
       "Read(config/**)",
       "Read(CLAUDE*.md)",
       "Read(.claude/**)",
-      "Bash(curl -s -X POST \"https://ai-db.adzv-pt.dev/mcp/v1\" -H \"Authorization: Bearer VMTcjQkxhb6UgGG3wtO70imRyxXmh9LeHFuKPY2zqoA=\" -H \"Content-Type: application/json\" -d '{\"\"jsonrpc\"\":\"\"2.0\"\",\"\"id\"\":52,\"\"method\"\":\"\"tools/call\"\",\"\"params\"\":{\"\"name\"\":\"\"query_database\"\",\"\"arguments\"\":{\"\"query\"\":\"\"SELECT COUNT\\(*\\) as total, COUNT\\(safety_critical_item\\) as has_seci, COUNT\\(production_critical_item\\) as has_pci, COUNT\\(safety_critical_item_reason_awarded\\) as has_reason FROM project_core.tag\"\",\"\"limit\"\":5}}}')",
-      "Bash(curl -s -X POST \"https://ai-db.adzv-pt.dev/mcp/v1\" -H \"Authorization: Bearer VMTcjQkxhb6UgGG3wtO70imRyxXmh9LeHFuKPY2zqoA=\" -H \"Content-Type: application/json\" -d '{\"\"jsonrpc\"\":\"\"2.0\"\",\"\"id\"\":62,\"\"method\"\":\"\"tools/call\"\",\"\"params\"\":{\"\"name\"\":\"\"query_database\"\",\"\"arguments\"\":{\"\"query\"\":\"\"SELECT DISTINCT object_status FROM reference_core.plant\"\",\"\"limit\"\":5}}}')",
-      "Bash(curl -s -X POST \"https://ai-db.adzv-pt.dev/mcp/v1\" -H \"Authorization: Bearer VMTcjQkxhb6UgGG3wtO70imRyxXmh9LeHFuKPY2zqoA=\" -H \"Content-Type: application/json\" -d '{\"\"jsonrpc\"\":\"\"2.0\"\",\"\"id\"\":71,\"\"method\"\":\"\"tools/call\"\",\"\"params\"\":{\"\"name\"\":\"\"query_database\"\",\"\"arguments\"\":{\"\"query\"\":\"\"SELECT DISTINCT safety_critical_item FROM project_core.tag WHERE safety_critical_item IS NOT NULL ORDER BY safety_critical_item\"\",\"\"limit\"\":20}}}')",
+      "mcp__pgedge__*",
       "Bash(python3 -m json.tool)",
-      "Bash(ls -la /c/Development/jackdaw/edw/etl/flows/export*.py)"
+      "Bash(ls -la /c/Development/jackdaw/edw/etl/flows/export*.py)",
+      "Bash(grep -r \"\\\\.serve\\(\" /c/Development/jackdaw/edw/etl/flows/*.py)"
     ],
     "deny": [
       "Read(*.env*)",

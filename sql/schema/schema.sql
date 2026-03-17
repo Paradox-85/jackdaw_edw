@@ -1,4 +1,16 @@
-CREATE TABLE "reference_core"."site" ( 
+-- =============================================================================
+-- Schema creation (idempotent — safe to re-run)
+-- =============================================================================
+CREATE SCHEMA IF NOT EXISTS reference_core;
+CREATE SCHEMA IF NOT EXISTS project_core;
+CREATE SCHEMA IF NOT EXISTS ontology_core;
+CREATE SCHEMA IF NOT EXISTS mapping;
+CREATE SCHEMA IF NOT EXISTS audit_core;
+
+-- =============================================================================
+-- reference_core tables
+-- =============================================================================
+CREATE TABLE "reference_core"."site" (
   "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
   "code" TEXT NOT NULL,
   "name" TEXT NULL,
@@ -460,3 +472,34 @@ CREATE TABLE "audit_core"."validation_result" (
 );
 CREATE INDEX "idx_val_result_session"   ON "audit_core"."validation_result" ("session_id");
 CREATE INDEX "idx_val_result_object_id" ON "audit_core"."validation_result" ("object_id");
+
+-- =============================================================================
+-- audit_core.report_metadata — Dynamic SQL report catalogue (migration_009)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS "audit_core"."report_metadata" (
+  "id"            UUID      NOT NULL DEFAULT gen_random_uuid(),
+  "report_name"   TEXT      NOT NULL,
+  "category"      TEXT      NOT NULL DEFAULT 'General',
+  "description"   TEXT      NULL,
+  "sql_query"     TEXT      NOT NULL,
+  "author"        TEXT      NULL      DEFAULT 'system',
+  "is_parametric" BOOLEAN   NOT NULL  DEFAULT false,
+  "is_active"     BOOLEAN   NOT NULL  DEFAULT true,
+  "created_at"    TIMESTAMP NOT NULL  DEFAULT now(),
+  "updated_at"    TIMESTAMP NOT NULL  DEFAULT now(),
+  CONSTRAINT "report_metadata_pkey"     PRIMARY KEY ("id"),
+  CONSTRAINT "report_metadata_name_key" UNIQUE ("report_name")
+);
+
+CREATE OR REPLACE FUNCTION audit_core.set_report_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_report_metadata_updated_at ON audit_core.report_metadata;
+CREATE TRIGGER trg_report_metadata_updated_at
+    BEFORE UPDATE ON audit_core.report_metadata
+    FOR EACH ROW EXECUTE FUNCTION audit_core.set_report_updated_at();

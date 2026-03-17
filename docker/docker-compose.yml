@@ -12,7 +12,7 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./postgres/init/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+      - ./postgres/init/init-db.sql:/docker-entrypoint-initdb.d/10-init-db.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres_admin -d postgres"]
       interval: 10s
@@ -153,6 +153,35 @@ services:
       - NEO4J_AUTH=neo4j/5013d89f19fd063bd0ff1e5442c4dd5c
     volumes:
       - ./neo4j_data:/data
+
+  # --- EDW CONTROL CENTER: STREAMLIT UI ---
+  # Build context: edw/ project root. Dockerfile: docker/jackdaw-ui/Dockerfile.
+  # External access: https://jackdaw.edw.adzv-pt.dev (via Caddy on VPS)
+  jackdaw-ui:
+    build:
+      context: ../
+      dockerfile: docker/jackdaw-ui/Dockerfile
+    image: jackdaw-control-center:2.0
+    container_name: jackdaw-ui
+    restart: unless-stopped
+    ports:
+      - "10.10.10.50:8501:8501"
+    environment:
+      DATABASE_URL: "postgresql://postgres_admin:d5d182693cfd8f945fcb7fb3653fc039@postgres:5432/engineering_core"
+      DATABASE_VIEWER_URL: "postgresql://edw_viewer:${EDW_VIEWER_PASSWORD:-edw_viewer_change_me}@postgres:5432/engineering_core"
+      PREFECT_API_URL: "http://prefect-server:4200/api"
+      OLLAMA_URL: "http://ollama:11434"
+      EIS_EXPORT_DIR: "/mnt/shared-data/ram-user/Jackdaw/EIS_Exports/"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-changeme}"
+      LINK_PREFECT: "https://pve.prefect.adzv-pt.dev"
+      LINK_DBGATE: "https://pve.db.adzv-pt.dev"
+    volumes:
+      - /mnt/shared-data:/mnt/shared-data:rw
+    depends_on:
+      postgres:
+        condition: service_healthy
+      prefect-server:
+        condition: service_healthy
 
   # --- DATABASE GUI: DBGATE ---
   dbgate:

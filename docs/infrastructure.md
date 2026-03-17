@@ -219,7 +219,15 @@ neo4j.adzv-pt.dev        → 10.10.10.50:7474
 pve.prefect.adzv-pt.dev  → 10.10.10.50:4200
 pve.db.adzv-pt.dev       → 10.10.10.50:18978
 pve.sftpgo.adzv-pt.dev   → 10.10.10.60:8080
+jackdaw.edw.adzv-pt.dev  → 10.10.10.50:8501
   /dav/*                 → 10.10.10.60:8090  (WebDAV, path-stripped)
+```
+
+**Jackdaw UI Caddy config:**
+```caddy
+jackdaw.edw.adzv-pt.dev {
+    reverse_proxy 10.10.10.50:8501
+}
 ```
 
 **SFTPGo WebDAV split-port config:**
@@ -269,6 +277,7 @@ All services on internal Docker network. GPU runtime via `nvidia` driver.
 | `neo4j` | `neo4j:latest` | `7474`, `7687` | Graph DB |
 | `flowise` | `flowiseai/flowise:latest` | `3001` | AI agent builder |
 | `dbgate_gui` | `dbgate/dbgate:latest` | `18978→3000` | DB admin UI |
+| `jackdaw-ui` | `jackdaw-control-center:2.0` | `8501` | Streamlit Control Center — ETL, reports, validation, LLM chat |
 
 **Service dependency graph:**
 ```

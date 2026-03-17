@@ -4,11 +4,11 @@
 **MCP:** context7 (tech docs) | pgedge (`https://ai-db.adzv-pt.dev/mcp/v1`)  
 **GitHub:** https://github.com/Paradox-85/jackdaw_edw
 
-**References:** @docs/architecture.md | @docs/infrastructure.md | @sql/schema.sql
+**References:** @docs/architecture.md @docs/file-specification.md
 
 ---
 
-## 🔴 CRITICAL RULES (5)
+## 🔴 CRITICAL RULES
 
 1. **Never invent** DB columns, config keys, library params — query pgedge MCP or ask
 2. **Before ANY schema/architecture change** — validate against live DB via pgedge MCP
@@ -16,6 +16,21 @@
 4. **Language** — ENGLISH ONLY: all code, SQL, comments, YAML, docs
 5. **Responses to user** - RUSSIAN ONLY
 6. **Secrets** — never hardcode: use `os.getenv("DATABASE_URL")` or `.env` (never commit)
+
+---
+
+## 🗂️ Available Commands & Agents
+<!-- Claude: always suggest these when the situation matches. Never skip them. -->
+
+| Situation | Action |
+|-----------|--------|
+| Adding new data source to pipeline | suggest `/new-source` |
+| ANY database schema change (table/column/index) | suggest `/schema-change` + **launch `schema-validator` subagent** |
+| Prefect flow fails or produces wrong results | suggest `/sync-debug` |
+| User asks to validate a schema design | **launch `schema-validator` subagent** |
+
+> **Commands** are invoked by user typing `/command-name` in chat.
+> **`schema-validator`** subagent is launched by saying: *"use subagents to validate this"*
 
 ---
 
@@ -30,6 +45,13 @@
 **Key URLs:**
 - pgedge: `https://ai-db.adzv-pt.dev/mcp/v1`
 - GitHub: `https://github.com/Paradox-85/jackdaw_edw`
+
+---
+
+## Database Access Rules
+- ALWAYS use MCP tools `query_database` and `get_schema_info` from the `pgedge` server directly.
+- NEVER use `curl` to call https://ai-db.adzv-pt.dev/mcp/v1 manually.
+- Direct MCP tool calls are faster, safer, and do not require Bash permissions.
 
 ---
 
@@ -93,6 +115,7 @@ if not company_id and company_name:
 
 ## Domain Logic — SCD Type 2 (Slowly Changing Dimensions)
 Every change to `project_core.tag` must be logged to `project_core.tag_history` with status `New|Updated|Deleted`.
+<!-- Claude: if user mentions tag, SCD, hash, or tag_history → auto-load skill scd2-rules -->
 
 ### Hash Computation (Mandatory)
 ```python
@@ -125,7 +148,7 @@ VALUES ('INSERT', 'project_core.tag', 1000, true, NULL, CURRENT_TIMESTAMP);
 
 ### Tag Hierarchy Resolution (Mandatory Order)
 **CRITICAL:** Tag-to-Parent resolution must run **AFTER** main tag sync, **WITHIN SAME Prefect flow**.
-
+<!-- Claude: if user asks about Prefect, flows, tasks, deploy → suggest /sync-debug or auto-load skill prefect-etl-patterns -->
 ```python
 @flow(name="tag-sync-master")
 async def sync_tags_master(config: dict):
@@ -153,20 +176,26 @@ async def sync_tags_master(config: dict):
 ```
 
 ## File Layout (Actual Project Structure)
-
 ```
 edw/
 ├── data/            → /mnt/shared-data/{raw,processed,archive}
 ├── etl/flows/       tag_sync.py (entry: main_pipeline)
 ├── etl/tasks/       tag_sync.py (fetch, validate, upsert, hierarchy, log)
-├── sql/schema.sql   canonical schema — check before any DB change
+├── sql/schema.sql   canonical — ALWAYS check before any DB change
 ├── config/default.yaml
 ├── docs/            logic-manifesto.md | environment-setup.md
 └── .claude/
     ├── settings.json
-    ├── commands/    /new-source · /schema-change · /sync-debug
-    ├── skills/      scd2-rules · edw-sql-schema · prefect-etl-patterns
-    └── agents/      schema-validator (isolated, use: "use subagents to validate schema")
+    ├── commands/
+    │   ├── new-source.md      ← /new-source    (добавление источника данных)
+    │   ├── schema-change.md   ← /schema-change (изменения схемы БД)
+    │   └── sync-debug.md      ← /sync-debug    (диагностика ETL)
+    ├── skills/                ← auto-load по ключевым словам
+    │   ├── scd2-rules/        ← keywords: hash, SCD, tag_history, upsert
+    │   ├── edw-sql-schema/    ← keywords: schema, table, DDL, CREATE TABLE, FK
+    │   └── prefect-etl-patterns/ ← keywords: flow, task, prefect, deploy, pipeline
+    └── agents/
+        └── schema-validator.md  ← запуск: "use subagents to validate schema"
 ```
 
 ---
@@ -178,12 +207,12 @@ edw/
 - [ ] **FK resolution:** `.get()` + None + warning log + `_raw` column preservation
 - [ ] **SCD2 changes** logged to `project_core.tag_history` with `old_value` + `new_value` JSONB
 - [ ] **Audit logged** to `audit_core.log_entry` (operation, table, rows, success)
-- [ ] **`schema.sql` updated** in same commit if any DB change
-- [ ] **Verification:** `pg_dump -d edw_db -s` diff clean vs `sql/schema.sql` (no drift)
+- [ ] **`schema.sql` updated** in same commit if any DB change → **run `/schema-change`**
+- [ ] **Verification:** `pg_dump -d edw_db -s` diff clean vs `sql/schema.sql`
 - [ ] **No secrets** in code (`.env*`, `ssh/`, `logs/prod/` not exposed)
 - [ ] **Tag hierarchy** resolved AFTER main sync (same Prefect flow, separate task)
 - [ ] **DataFrame loads** with `dtype=str, na_filter=False`; NaT → None before insert
-- [ ] **New tech used** → context7 consulted; **architecture change** → pgedge validated
+- [ ] **New tech used** → context7; **architecture change** → pgedge + **`schema-validator` subagent**
 - [ ] **Error handling** with logging via `get_run_logger()` (not `print()`)
 
 ---
