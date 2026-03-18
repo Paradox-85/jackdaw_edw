@@ -125,10 +125,10 @@ services:
     ports:
       - "8501:8501"
     environment:
+      DATABASE_URL: "postgresql://postgres_admin:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
       DATABASE_VIEWER_URL: "postgresql://edw_viewer:${EDW_VIEWER_PASSWORD}@postgres:5432/${POSTGRES_DB}"
       PREFECT_API_URL: "http://prefect-server:4200/api"
       OLLAMA_URL: "http://ollama:11434" # Connected via ai_core_network
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
       EIS_EXPORT_DIR: "/mnt/shared-data/ram-user/Jackdaw/Export/EIS/"
     volumes:
       - /mnt/shared-data:/mnt/shared-data:rw

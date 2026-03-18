@@ -6,7 +6,7 @@ GIT_HASH and BUILD_DATE are read from the git repo at import time.
 """
 from __future__ import annotations
 import subprocess
-from datetime import timezone
+from pathlib import Path
 
 __version__ = "0.2.0"
 
@@ -17,7 +17,7 @@ def _git(args: list[str]) -> str:
         return subprocess.check_output(
             ["git"] + args,
             stderr=subprocess.DEVNULL,
-            cwd=__file__,          # resolved to repo root by git
+            cwd=str(Path(__file__).parent.parent),  # repo root
         ).decode().strip()
     except Exception:
         return ""

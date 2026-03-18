@@ -17,7 +17,7 @@ Architecture notes:
 import streamlit as st
 
 st.set_page_config(
-    page_title="Jackdaw EDW",
+    page_title="EDW Control Center",
     page_icon="🐦",
     layout="wide",
     initial_sidebar_state="expanded",
