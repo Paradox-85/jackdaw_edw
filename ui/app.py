@@ -26,6 +26,7 @@ st.set_page_config(
 from ui.common import (  # noqa: E402
     GLOBAL_CSS, get_current_user, is_admin, verify_password,
 )
+from ui.version import version_string  # noqa: E402
 from ui.pages import (   # noqa: E402
     home, reports, tag_history, validation,
     llm_chat, crs_assistant, services,
@@ -138,11 +139,12 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    st.markdown("""
+    st.markdown(f"""
     <div style="font-size:11px;color:#8B949E;line-height:1.8">
       PostgreSQL · Prefect 3.x<br>
       Neo4j · Qdrant · Ollama<br>
-      <span style="color:#444">PVE LXC 200 · adzv-pt.dev</span>
+      <span style="color:#444">PVE LXC 200 · adzv-pt.dev</span><br>
+      <span style="color:#444;font-family:monospace">{version_string()}</span>
     </div>
     """, unsafe_allow_html=True)
 

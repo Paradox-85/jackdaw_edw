@@ -50,7 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_ui_feedback_created  ON app_core.ui_feedback (cre
 INSERT INTO app_core.ui_user (username, password_hash, role)
 VALUES (
     'admin',
-    '$2b$12$7Urgew0/laimtQ3ZlSPbZ.xESy2XqjO0uyqlmdKUgVaEQRljk7haG',
+    '$2b$12$gxk81blGgcdR7wJ0ZE3E2.jXX7MyIXKOy8Pu6ItGA8KVF5wKP7BgC',
     'admin'
 )
 ON CONFLICT (username) DO NOTHING;

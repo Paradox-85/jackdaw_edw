@@ -9,10 +9,11 @@ from ui.common import (
     ADMIN_LINKS, badge, db_read, is_admin,
     prefect_get, ollama_models, recent_flow_runs, section,
 )
+from ui.version import version_string
 
 def render() -> None:
     st.markdown("### 🐦 Jackdaw EDW — Control Center")
-    st.caption("Plant **JDA** · engineering_core · Ryzen 7 7700 + RTX 3090")
+    st.caption(f"Plant **JDA** · engineering_core · Ryzen 7 7700 + RTX 3090 · `{version_string()}`")
 
     # ── KPIs ────────────────────────────────────────────────────────────────
     section("System Metrics")
