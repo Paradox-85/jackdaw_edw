@@ -1,12 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch",
-      "mcp__pgedge__query_database",
-      "mcp__pgedge__get_schema_info",
-      "mcp__pgedge__*",
-      "Bash(grep *.py$)",
-      "Bash(wc -l *)"
+      "Read(//c/Users/ADZV/.claude/plugins/cache/claude-plugins-official/superpowers/**)"
+    ],
+    "additionalDirectories": [
+      "c:\\Development\\jackdaw\\edw\\docs\\superpowers",
+      "c:\\Users\\ADZV\\.claude\\plugins\\cache\\claude-plugins-official\\superpowers"
     ]
   }
 }

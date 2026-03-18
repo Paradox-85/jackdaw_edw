@@ -1,0 +1,148 @@
+networks:
+  web_proxy:
+    external: true
+
+services:
+  # --- DATABASE (Shared by n8n and Langfuse) ---
+  postgres:
+    image: postgres:latest
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=postgres
+    volumes:
+      - ./postgres_data:/var/lib/postgresql # Fixed path for Postgres 18+ compatibility
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - web_proxy
+
+  mcp-server:
+    image: ghcr.io/pgedge/postgres-mcp:latest
+    container_name: mcp-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - PGEDGE_DATA_DIR=/app/data
+      - PGEDGE_CONFIG_FILE=/etc/pgedge/postgres-mcp.yaml
+    volumes:
+      - ./mcp-config:/etc/pgedge
+      - ./mcp-data:/app/data
+    networks:
+      - web_proxy
+
+  # --- n8n (Automation & Workflow Engine) ---
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_USER=postgres
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_POSTGRESDB_DATABASE=postgres
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_USER_MANAGEMENT_JWT_SECRET=${N8N_USER_MANAGEMENT_JWT_SECRET}
+      - N8N_SECURE_COOKIE=true
+      - WEBHOOK_URL=https://${N8N_HOSTNAME}
+    volumes:
+      - ./n8n_data:/home/node/.n8n
+      - ./n8n_backups:/backup # Directory for your JSON workflow backups
+    networks:
+      - web_proxy
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # --- OPEN WEBUI (Frontend Interface) ---
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    environment:
+      - OLLAMA_BASE_URL=http://10.10.10.50:11434 # Pointing to PVE via Tailscale
+      - WEBUI_SECRET_KEY=${JWT_SECRET}
+    volumes:
+      - ./open-webui_data:/app/backend/data
+    networks:
+      - web_proxy
+
+  # --- LANGFUSE (LLM Observability & Logging) ---
+  langfuse-web:
+    image: langfuse/langfuse:3
+    container_name: langfuse-web
+    restart: always
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
+      - NEXTAUTH_URL=https://${LANGFUSE_HOSTNAME}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - SALT=${LANGFUSE_SALT}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - CLICKHOUSE_URL=http://clickhouse:8123
+      - CLICKHOUSE_USER=clickhouse
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+      - REDIS_HOST=redis
+    networks:
+      - web_proxy
+    depends_on:
+      - postgres
+      - clickhouse
+      - redis
+
+  clickhouse:
+    image: clickhouse/clickhouse-server
+    container_name: clickhouse
+    restart: always
+    environment:
+      - CLICKHOUSE_DB=default
+      - CLICKHOUSE_USER=clickhouse
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+    volumes:
+      - ./clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse_logs:/var/log/clickhouse-server
+    networks:
+      - web_proxy
+
+  redis:
+    image: valkey/valkey:8-alpine
+    container_name: redis
+    restart: unless-stopped
+    volumes:
+      - ./redis_data:/data
+    networks:
+      - web_proxy
+
+  minio:
+    image: minio/minio
+    container_name: minio
+    restart: always
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minio
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    volumes:
+      - ./minio_data:/data
+    networks:
+      - web_proxy
+
+  # --- REVERSE PROXY (Caddy) ---
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - ./caddy_data:/data
+      - ./caddy_config:/config
+    networks:
+      - web_proxy

@@ -2,16 +2,17 @@
 ui/common.py — Shared config, CSS, DB/Prefect helpers.
 
 DB ACCESS POLICY:
-  - Admin mode  → postgres_admin (full access, trigger flows)
+  - Admin mode  → postgres_admin (full access, trigger flows, INSERT to app_core)
   - Viewer mode → edw_viewer     (read-only role, SELECT on reporting views only)
 
-RBAC is currently env-var based (ADMIN_PASSWORD).
-Phase 2: replace with proper OIDC/session auth.
+Auth: DB-backed via app_core.ui_user (bcrypt passwords, viewer/admin roles).
+Phase 2: replace with proper OIDC/session auth if user base grows.
 """
 from __future__ import annotations
 import os
 from datetime import datetime
 
+import bcrypt
 import httpx
 import pandas as pd
 import streamlit as st
@@ -19,7 +20,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 # ─── Environment ──────────────────────────────────────────────────────────────
-# Admin DB — full access (import triggers, audit writes)
+# Admin DB — full access (import triggers, audit writes, app_core writes)
 _ADMIN_DB_URL = os.getenv(
     "DATABASE_URL",
     "postgresql://postgres_admin:password@postgres:5432/engineering_core",
@@ -35,9 +36,6 @@ PREFECT_URL    = os.getenv("PREFECT_API_URL", "http://prefect-server:4200/api")
 OLLAMA_URL     = os.getenv("OLLAMA_URL",      "http://ollama:11434")
 EIS_EXPORT_DIR = os.getenv("EIS_EXPORT_DIR",  "/mnt/shared-data/ram-user/Jackdaw/EIS_Exports/")
 
-# Admin gate — simple password until proper auth is added
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "changeme")
-
 # External infra links — shown ONLY in admin mode
 ADMIN_LINKS = {
     "Prefect UI": os.getenv("LINK_PREFECT",   "https://pve.prefect.adzv-pt.dev"),
@@ -50,34 +48,74 @@ def is_admin() -> bool:
     return st.session_state.get("role") == "admin"
 
 def require_admin() -> None:
-    """Render admin login gate if not authenticated."""
+    """Stop rendering if user is not admin. Role is set at login — no inline gate."""
     if is_admin():
         return
     st.warning("🔒 This section requires admin access.")
-    pwd = st.text_input("Admin password", type="password", key="admin_gate_pwd")
-    if st.button("Unlock", key="admin_gate_btn"):
-        if pwd == ADMIN_PASSWORD:
-            st.session_state["role"] = "admin"
-            st.rerun()
-        else:
-            st.error("Incorrect password.")
     st.stop()
+
+def get_current_user() -> dict | None:
+    """Return current user dict {id, username, role} or None if not authenticated."""
+    return st.session_state.get("user")
+
+# ─── Auth ─────────────────────────────────────────────────────────────────────
+def verify_password(username: str, password: str) -> tuple[bool, str]:
+    """
+    Verify credentials against app_core.ui_user.
+
+    Updates last_login timestamp on success.
+
+    Args:
+        username: Plaintext username.
+        password: Plaintext password to verify against bcrypt hash.
+
+    Returns:
+        (True, role) on success; (False, "") on failure or inactive user.
+    """
+    df = db_read(
+        "SELECT id, password_hash, role, is_active FROM app_core.ui_user WHERE username = :u",
+        {"u": username},
+        admin=True,
+    )
+    if df.empty:
+        return False, ""
+    row = df.iloc[0]
+    if not row["is_active"]:
+        return False, ""
+    try:
+        match = bcrypt.checkpw(password.encode("utf-8"), row["password_hash"].encode("utf-8"))
+    except Exception:
+        return False, ""
+    if match:
+        # Update last_login — non-critical, failure does not affect auth result
+        db_write(
+            "UPDATE app_core.ui_user SET last_login = now() WHERE username = :u",
+            {"u": username},
+        )
+        return True, str(row["role"])
+    return False, ""
 
 # ─── CSS ──────────────────────────────────────────────────────────────────────
 GLOBAL_CSS = """
 <style>
+/* Google Fonts — Roboto (MUI standard). Falls back gracefully if CDN unreachable. */
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap');
+
+body, p, div, span, label { font-family: 'Roboto', 'Segoe UI', Arial, sans-serif !important; }
+
 #MainMenu, footer, header { visibility: hidden; }
 [data-testid="stDeployButton"] { display: none; }
 
 /* Sidebar */
 [data-testid="stSidebar"] { background: #0D1117; border-right: 1px solid #21262D; }
 
-/* Metric cards */
+/* Metric cards — MUI elevation style */
 [data-testid="metric-container"] {
     background: #161B22 !important;
     border: 1px solid #21262D !important;
-    border-radius: 6px !important;
+    border-radius: 4px !important;
     padding: 14px 18px !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2) !important;
 }
 [data-testid="metric-container"] label {
     font-size: 10px !important; color: #8B949E !important;
@@ -92,16 +130,16 @@ GLOBAL_CSS = """
     border-bottom: 1px solid #21262D; padding-bottom: 6px; margin: 18px 0 12px;
 }
 
-/* Log box */
+/* Log box — monospace only here */
 .log-box {
-    background: #0D1117; border: 1px solid #21262D; border-radius: 6px;
-    padding: 12px 16px; font-family: 'SF Mono','Fira Code',monospace;
+    background: #0D1117; border: 1px solid #21262D; border-radius: 4px;
+    padding: 12px 16px; font-family: 'SF Mono','Fira Code',monospace !important;
     font-size: 11px; max-height: 260px; overflow-y: auto; line-height: 1.9;
 }
 
 /* Under construction banner */
 .wip-banner {
-    background: #1C2128; border: 1px dashed #D29922; border-radius: 6px;
+    background: #1C2128; border: 1px dashed #D29922; border-radius: 4px;
     padding: 24px; text-align: center; color: #D29922;
     font-size: 13px; margin: 16px 0;
 }
@@ -109,13 +147,13 @@ GLOBAL_CSS = """
 /* Inline status badges */
 .badge { display:inline-block; padding:2px 9px; border-radius:10px; font-size:11px; font-weight:500; }
 .badge-green  { background:rgba(63,185,80,.15);  color:#3FB950; border:1px solid rgba(63,185,80,.3);  }
-.badge-blue   { background:rgba(88,166,255,.12); color:#58A6FF; border:1px solid rgba(88,166,255,.3); }
+.badge-blue   { background:rgba(25,118,210,.15); color:#1976D2; border:1px solid rgba(25,118,210,.3); }
 .badge-yellow { background:rgba(210,153,34,.15); color:#D29922; border:1px solid rgba(210,153,34,.3); }
 .badge-red    { background:rgba(248,81,73,.15);  color:#F85149; border:1px solid rgba(248,81,73,.3);  }
 .badge-gray   { background:rgba(110,118,129,.12);color:#8B949E; border:1px solid rgba(110,118,129,.3);}
 
 /* Role pill */
-.role-admin  { color:#58A6FF; font-size:11px; font-weight:600; }
+.role-admin  { color:#1976D2; font-size:11px; font-weight:600; }
 .role-viewer { color:#8B949E; font-size:11px; }
 </style>
 """
@@ -159,6 +197,27 @@ def db_read(sql: str, params: dict | None = None, admin: bool = False) -> pd.Dat
     except Exception as exc:
         st.error(f"DB error: {exc}")
         return pd.DataFrame()
+
+def db_write(sql: str, params: dict | None = None) -> bool:
+    """
+    Execute write SQL (INSERT/UPDATE/DELETE) using admin engine.
+
+    Always uses admin engine — viewer role has no write rights on app_core.
+
+    Args:
+        sql:    Parameterised SQL with :param placeholders.
+        params: Dict of parameter values.
+
+    Returns:
+        True on success, False on error (error displayed via st.error).
+    """
+    try:
+        with _admin_engine().begin() as conn:
+            conn.execute(text(sql), params or {})
+        return True
+    except Exception as exc:
+        st.error(f"DB write error: {exc}")
+        return False
 
 # ─── Prefect helpers ──────────────────────────────────────────────────────────
 def prefect_get(path: str):
@@ -213,7 +272,7 @@ def ollama_models() -> list[str]:
 # ─── Shared log helpers ───────────────────────────────────────────────────────
 def log(level: str, msg: str, key: str = "run_log") -> None:
     ts  = datetime.now().strftime("%H:%M:%S")
-    clr = {"ok":"#3FB950","info":"#58A6FF","warn":"#D29922","err":"#F85149"}.get(level,"#8B949E")
+    clr = {"ok":"#3FB950","info":"#1976D2","warn":"#D29922","err":"#F85149"}.get(level,"#8B949E")
     tag = {"ok":"OK  ","info":"INFO","warn":"WARN","err":"ERR "}.get(level,"    ")
     entry = (f'<span style="color:#8B949E">{ts}</span> '
              f'<span style="color:{clr};font-weight:600">[{tag}]</span> '

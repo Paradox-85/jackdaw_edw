@@ -20,10 +20,27 @@ from tasks.export_validation import (
 
 
 # ---------------------------------------------------------------------------
+# Scope → target table mapping (Bug fix: was hardcoded to 'project_core.tag')
+# ---------------------------------------------------------------------------
+
+_SCOPE_TO_TABLE: dict[str, str] = {
+    "tag":                "project_core.tag",
+    "equipment":          "project_core.equipment",
+    "tag_property":       "project_core.property_value",
+    "equipment_property": "project_core.property_value",
+    "area":               "reference_core.area",
+    "process_unit":       "reference_core.process_unit",
+    "purchase_order":     "reference_core.purchase_order",
+    "model_part":         "reference_core.model_part",
+    "tag_class_property": "ontology_core.class_property",
+}
+
+
+# ---------------------------------------------------------------------------
 # Internal audit helpers (shared; previously duplicated in each flow file)
 # ---------------------------------------------------------------------------
 
-def _log_audit_start(engine: Engine, run_id: str, source_file: str) -> None:
+def _log_audit_start(engine: Engine, run_id: str, source_file: str, target_table: str) -> None:
     """Insert export run start record into audit_core.sync_run_stats."""
     with engine.begin() as conn:
         conn.execute(text("""
@@ -32,7 +49,7 @@ def _log_audit_start(engine: Engine, run_id: str, source_file: str) -> None:
             VALUES (:rid, :tbl, :st, :sf)
         """), {
             "rid": run_id,
-            "tbl": "project_core.tag",
+            "tbl": target_table,
             "st":  datetime.now(),
             "sf":  source_file,
         })
@@ -49,7 +66,7 @@ def _log_audit_end(
         conn.execute(text("""
             UPDATE audit_core.sync_run_stats
                SET end_time        = :et,
-                   count_unchanged = :rc,
+                   count_exported  = :rc,
                    count_errors    = :er
              WHERE run_id = :rid
         """), {"et": datetime.now(), "rc": row_count, "er": count_errors, "rid": run_id})
@@ -94,8 +111,9 @@ def run_export_pipeline(
             "violations" — total violations found (including auto-fixed ones)
     """
     run_id = str(uuid.uuid4())
+    target_table = _SCOPE_TO_TABLE.get(scope, scope)
     logger.info(f"[{report_name}] Starting export run {run_id} → {output_path}")
-    _log_audit_start(engine, run_id, str(output_path))
+    _log_audit_start(engine, run_id, str(output_path), target_table)
 
     raw_df = extract_fn(engine)
 

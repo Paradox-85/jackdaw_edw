@@ -1,0 +1,152 @@
+services:
+  # --- DATABASE: Primary SQL Storage ---
+  postgres:
+    image: postgres:16-bookworm
+    container_name: postgres_db
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      PGDATA: ${PGDATA}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      # Use variables for healthcheck to match .env
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- INFRASTRUCTURE: REDIS ---
+  redis:
+    image: redis:alpine
+    container_name: redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- PREFECT: CORE SERVER ---
+  prefect-server:
+    image: prefecthq/prefect:3-latest
+	container_name: prefect-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Dynamically constructed connection string
+      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${PREFECT_DB}
+      PREFECT_SERVER_API_HOST: 0.0.0.0
+      PREFECT_API_URL: https://pve.prefect.adzv-pt.dev/api
+      PREFECT_REDIS_MESSAGING_HOST: redis
+      PREFECT_REDIS_MESSAGING_PORT: 6379
+    command: >
+      bash -c "prefect server database upgrade -y && prefect server start --no-services"
+    ports:
+      - "4200:4200"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:4200/api/health', timeout=1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- PREFECT: BACKGROUND SERVICES ---
+  prefect-services:
+    image: prefecthq/prefect:3-latest
+    container_name: prefect-services
+    restart: unless-stopped
+    depends_on:
+      prefect-server:
+        condition: service_healthy
+    environment:
+      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${PREFECT_DB}
+      PREFECT_API_URL: https://pve.prefect.adzv-pt.dev/api
+    command: prefect server services start
+
+  # --- PREFECT: WORKER ---
+  prefect-worker:
+    image: prefecthq/prefect:3-latest
+    container_name: prefect-worker
+    restart: on-failure
+    depends_on:
+      prefect-server:
+        condition: service_healthy
+    environment:
+      PREFECT_API_URL: https://pve.prefect.adzv-pt.dev/api
+    volumes:
+      - /mnt/shared-data:/mnt/shared-data
+    # Note: Keep an eye on entrypoint, it overrides Dockerfile's CMD/ENTRYPOINT
+    entrypoint: >
+      /bin/sh -c "pip install -r /mnt/shared-data/ram-user/Jackdaw/prefect-worker/scripts/requirements.txt && 
+      exec prefect worker start --pool 'default-agent-pool'"
+
+  # --- DATABASE GUI: DBGATE ---
+  dbgate:
+    image: dbgate/dbgate:latest
+    container_name: dbgate_gui
+    restart: always
+    ports:
+      - "18978:3000"
+    volumes:
+      - dbgate_data:/root/.dbgate
+    environment:
+      - CONNECTIONS=eng_db
+      - LABEL_eng_db=Engineering_Core
+      - SERVER_eng_db=postgres
+      - PORT_eng_db=5432
+      - USER_eng_db=${POSTGRES_USER}
+      - PASSWORD_eng_db=${POSTGRES_PASSWORD}
+      - DATABASE_eng_db=${POSTGRES_DB}
+      - ENGINE_eng_db=postgres@dbgate-plugin-postgres
+      - LOGINS=${DBGATE_ADMIN_USER}
+      - LOGIN_PASSWORD_${DBGATE_ADMIN_USER}=${DBGATE_ADMIN_PASSWORD}
+      - LOGIN_PERMISSIONS_${DBGATE_ADMIN_USER}=connections/eng_db,settings/change,widgets/*,dbops/*
+      - CONNECTIONS_LOCAL_ONLY=true
+  
+  # --- EDW UI (STREAMLIT) ---
+  jackdaw-ui:
+    build:
+      # Repository-friendly context
+      context: /mnt/shared-data/ram-user/Jackdaw/prefect-worker/scripts
+      dockerfile: docker/jackdaw-ui/Dockerfile
+    container_name: jackdaw-ui
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      DATABASE_VIEWER_URL: "postgresql://edw_viewer:${EDW_VIEWER_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      PREFECT_API_URL: "http://prefect-server:4200/api"
+      OLLAMA_URL: "http://ollama:11434" # Connected via ai_core_network
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
+      EIS_EXPORT_DIR: "/mnt/shared-data/ram-user/Jackdaw/Export/EIS/"
+    volumes:
+      - /mnt/shared-data:/mnt/shared-data:rw
+    depends_on:
+      postgres:
+        condition: service_healthy
+      prefect-server:
+        condition: service_healthy
+    networks:
+      - default
+      - ai_core_network
+
+volumes:
+  postgres_data:
+  dbgate_data:
+  prefect_data:
+  redis_data:
+
+networks:
+  ai_core_network:
+    external: true

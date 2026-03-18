@@ -1,0 +1,94 @@
+services:
+  # --- INFRASTRUCTURE DATABASE ---
+  infra-postgres:
+    image: postgres:16-bookworm
+    container_name: infra-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${INFRA_DB_USER}
+      POSTGRES_PASSWORD: ${INFRA_DB_PASS}
+      POSTGRES_DB: flowise_db
+    volumes:
+      - infra_postgres_data:/var/lib/postgresql/data
+    networks:
+      - ai_core_network
+
+  # --- AI COMPUTE: OLLAMA ---
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama_storage:/root/.ollama
+      - /mnt/backup-hdd/sftpgo-data/ram-user/Jackdaw/Master-Data:/data/shared:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - ai_core_network
+
+  # --- STORAGE: NEO4J ---
+  neo4j:
+    image: neo4j:latest
+    container_name: neo4j
+    restart: unless-stopped
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=${NEO4J_USER}/${NEO4J_PASSWORD}
+    volumes:
+      - ./neo4j_data:/data
+    networks:
+      - ai_core_network
+
+  # --- AI COMPUTE: FLOWISE ---
+  flowise:
+    image: flowiseai/flowise:latest
+    container_name: flowise
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - DATABASE_TYPE=postgres
+      - DATABASE_HOST=infra-postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USER=${INFRA_DB_USER}
+      - DATABASE_PASSWORD=${INFRA_DB_PASS}
+      - DATABASE_NAME=flowise_db
+      - FLOWISE_USERNAME=${FLOWISE_USERNAME}
+      - FLOWISE_PASSWORD=${FLOWISE_PASSWORD}
+    depends_on:
+      - infra-postgres
+    networks:
+      - ai_core_network
+
+  # --- STORAGE: QDRANT ---
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+    volumes:
+      - ./qdrant_storage:/qdrant/storage
+      - /mnt/backup-hdd/sftpgo-data/ram-user/Jackdaw/Master-Data:/data/shared:ro
+    networks:
+      - ai_core_network
+
+volumes:
+  infra_postgres_data:
+  ollama_storage:
+  qdrant_storage:
+  neo4j_data:
+
+networks:
+  ai_core_network:
+    name: ai_core_network # Explicitly naming the network

@@ -1,0 +1,405 @@
+# ============================================================================
+# Jackdaw EDW + Infrastructure – Unified Caddy Reverse Proxy Configuration
+# ============================================================================
+#
+# Purpose:
+#   - TLS termination with automatic Let's Encrypt certificate management
+#   - Reverse proxy routing for all Jackdaw EDW services
+#   - Secure connectivity between PVE (10.10.10.50) via Tailscale overlay
+#   - Local VPS service routing (n8n, Langfuse, Open WebUI, etc.)
+#   - Security headers and compression optimization
+#
+# Network Topology:
+#   ┌─ Internet Traffic (HTTPS) ─┐
+#   │                            │
+#   └─ VPS Caddy (Port 443) ────┘
+#        │
+#   Tailscale Tunnel (Encrypted)
+#        │
+#        ├─ PVE LXC (10.10.10.50)
+#        │  ├─ Jackdaw EDW (8501, 4200, 18978)
+#        │  └─ AI Infrastructure (11434, 7474, 3001)
+#        │
+#        └─ Local Docker Network (web_proxy)
+#           ├─ n8n (5678)
+#           ├─ Langfuse (3000)
+#           ├─ Open WebUI (8080)
+#           └─ MCP Server (8080)
+#
+# Certificate Management:
+#   - Provider: Let's Encrypt (ACME)
+#   - Auto-renewal: 30 days before expiry
+#   - Storage: /data/caddy/certificates/ (persistent volume)
+#   - HTTP→HTTPS: Automatic redirect
+#
+# File Locations:
+#   - This file: /etc/caddy/Caddyfile
+#   - Data dir: /data/caddy/
+#   - Config dir: /config/caddy/
+#
+# Reload Configuration (zero downtime):
+#   docker exec caddy caddy reload
+#
+# ============================================================================
+
+{
+    # ====================================================================
+    # GLOBAL SETTINGS
+    # ====================================================================
+    
+    # Email for ACME certificate notifications (Let's Encrypt alerts)
+    email admin@adzv-pt.dev
+    
+    # TLS Configuration
+    # - Prefer TLSv1.3 over older versions for modern clients
+    # - Old TLS will be negotiated for legacy clients
+    tls_policies {
+        time_in_use 24h
+    }
+    
+    # Optional: On-demand TLS for additional security (uncomment if needed)
+    # on_demand_tls {
+    #     ask http://localhost:2019/check
+    # }
+    
+    # HTTP/2 support (enabled by default in Caddy)
+    # Provides faster, multiplexed connections
+}
+
+# ============================================================================
+# SECTION 1: REMOTE INFRASTRUCTURE (Proxmox Ecosystem)
+# ============================================================================
+# Services accessible via Tailscale overlay (10.10.10.x IPs).
+# All connections terminate TLS at Caddy.
+
+# --- Proxmox VE Management Panel (10.10.10.1:8006) ---
+# Primary hypervisor management interface
+pve.adzv-pt.dev {
+    reverse_proxy https://10.10.10.1:8006 {
+        header_up Host 10.10.10.1
+        transport http {
+            # Accept self-signed certificates from Proxmox
+            # Safe because traffic is encrypted via Tailscale to PVE
+            tls_insecure_skip_verify
+        }
+    }
+    
+    # Compression for large management dashboards
+    encode gzip
+}
+
+# --- Proxmox Backup Server (10.10.10.20:8007) ---
+# Backup target and recovery interface
+pve.pbs.adzv-pt.dev {
+    reverse_proxy https://10.10.10.20:8007 {
+        header_up Host 10.10.10.20
+        transport http {
+            tls_insecure_skip_verify
+        }
+    }
+    
+    encode gzip
+}
+
+# --- Proxmox Pulse (10.10.10.15:7655) ---
+# Monitoring and alerting dashboard
+pve.pulse.adzv-pt.dev {
+    reverse_proxy http://10.10.10.15:7655 {
+        header_up Host 10.10.10.15
+    }
+    
+    encode gzip
+}
+
+# --- SFTPGo File Server (10.10.10.60) ---
+# WebDAV file sync + web-based file management
+pve.sftpgo.adzv-pt.dev {
+    # WebDAV endpoint for file synchronization
+    # Supports remote clients (Cyberduck, RcloneBrowser, etc.)
+    handle_path /dav/* {
+        reverse_proxy 10.10.10.60:8090
+    }
+    
+    # Web UI for file browsing and user management
+    handle {
+        reverse_proxy 10.10.10.60:8080
+    }
+    
+    encode gzip
+}
+
+# --- NanoKVM Remote Lights-Out Management (100.92.70.92:80) ---
+# Out-of-band management device (IP on different subnet)
+nanokvm.adzv-pt.dev {
+    reverse_proxy 100.92.70.92:80 {
+        header_up Host 100.92.70.92
+    }
+    
+    encode gzip
+}
+
+# --- Portainer Container Management (10.10.10.50:9000) ---
+# Docker container lifecycle and monitoring UI
+pve.portainer.adzv-pt.dev {
+    reverse_proxy 10.10.10.50:9000
+    
+    encode gzip
+}
+
+# ============================================================================
+# SECTION 2: JACKDAW EDW – PRIMARY APPLICATION STACK
+# ============================================================================
+# Core data warehouse, ETL orchestration, and analytics interfaces.
+# All services hosted on PVE LXC (10.10.10.50).
+
+# --- Streamlit EDW User Interface (10.10.10.50:8501) ---
+# Main analytics dashboard for data warehouse operations
+# Features:
+#   - Multi-tab interface (Home, Import, Export, Tag History, LLM Chat, Services)
+#   - Real-time data visualization
+#   - Admin password protected
+jackdaw.edw.adzv-pt.dev {
+    reverse_proxy 10.10.10.50:8501
+    
+    # Security headers
+    header / X-Frame-Options SAMEORIGIN              # Prevent clickjacking
+    header / X-Content-Type-Options nosniff          # Prevent MIME type sniffing
+    header / X-XSS-Protection "1; mode=block"        # Legacy XSS protection
+    header / Referrer-Policy "strict-origin-when-cross-origin"
+    
+    # Compression for dashboard assets (JS, CSS, PNG)
+    encode gzip
+}
+
+# --- Prefect ETL Orchestration API (10.10.10.50:4200) ---
+# Flow scheduling, monitoring, and execution control
+# Used by:
+#   - Jackdaw UI (trigger imports/exports)
+#   - n8n (external workflow triggers)
+#   - Prefect Worker (fetch job assignments)
+pve.prefect.adzv-pt.dev {
+    reverse_proxy 10.10.10.50:4200
+    
+    # Optional: API path rewriting (uncomment if needed)
+    # handle /api/* {
+    #     uri strip_prefix /api
+    #     reverse_proxy 10.10.10.50:4200/api
+    # }
+    
+    encode gzip
+}
+
+# --- DBGate Database GUI (10.10.10.50:18978) ---
+# Web-based database client for development and debugging
+# Warning: Development tool only; not for production data queries
+# Future: Replace with SSH tunneling for secure access
+pve.db.adzv-pt.dev {
+    reverse_proxy 10.10.10.50:18978
+    
+    # Prevent embedding in iframes (security)
+    header / X-Frame-Options DENY
+    
+    encode gzip
+}
+
+# ============================================================================
+# SECTION 3: AI INFRASTRUCTURE (PVE-hosted LLM & Vector Services)
+# ============================================================================
+# Large language models, graph databases, and vector embeddings.
+# Support external access from VPS services and authenticated users.
+
+# --- Ollama LLM Inference Engine (10.10.10.50:11434) ---
+# Local large language model serving with GPU acceleration (RTX 3090)
+# API Endpoints:
+#   - /api/chat (streaming chat completions)
+#   - /api/generate (text generation)
+#   - /api/embeddings (vector embeddings)
+#   - /api/pull (download models)
+#   - /api/tags (list available models)
+# Used by:
+#   - Streamlit UI (LLM Chat tab)
+#   - Open WebUI (web chat interface)
+#   - n8n (model-powered automations)
+#   - Langfuse (observability tracing)
+ollama.adzv-pt.dev {
+    reverse_proxy 10.10.10.50:11434
+    
+    # Streaming responses required for chat/generate endpoints
+    # Caddy handles this transparently
+    encode gzip
+}
+
+# --- Neo4j Graph Database Dashboard (10.10.10.50:7474) ---
+# Knowledge graph and relationship storage
+# Browser: http://neo4j.adzv-pt.dev/browser
+# Query: Cypher language
+# Use cases:
+#   - Equipment relationships (tag hierarchy, dependencies)
+#   - Process flow mapping
+#   - Data lineage tracking
+neo4j.adzv-pt.dev {
+    reverse_proxy 10.10.10.50:7474
+    
+    # Browser dashboard can be embedded in same-origin frames
+    header / X-Frame-Options SAMEORIGIN
+    
+    encode gzip
+}
+
+# --- Flowise AI Workflow Orchestration (10.10.10.50:3001) ---
+# Visual workflow builder for AI chains and agents
+# Features:
+#   - No-code AI pipeline designer
+#   - Integrations with Ollama, Langfuse, embeddings
+#   - Custom node creation
+flowise.adzv-pt.dev {
+    reverse_proxy 10.10.10.50:3001
+    
+    encode gzip
+}
+
+# ============================================================================
+# SECTION 4: VPS-LOCAL SERVICES (Automation, Observability, Integration)
+# ============================================================================
+# Services running locally on VPS (no Tailscale hop).
+# Communication via Docker bridge network (web_proxy).
+
+# --- n8n Workflow Automation Engine (n8n:5678 in web_proxy) ---
+# Low-code workflow automation and integration platform
+# Features:
+#   - 350+ integrations (Slack, GitHub, Salesforce, etc.)
+#   - HTTP trigger nodes for event-driven workflows
+#   - Connection to Prefect for ETL orchestration
+#   - Database support for state management
+# Security:
+#   - Encryption key: ${N8N_ENCRYPTION_KEY} (all credentials encrypted at rest)
+#   - JWT authentication: ${N8N_USER_MANAGEMENT_JWT_SECRET}
+n8n.adzv-pt.dev {
+    reverse_proxy n8n:5678
+    
+    # WebSocket support for real-time UI updates
+    # (handled transparently by Caddy HTTP/2)
+    header / X-Forwarded-Proto https              # Tell n8n this is HTTPS
+    header / X-Forwarded-Host {host}              # Preserve original hostname
+    
+    encode gzip
+}
+
+# --- Open WebUI – LLM Chat Interface (open-webui:8080 in web_proxy) ---
+# User-friendly chat interface for Ollama models
+# Features:
+#   - Markdown rendering
+#   - Multi-model support
+#   - Chat history
+#   - User authentication
+# Environment:
+#   OLLAMA_BASE_URL=http://10.10.10.50:11434 (cross-network via Tailscale)
+webui.adzv-pt.dev {
+    reverse_proxy open-webui:8080
+    
+    # Required for proper request handling behind proxy
+    header / X-Forwarded-Proto https
+    
+    encode gzip
+}
+
+# --- Langfuse – LLM Observability & Tracing (langfuse-web:3000 in web_proxy) ---
+# Centralized LLM monitoring and analytics platform
+# Captures:
+#   - LLM API calls (model, input tokens, output tokens, latency)
+#   - Cost tracking (per model, per user)
+#   - Performance metrics (P50, P95, P99 latencies)
+#   - Error tracking and alerting
+# Data Storage:
+#   - Postgres: application metadata
+#   - ClickHouse: time-series analytics (traces)
+#   - Redis: cache and sessions
+# Integration Points:
+#   - Ollama (receives traces)
+#   - n8n (logs workflow execution metrics)
+#   - Streamlit UI (logs chat interactions)
+langfuse.adzv-pt.dev {
+    reverse_proxy langfuse-web:3000
+    
+    # Required for proper request handling
+    header / X-Forwarded-Proto https
+    
+    encode gzip
+}
+
+# --- MCP Server – PostgreSQL Model Context Protocol (mcp-server:8080 in web_proxy) ---
+# Bridge for Claude Code and other AI agents to access PostgreSQL
+# Protocol: JSON-RPC over HTTP
+# Use Cases:
+#   - AI-assisted database queries
+#   - Schema discovery
+#   - Data analysis and reporting
+# Security:
+#   - Authentication: Internal (VPS local only)
+#   - Encryption: TLS via Caddy
+ai-db.adzv-pt.dev {
+    reverse_proxy mcp-server:8080
+    
+    # Ensure JSON content type
+    header / Content-Type application/json
+    
+    encode gzip
+}
+
+# ============================================================================
+# SECTION 5: ADDITIONAL SERVICES & UTILITIES
+# ============================================================================
+
+# --- SearXNG Federated Search Engine (searxng:8080 in web_proxy) ---
+# Privacy-preserving metasearch engine
+# Features:
+#   - No user tracking
+#   - Aggregates results from Google, Bing, DuckDuckGo, etc.
+#   - Self-hosted instance
+searxng.adzv-pt.dev {
+    reverse_proxy searxng:8080
+    
+    # SearXNG benefits from zstd compression (newer, more efficient)
+    # Falls back to gzip for older clients
+    encode zstd gzip
+}
+
+# ============================================================================
+# SECTION 6: HEALTH CHECK & METRICS (Optional)
+# ============================================================================
+
+# Health check endpoint for on-demand TLS verification
+# Uncomment if using on_demand_tls feature in global settings
+# :2019 {
+#     respond /check 200
+# }
+
+# Metrics endpoint (Prometheus-compatible)
+# Uncomment if deploying Prometheus for infrastructure monitoring
+# :2019/metrics {
+#     respond /metrics 200
+# }
+
+# ============================================================================
+# EOF – Caddyfile
+# ============================================================================
+#
+# RELOAD CONFIGURATION (zero-downtime):
+#   docker exec caddy caddy reload
+#
+# VIEW ACTIVE ROUTES:
+#   docker exec caddy caddy routes
+#
+# LIST CERTIFICATES:
+#   docker exec caddy caddy list-certs
+#
+# CHECK SYNTAX:
+#   caddy validate --config Caddyfile
+#
+# TROUBLESHOOTING:
+#   - Certificate not issuing: Check docker logs caddy (ACME errors)
+#   - Proxy errors 502: Verify backend service is running
+#   - Timeout issues: Check Tailscale connectivity (ping 10.10.10.50 from VPS)
+#   - HTTPS upgrade loop: Clear browser cache or use incognito mode
+#
+# ============================================================================

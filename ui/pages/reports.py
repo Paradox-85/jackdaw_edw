@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import streamlit as st
 
-from ui.common import db_read, section, wip
+from ui.common import db_read, is_admin, section, wip
 
 # ─── Master report catalogue ──────────────────────────────────────────────────
 # SQL uses only tables confirmed in schema.sql.
@@ -130,13 +130,21 @@ def _param_widgets(params_def: dict, key_prefix: str) -> dict:
 
 def _run_and_show(sql: str, params: dict, label: str, fmt: str) -> None:
     str_params = {k: str(v) for k, v in params.items()}
-    df = db_read(sql, str_params)
-    if df.empty:
-        st.info("Query returned no rows.")
-        return
-    st.caption(f"{len(df):,} rows")
-    st.dataframe(df, use_container_width=True, hide_index=True, height=440)
-    _download_btn(df, label, fmt)
+    try:
+        with st.spinner(f"Loading {label}..."):
+            df = db_read(sql, str_params)
+        if df.empty:
+            st.info("Query returned no rows.")
+            return
+        st.caption(f"{len(df):,} rows")
+        st.dataframe(df, use_container_width=True, hide_index=True, height=440)
+        _download_btn(df, label, fmt)
+    except Exception as exc:
+        st.error(f"Report unavailable: **{label}**")
+        if is_admin():
+            with st.expander("🔍 Debug info (admin only)"):
+                st.code(sql.strip(), language="sql")
+                st.exception(exc)
 
 
 def _download_btn(df: pd.DataFrame, label: str, fmt: str) -> None:

@@ -129,7 +129,8 @@ CREATE TABLE "audit_core"."sync_run_stats" (
   "count_updated" INTEGER NULL DEFAULT 0 ,
   "count_unchanged" INTEGER NULL DEFAULT 0 ,
   "count_deleted" INTEGER NULL DEFAULT 0 ,
-  "count_errors" INTEGER NULL DEFAULT 0 ,
+  "count_errors"   INTEGER NULL DEFAULT 0 ,
+  "count_exported" INTEGER NOT NULL DEFAULT 0 ,  -- migration_011: rows written to EIS CSV
   "source_file" TEXT NULL,
   "mapping_status" TEXT NULL DEFAULT 'Active'::text ,
   CONSTRAINT "sync_run_stats_pkey" PRIMARY KEY ("id")
@@ -503,3 +504,40 @@ DROP TRIGGER IF EXISTS trg_report_metadata_updated_at ON audit_core.report_metad
 CREATE TRIGGER trg_report_metadata_updated_at
     BEFORE UPDATE ON audit_core.report_metadata
     FOR EACH ROW EXECUTE FUNCTION audit_core.set_report_updated_at();
+
+-- =============================================================================
+-- app_core — Application-level service data (migration_010)
+-- Stores UI users, passwords, roles, and user feedback.
+-- Separate from audit_core (ETL audit) and project_core (domain data).
+-- =============================================================================
+CREATE SCHEMA IF NOT EXISTS app_core;
+
+CREATE TABLE IF NOT EXISTS "app_core"."ui_user" (
+  "id"            UUID        NOT NULL DEFAULT gen_random_uuid(),
+  "username"      TEXT        NOT NULL,
+  "password_hash" TEXT        NOT NULL,
+  "role"          TEXT        NOT NULL DEFAULT 'viewer'
+                              CHECK (role IN ('viewer', 'admin')),
+  "is_active"     BOOLEAN     NOT NULL DEFAULT true,
+  "created_at"    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  "last_login"    TIMESTAMPTZ,
+  CONSTRAINT "ui_user_pkey"     PRIMARY KEY ("id"),
+  CONSTRAINT "ui_user_username" UNIQUE ("username")
+);
+
+CREATE TABLE IF NOT EXISTS "app_core"."ui_feedback" (
+  "id"            UUID        NOT NULL DEFAULT gen_random_uuid(),
+  "user_id"       UUID        REFERENCES app_core.ui_user("id") ON DELETE SET NULL,
+  "username"      TEXT,
+  "feedback_type" TEXT        NOT NULL
+                              CHECK (feedback_type IN ('Bug', 'Enhancement', 'Question')),
+  "title"         TEXT        NOT NULL,
+  "body"          TEXT        NOT NULL,
+  "status"        TEXT        NOT NULL DEFAULT 'Open'
+                              CHECK (status IN ('Open', 'In Progress', 'Done', 'Rejected')),
+  "created_at"    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT "ui_feedback_pkey" PRIMARY KEY ("id")
+);
+
+CREATE INDEX IF NOT EXISTS "idx_ui_feedback_status"  ON "app_core"."ui_feedback" ("status");
+CREATE INDEX IF NOT EXISTS "idx_ui_feedback_created" ON "app_core"."ui_feedback" ("created_at" DESC);

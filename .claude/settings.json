@@ -7,24 +7,16 @@
   "includeGitInstructions": true,
   "permissions": {
     "allow": [
-      "mcp__perplexity",
-      "mcp__proxmox",
-      "Bash(etl/**)",
-      "Bash(pytest)",
-      "Bash(black)",
-      "Bash(ruff)",
-      "Bash(pre-commit)",
-      "Read(etl/**)",
-      "Read(sql/**)",
-      "Read(config/**)",
-      "Read(CLAUDE*.md)",
-      "Read(.claude/**)",
-      "mcp__pgedge__*",
-      "Bash(python3 -m json.tool)",
-      "Bash(ls -la /c/Development/jackdaw/edw/etl/flows/export*.py)",
-      "Bash(grep -r \"\\\\.serve\\(\" /c/Development/jackdaw/edw/etl/flows/*.py)"
+      "Bash",
+      "Read",
+      "Edit",
+      "mcp__perplexity__*",
+      "mcp__proxmox__*",
+      "mcp__pgedge__*"
     ],
     "deny": [
+      "Bash(rm -rf /)",
+      "Bash(rm -rf ~)",
       "Read(*.env*)",
       "Read(secrets/**)",
       "Read(*.pem)",
@@ -33,12 +25,13 @@
       "Read(logs/prod/**)"
     ],
     "ask": [
-      "Bash(rm)",
-      "Bash(docker rm)",
-      "Bash(docker compose down)",
-      "Write(etl/**)"
+      "Bash(rm *)",
+      "Bash(rm -rf *)",
+      "Bash(docker rm *)",
+      "Bash(docker compose down*)",
+      "Bash(docker compose down --volumes*)"
     ],
-    "defaultMode": "default"
+    "defaultMode": "acceptEdits"
   },
   "enableAllProjectMcpServers": true,
   "hooks": {

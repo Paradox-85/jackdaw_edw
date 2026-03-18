@@ -25,10 +25,30 @@ def render() -> None:
         WHERE is_resolved = false AND run_time >= NOW() - INTERVAL '7 days'
     """)
 
-    n_tags  = int(df_tags["n"].iloc[0])  if not df_tags.empty  else "—"
-    n_docs  = int(df_docs["n"].iloc[0])  if not df_docs.empty  else "—"
-    n_viol  = int(df_viol["n"].iloc[0])  if not df_viol.empty  else "—"
-    last_ts = df_sync["ts"].iloc[0]       if not df_sync.empty  else None
+    # Delta: previous sync run tag count (for delta indicator on metric card)
+    df_prev_tags = db_read("""
+        WITH runs AS (
+            SELECT start_time,
+                   ROW_NUMBER() OVER (ORDER BY start_time DESC) AS rn
+            FROM audit_core.sync_run_stats
+            WHERE end_time IS NOT NULL
+              AND target_table = 'project_core.tag'
+        ),
+        prev_run AS (SELECT start_time FROM runs WHERE rn = 2)
+        SELECT COUNT(*) AS n
+        FROM project_core.tag
+        WHERE sync_timestamp < (SELECT start_time FROM prev_run)
+          AND sync_status != 'Deleted'
+    """)
+
+    n_tags  = int(df_tags["n"].iloc[0])      if not df_tags.empty      else None
+    n_docs  = int(df_docs["n"].iloc[0])      if not df_docs.empty      else None
+    n_viol  = int(df_viol["n"].iloc[0])      if not df_viol.empty      else None
+    n_prev  = int(df_prev_tags["n"].iloc[0]) if not df_prev_tags.empty else None
+    last_ts = df_sync["ts"].iloc[0]           if not df_sync.empty      else None
+
+    # Delta: only show if previous run data available and both counts are integers
+    tag_delta = (n_tags - n_prev) if (isinstance(n_tags, int) and isinstance(n_prev, int)) else None
 
     if last_ts and pd.notna(last_ts):
         mins = int((pd.Timestamp.now() - pd.to_datetime(last_ts)).total_seconds() / 60)
@@ -37,10 +57,16 @@ def render() -> None:
         sync_str = "—"
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Active Tags",       f"{n_tags:,}" if isinstance(n_tags, int) else n_tags)
-    c2.metric("Documents",         f"{n_docs:,}" if isinstance(n_docs, int) else n_docs)
-    c3.metric("Last Sync",         sync_str)
-    c4.metric("Open Violations 7d",str(n_viol))
+    c1.metric(
+        "Active Tags",
+        f"{n_tags:,}" if isinstance(n_tags, int) else "—",
+        delta=tag_delta,
+        delta_color="normal",
+        help="Change vs previous sync run" if tag_delta is not None else None,
+    )
+    c2.metric("Documents",          f"{n_docs:,}" if isinstance(n_docs, int) else "—")
+    c3.metric("Last Sync",          sync_str)
+    c4.metric("Open Violations 7d", str(n_viol) if n_viol is not None else "—")
 
     # ── Service health ───────────────────────────────────────────────────────
     section("Service Health")
