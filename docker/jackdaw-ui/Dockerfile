@@ -2,6 +2,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Ensure ui/ package is importable when running streamlit run ui/app.py
+ENV PYTHONPATH=/app
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev gcc curl \
     && rm -rf /var/lib/apt/lists/*
