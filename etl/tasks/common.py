@@ -4,7 +4,7 @@ import hashlib
 from sqlalchemy import text
 import re
 
-def load_config(config_path="/mnt/shared-data/ram-user/Jackdaw/EDW-repository/prefect-worker/scripts/config/config.yaml"):
+def load_config(config_path="/mnt/shared-data/ram-user/Jackdaw/EDW-repository/config/config.yaml"):
     """Load database configuration from YAML file"""
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
