@@ -1,13 +1,28 @@
+import os
 import yaml
 import pandas as pd
 import hashlib
+from pathlib import Path
 from sqlalchemy import text
 import re
 
-def load_config(config_path="/mnt/shared-data/ram-user/Jackdaw/EDW-repository/config/config.yaml"):
-    """Load database configuration from YAML file"""
-    with open(config_path, 'r') as file:
-        return yaml.safe_load(file)
+# Default: <repo_root>/config/config.yaml — resolved relative to this file's location.
+# Override with EDW_CONFIG_PATH env var or by passing config_path explicitly.
+_DEFAULT_CONFIG = Path(__file__).parent.parent.parent / "config" / "config.yaml"
+
+
+def load_config(config_path: "str | Path | None" = None) -> dict:
+    """Load configuration from YAML file.
+
+    Resolution order:
+    1. config_path argument (if provided)
+    2. EDW_CONFIG_PATH environment variable
+    3. <repo_root>/config/config.yaml (relative to this file)
+    """
+    if config_path is None:
+        config_path = os.getenv("EDW_CONFIG_PATH") or _DEFAULT_CONFIG
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
 
 def get_db_engine_url(config):
     """Generate SQLAlchemy connection URL from config dict"""

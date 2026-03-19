@@ -271,7 +271,7 @@ def render() -> None:
           AND t.tag_status NOT IN ('VOID')
           AND t.tag_status IS NOT NULL
           AND d.status != 'CAN'
-          AND m.mdr_flag = TRUE
+          AND d.mdr_flag = TRUE
           AND m.mapping_status = 'Active'
     """)
     n_tagdoc = int(df_tagdoc["n"].iloc[0]) if not df_tagdoc.empty else None

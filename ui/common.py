@@ -39,7 +39,7 @@ EIS_EXPORT_DIR = os.getenv("EIS_EXPORT_DIR",  "/mnt/shared-data/ram-user/Jackdaw
 # External infra links — shown ONLY in admin mode
 ADMIN_LINKS = {
     "Prefect UI": os.getenv("LINK_PREFECT", "https://pve.prefect.adzv-pt.dev"),
-    "DbGate":     os.getenv("LINK_DBGATE",  "https://pve.dbgate.adzv-pt.dev"),
+    "DbGate":     os.getenv("LINK_DBGATE",  "https://pve.db.adzv-pt.dev"),
 }
 
 # ─── RBAC helper ──────────────────────────────────────────────────────────────

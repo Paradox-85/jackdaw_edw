@@ -339,7 +339,7 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                      object_id, object_name, column_name, original_value, violation_detail)
                 VALUES
                     (:session_id, :run_time, :rule_code, :scope, :severity, :object_type,
-                     :object_id::uuid, :object_name, :column_name, :original_value, :violation_detail)
+                     :object_id, :object_name, :column_name, :original_value, :violation_detail)
             """), tag_name_violations)
             logger.warning(
                 f"TAG_NAME_CHANGED violations recorded: {len(tag_name_violations)} "
