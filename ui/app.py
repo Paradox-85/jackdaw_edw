@@ -1,18 +1,19 @@
 """
-app.py — Jackdaw EDW Control Center v2
+app.py — Jackdaw EDW Control Center v0.3.0
 
 Auth: DB-backed login gate (app_core.ui_user, bcrypt, viewer/admin roles).
       All users must authenticate before accessing any page.
 
 Two modes:
-  Viewer mode  — Reports, Tag History, Validation stats, LLM Chat, Help, Feedback
-  Admin  mode  — + ETL Import, EIS Export, Services
+  Viewer mode  — Home, Tag Register, Reports, Tag History, Validation, Help, Feedback
+  Admin  mode  — + EIS Export
 
 Architecture notes:
   - ALL_PAGES defined before sidebar to allow on_change callback access
   - Navigation uses on_change callback to fix single-click navigation
   - DB access via ui/common.py (viewer role by default, admin role for writes)
   - Prefect API called only from admin pages
+  - llm_chat, crs_assistant, etl_import, services hidden — not deleted (Phase 2/3)
 """
 import streamlit as st
 
@@ -28,7 +29,7 @@ from ui.common import (  # noqa: E402
 )
 from ui.version import version_string  # noqa: E402
 from ui.pages import (   # noqa: E402
-    home, reports, tag_history, validation,
+    home, tag_register, reports, tag_history, validation,
     llm_chat, crs_assistant, services,
     etl_import, eis_export, help as help_page, feedback,
 )
@@ -75,22 +76,23 @@ if not st.session_state.get("authenticated"):
 # ─── Page registry (must be defined before sidebar) ───────────────────────────
 VIEWER_PAGES: dict = {
     "🏠  Home":          home,
+    "🗂  Tag Register":  tag_register,
     "📊  Reports":       reports,
     "📋  Tag History":   tag_history,
     "✅  Validation":    validation,
-    "🤖  LLM Chat":      llm_chat,
-    "📎  CRS Assistant": crs_assistant,
+    # "🤖  LLM Chat":      llm_chat,       # hidden — Phase 3
+    # "📎  CRS Assistant": crs_assistant,  # hidden — Phase 2 (part of EIS Management)
     "❓  Help":          help_page,
     "💬  Feedback":      feedback,
 }
 
-ADMIN_PAGES: dict = {
-    "📥  ETL Import":    etl_import,
+ADMIN_EXTRA_PAGES: dict = {
     "📤  EIS Export":    eis_export,
-    "🔗  Services":      services,
+    # "📥  ETL Import":  etl_import,   # hidden — trigger via Home Quick Sync
+    # "🔗  Services":    services,     # hidden — duplicates Home admin block
 }
 
-ALL_PAGES: dict = {**VIEWER_PAGES, **(ADMIN_PAGES if is_admin() else {})}
+ALL_PAGES: dict = {**VIEWER_PAGES, **(ADMIN_EXTRA_PAGES if is_admin() else {})}
 
 # Guard: reset page if no longer in ALL_PAGES (e.g. after sign-out)
 if st.session_state.get("page") not in ALL_PAGES:
@@ -147,6 +149,19 @@ with st.sidebar:
       <span style="color:#444;font-family:monospace">{version_string()}</span>
     </div>
     """, unsafe_allow_html=True)
+
+# ─── Top-right icon bar (Help / Feedback shortcuts) ───────────────────────────
+_, col_icons = st.columns([8, 1])
+with col_icons:
+    icon_col1, icon_col2 = st.columns(2)
+    with icon_col1:
+        if st.button("❓", key="top_help", help="Help & Guidelines"):
+            st.session_state["page"] = "❓  Help"
+            st.rerun()
+    with icon_col2:
+        if st.button("💬", key="top_feedback", help="Submit Feedback"):
+            st.session_state["page"] = "💬  Feedback"
+            st.rerun()
 
 # ─── Render current page ──────────────────────────────────────────────────────
 ALL_PAGES[st.session_state["page"]].render()

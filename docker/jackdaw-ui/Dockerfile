@@ -6,7 +6,7 @@ WORKDIR /app
 ENV PYTHONPATH=/app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev gcc curl \
+    libpq-dev gcc curl git \
     && rm -rf /var/lib/apt/lists/*
 
 # requirements.txt is at docker/jackdaw-ui/requirements.txt in build context (edw/ root)
@@ -18,6 +18,9 @@ COPY ui/ ./ui/
 
 # Streamlit config (theme, server settings)
 COPY .streamlit/ ./.streamlit/
+
+# Help documentation — loaded by ui/pages/help.py at runtime
+COPY docs/help.md ./docs/help.md
 
 EXPOSE 8501
 

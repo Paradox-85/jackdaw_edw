@@ -16,20 +16,54 @@ validated EIS-compliant CSV export files.
 - Document cross-reference management (MDR integration)
 - Data quality validation with configurable rules
 - Automated EIS export generation (9 register types)
-- AI-assisted data quality review (Ollama LLM)
+- AI-assisted data quality review (Ollama LLM) — Phase 3
 
 ---
 
-## Pages
+## Navigation
+
+| Page | Available to | Description |
+|---|---|---|
+| Home | All users | Dashboard with KPIs, sync status, service health, tag analytics, recent flow runs |
+| Tag Register | All users | Master tag list with filtering, grouping, XLSX export, property and document panels |
+| Reports | All users | Pre-built SQL reports with CSV/XLSX export |
+| Tag History | All users | SCD audit trail — tag change history with Name Changed detection |
+| Validation | All users | Data quality violations grouped by rule and tier |
+| EIS Export | Admin only | Generate EIS data packages with revision control |
+| Help | All users | This page |
+| Feedback | All users | Submit bug reports and enhancement requests |
+
+> **Quick access:** Use the ❓ and 💬 buttons in the top-right corner to jump directly to Help or Feedback from any page.
+
+---
+
+## Pages Detail
 
 ### 🏠 Home
 Dashboard showing:
 - **Active Tags** — total tags with `object_status = 'Active'`
 - **Documents** — total documents in MDR
 - **Last Sync** — timestamp of most recent ETL run
-- **Open Violations** — unresolved validation issues
+- **Open Violations** — unresolved validation issues (last 7 days)
 - **Service Health** — PostgreSQL, Prefect, Ollama connectivity
 - **Recent Flow Runs** — last 10 Prefect flow executions
+- **Tag Analytics** — breakdown by Tag Status, Design Company, Sync Status
+- **Tag Growth Timeline** — historical chart of New / Updated / Deleted tags
+- **Tag Name Changes** — alerts for tags whose names changed in the last 30 days
+
+**Admin-only sections:**
+- **Quick Sync** — trigger `sequential-master-sync` flow or view last 5 sync runs
+- **Download docker-compose.yml** — download current infrastructure config
+
+### 🗂 Tag Register
+Master tag list. Loads automatically on open.
+
+- **Filter** — text search across all columns simultaneously
+- **Group By** — sort by any column (Area, Class, Tag Status, etc.)
+- **XLSX Export** — download filtered view as Excel
+- **Row Selection** — click any row to open detail panels:
+  - **Property Values** — Functional / Physical / Functional Physical properties
+  - **Connected Documents** — MDR documents linked to this tag (mdr_flag=true)
 
 ### 📊 Reports
 Built-in SQL reports for data analysis:
@@ -50,9 +84,11 @@ Built-in SQL reports for data analysis:
 ### 📋 Tag History
 SCD Type 2 audit trail — every change to every tag since system inception.
 
+- **Timeline chart** — bar chart of activity by date and sync status
 - Filter by date range, tag name, or change type
-- View JSONB snapshots of field values before each change
-- Export filtered results to CSV
+- **Name Changed** column — flags rows where the tag name has changed (highlighted red)
+- Export filtered results to XLSX
+- **Tag Drill-Down** — enter exact tag name to see full chronological history with JSONB snapshots
 
 ### ✅ Validation
 Data quality monitoring:
@@ -60,18 +96,7 @@ Data quality monitoring:
 - **Summary** — violation counts by severity (Critical / Warning / Info)
 - **By Tier** — L0 (Foundation) through L4 (Semantics)
 - **Session History** — results from previous full-scan runs
-- **Rule Catalogue** — all 69 active validation rules with descriptions
-
-### 🤖 LLM Chat
-Local AI assistant powered by Ollama (RTX 3090).
-
-- Ask questions about tags, data quality, engineering standards
-- Switch between available models using the sidebar selector
-- System prompt is pre-configured for EDW context
-
-### 📎 CRS Assistant
-*(Phase 2 — Under Construction)*
-Upload CRS (Change Request Sheet) Excel files for AI-assisted processing.
+- **Rule Catalogue** — all 69+ active validation rules with descriptions
 
 ---
 
@@ -102,15 +127,30 @@ Revision codes must follow the pattern `^[A-Z]\d{2}$`:
 
 ---
 
-## ETL Import (Admin)
+## Tag Status Color Coding
 
-Triggers Prefect flows for data synchronisation:
+| Status | Color | Meaning |
+|--------|-------|---------|
+| ACTIVE | 🔵 Blue | Tag is active in the register |
+| VOID | 🔴 Red | Tag has been voided |
+| FUTURE | ⚫ Gray | Planned tag, not yet active |
+| ASB, AFC | 🟢 Green | Other active statuses |
 
-| Flow | Description |
-|------|-------------|
-| **sequential-master-sync** | Full sync: ontology → tags → hierarchy → exports |
+---
 
-Run history is visible in the **Import History** table showing row counts by status.
+## Sync / ETL
+
+Data is synchronized automatically via Prefect flows. Admin users can trigger a manual sync
+from the **Home** page → **Quick Sync** section.
+
+### Flow Execution Order (sequential-master-sync)
+1. Seed reference data (ontology, areas, companies, POs)
+2. Sync document data (MDR)
+3. Sync tag data (SCD2 UPSERT)
+4. Resolve tag hierarchy (parent_tag_id second pass)
+5. Sync property values
+
+Run history is visible in **Home → Last Sync Run Statistics** and in Prefect UI.
 
 ---
 
@@ -124,6 +164,9 @@ A: Validation results are stored per-session. Re-run a full validation scan to u
 
 **Q: The Reports page shows "No rows" — is the data missing?**
 A: Check that migrations 001–009 have been applied and that the `edw_viewer` database role has been created. Contact your admin if the issue persists.
+
+**Q: How do I trigger a manual sync?**
+A: Admin users can use the **▶ Sync Tag Data** button on the Home page. The sync is dispatched as a Prefect flow run and can be monitored in the Recent Flow Runs section or in Prefect UI.
 
 **Q: How do I add a new user?**
 A: Run the following SQL as `postgres_admin`:

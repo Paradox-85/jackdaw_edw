@@ -2,6 +2,8 @@
 headless = true
 port = 8501
 enableCORS = false
+# XSRF protection disabled because the app runs behind Caddy reverse proxy
+# which handles CSRF at the network layer. Re-enable if proxy config changes.
 enableXsrfProtection = false
 
 [theme]

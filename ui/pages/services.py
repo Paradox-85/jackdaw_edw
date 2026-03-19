@@ -1,5 +1,6 @@
 """ui/pages/services.py — Infrastructure links. Admin-only."""
 from __future__ import annotations
+import pandas as pd
 import streamlit as st
 from ui.common import ADMIN_LINKS, is_admin, prefect_get, prefect_post, require_admin, section
 
@@ -22,7 +23,6 @@ def render() -> None:
             st.success("✓ Prefect API online")
             deps = prefect_post("/deployments/filter", {"limit":100})
             if deps and isinstance(deps, list):
-                import pandas as pd
                 df = pd.DataFrame([{
                     "Deployment": d.get("name",""),
                     "Flow":       d.get("flow_name",""),

@@ -38,9 +38,8 @@ EIS_EXPORT_DIR = os.getenv("EIS_EXPORT_DIR",  "/mnt/shared-data/ram-user/Jackdaw
 
 # External infra links — shown ONLY in admin mode
 ADMIN_LINKS = {
-    "Prefect UI": os.getenv("LINK_PREFECT",   "https://pve.prefect.adzv-pt.dev"),
-    "DbGate":     os.getenv("LINK_DBGATE",    "https://pve.dbgate.adzv-pt.dev"),
-    "Portainer":  os.getenv("LINK_PORTAINER", "https://pve.portainer.adzv-pt.dev"),
+    "Prefect UI": os.getenv("LINK_PREFECT", "https://pve.prefect.adzv-pt.dev"),
+    "DbGate":     os.getenv("LINK_DBGATE",  "https://pve.dbgate.adzv-pt.dev"),
 }
 
 # ─── RBAC helper ──────────────────────────────────────────────────────────────
@@ -155,6 +154,40 @@ body, p, div, span, label { font-family: 'Roboto', 'Segoe UI', Arial, sans-serif
 /* Role pill */
 .role-admin  { color:#1976D2; font-size:11px; font-weight:600; }
 .role-viewer { color:#8B949E; font-size:11px; }
+
+/* Section dividers */
+.section-header {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #8B949E;
+    border-bottom: 1px solid #21262D;
+    padding-bottom: 4px;
+    margin: 1.2rem 0 0.6rem 0;
+}
+
+/* Extended badge variants */
+.badge-wip    { background: #2D1B69; color: #A78BFA; border: 1px solid #7C3AED; }
+
+/* Login form container */
+.login-box {
+    background: #161B22;
+    border: 1px solid #30363D;
+    border-radius: 10px;
+    padding: 2rem;
+}
+
+/* Disclaimer banner */
+.disclaimer {
+    background: #1C2128;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 0.75rem;
+    color: #8B949E;
+    margin-bottom: 1rem;
+}
 </style>
 """
 

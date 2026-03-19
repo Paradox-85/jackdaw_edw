@@ -82,7 +82,7 @@ def render() -> None:
             key="fb_status_filter",
         )
 
-        sql = """
+        _BASE_SELECT = """
             SELECT
                 TO_CHAR(f.created_at, 'YYYY-MM-DD HH24:MI') AS "Submitted",
                 f.username          AS "User",
@@ -91,13 +91,15 @@ def render() -> None:
                 f.body              AS "Description",
                 f.status            AS "Status"
             FROM app_core.ui_feedback f
-            {where}
-            ORDER BY f.created_at DESC
         """
-        where = "" if status_filter == "All" else "WHERE f.status = :status"
-        params = {} if status_filter == "All" else {"status": status_filter}
-
-        df = db_read(sql.format(where=where), params, admin=True)
+        if status_filter == "All":
+            df = db_read(_BASE_SELECT + " ORDER BY f.created_at DESC", {}, admin=True)
+        else:
+            df = db_read(
+                _BASE_SELECT + " WHERE f.status = :status ORDER BY f.created_at DESC",
+                {"status": status_filter},
+                admin=True,
+            )
 
         if df.empty:
             st.info("No submissions found.")

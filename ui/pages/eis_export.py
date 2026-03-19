@@ -18,14 +18,14 @@ EXPORT_FLOWS = [
         "id": "tag_register",
         "name": "Tag Register (seq 003)",
         "file_tmpl": "JDAW-KVE-E-JA-6944-00001-003-{rev}.CSV",
-        "deployment": "export-tag-register-deployment",
+        "deployment": "7_export-tag-register-deployment",
         "live": True,
     },
     {
         "id": "equipment_register",
         "name": "Equipment Register (seq 004)",
         "file_tmpl": "JDAW-KVE-E-JA-6944-00001-004-{rev}.CSV",
-        "deployment": "export-equipment-register-deployment",
+        "deployment": "8_export-equipment-register-deployment",
         "live": True,
     },
 ]

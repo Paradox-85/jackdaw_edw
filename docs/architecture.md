@@ -35,19 +35,22 @@ Streamlit multi-page application deployed as Docker service `jackdaw-ui` on LXC 
 | DB access | Viewer queries: `edw_viewer` (SELECT only); Admin triggers: `postgres_admin` |
 | Prefect API | `http://prefect-server:4200/api` |
 
-**Pages:**
+**Pages (v0.3.0):**
 
 | Page | Role | Description |
 |---|---|---|
-| Home | Viewer | KPI dashboard: active tags, docs, service health, recent flow runs |
+| Home | Viewer | KPI dashboard, tag analytics, timeline, name changes, service health, recent flow runs |
+| Tag Register | Viewer | Master tag list with filtering, grouping, XLSX export, property/doc panels |
 | Reports | Viewer | 4 built-in SQL reports + dynamic catalogue from `audit_core.report_metadata` |
-| Tag History | Viewer | SCD audit trail from `audit_core.tag_status_history` with filters |
+| Tag History | Viewer | SCD audit trail from `audit_core.tag_status_history`, Name Changed detection, XLSX export |
 | Validation | Viewer | Violation stats from `audit_core.validation_result`, rule catalogue |
-| LLM Chat | Viewer | Local Q&A via Ollama (RTX 3090) |
-| CRS Assistant | Viewer | 🚧 Phase 2 stub |
-| ETL Import | Admin | Trigger `sequential-master-sync` Prefect deployment |
-| EIS Export | Admin | Trigger `export-tag-register-deployment` / `export-equipment-register-deployment` or direct query download |
-| Services | Admin | Infra links (Prefect, DbGate), deployment health |
+| EIS Export | Admin | Trigger `7_export-tag-register-deployment` / `8_export-equipment-register-deployment` or direct query download |
+| Help | Viewer | User guide loaded from `docs/help.md` (bundled in Docker image) |
+| Feedback | Viewer | Bug reports and enhancement requests |
+| LLM Chat | — | Hidden — Phase 3 (module preserved in `ui/pages/llm_chat.py`) |
+| CRS Assistant | — | Hidden — Phase 2 stub (module preserved in `ui/pages/crs_assistant.py`) |
+| ETL Import | — | Hidden — trigger via Home Quick Sync (module preserved in `ui/pages/etl_import.py`) |
+| Services | — | Hidden — duplicates Home admin block (module preserved in `ui/pages/services.py`) |
 
 **DB roles:**
 - `edw_viewer` — SELECT only on all 5 schemas. Used for all report/viewer queries.
@@ -57,10 +60,12 @@ Streamlit multi-page application deployed as Docker service `jackdaw-ui` on LXC 
 - **Prefect API URL**: `https://pve.prefect.adzv-pt.dev/api`
 - **DB user**: `postgres_admin` / DB: `engineering_core`
 - **Prefect worker** installs deps at startup from:
-  `/mnt/shared-data/ram-user/Jackdaw/prefect-worker/scripts/requirements.txt`
+  `/mnt/shared-data/ram-user/Jackdaw/EDW-repository/prefect-worker/scripts/requirements.txt`
 - **Ollama + Qdrant** mount shared data read-only:
   `/mnt/backup-hdd/sftpgo-data/ram-user/Jackdaw/Master-Data:/data/shared:ro`
 - **DbGate** auth: `admin` user, connections restricted to `eng_db` only
+- **Config file**: `config/config.yaml` (renamed from `db_config.yaml` — covers DB + storage paths)
+- **Docker Compose**: `docker/jackdaw-edw_docker-compose.yml`
 
 ## Service Dependencies
 ```
@@ -73,7 +78,7 @@ redis    ←─ prefect-server
 ## Data Access Paths
 - Source EIS files: `/mnt/shared-data/ram-user/Jackdaw/`
 - Project symlinks: `./data/current/` and `./data/_history/`
-- Config: `config/db_config.yaml`
+- Config: `config/config.yaml` (renamed from `config/db_config.yaml`, 2026-03-19)
 
 ## Data Flow
 ```
@@ -563,3 +568,16 @@ Raw fields are included in the export SQL SELECT but dropped by `transform_*` be
   - Строки с `mapping_concept = 'Functional Physical'` попадают в оба файла одновременно (корректное поведение по спецификации CFIHOS).
 - **Reason**: `mapping_concept` может содержать составные значения (`'Functional Physical'`), поэтому точное равенство неприемлемо — используется `ILIKE '%...%'`.
 - **Impact**: новые файлы `etl/flows/export_tag_properties.py`, `etl/flows/export_equipment_properties.py`; новые transform-функции в `etl/tasks/export_transforms.py`; новые validation rule scope `'tag_property'` и `'equipment_property'` в `migration_006`.
+
+## ADR-012: UI v0.3.0 — Navigation Cleanup, Config Rename, Repository Path
+- **Date**: 2026-03-19
+- **Decision**:
+  1. Скрыты страницы из навигации: `llm_chat` (Phase 3), `crs_assistant` (Phase 2), `etl_import` (→ Home Quick Sync), `services` (→ Home admin block). Файлы сохранены.
+  2. Добавлена страница `Tag Register` (Master Tag Register) — автозагрузка, фильтр, XLSX, property/doc panels.
+  3. `config/db_config.yaml` переименован в `config/config.yaml` — файл охватывает не только БД, но и пути к файлам хранилища.
+  4. Путь Prefect-worker обновлён: `/mnt/shared-data/ram-user/Jackdaw/prefect-worker/scripts/` → `/mnt/shared-data/ram-user/Jackdaw/EDW-repository/prefect-worker/scripts/`
+  5. Build context `jackdaw-ui` в docker-compose исправлен на корень EDW-repository.
+  6. Deployment names обновлены с числовыми префиксами: `1_sequential-master-sync` ... `8_export-equipment-register-deployment`.
+  7. `docs/help.md` теперь копируется в Docker image при сборке (`COPY docs/help.md ./docs/help.md`).
+- **Reason**: Первый цикл обратной связи от пользователей: лишние страницы перегружали навигацию; Tag Register был единственной часто запрашиваемой фичей; config-файл содержал не только DB-конфиг; путь prefect-worker устарел после переноса репозитория.
+- **Impact**: `ui/app.py`, `ui/pages/home.py`, `ui/pages/tag_history.py`, `ui/pages/tag_register.py` (new), `ui/pages/services.py`, `ui/pages/feedback.py`, `etl/tasks/common.py`, `docker/jackdaw-ui/Dockerfile`, `docker/jackdaw-edw_docker-compose.yml`, `config/config.yaml` (new), `docs/help.md`, `docs/architecture.md`.

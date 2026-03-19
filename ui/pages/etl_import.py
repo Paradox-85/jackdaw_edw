@@ -26,18 +26,18 @@ IMPORT_FLOWS = [
         "name": "Master Data Sync",
         "desc": "SEQUENTIAL: Docs → Tags → Hierarchy → Properties\n"
                 "Deployment: sequential-master-sync",
-        "deployment": "sequential-master-sync",
+        "deployment": "1_sequential-master-sync",
         "live": True,
     },
 ]
 
 # Planned but not yet serving as standalone deployments
 PLANNED_FLOWS = [
-    {"name": "Tag Sync only",            "deployment": "sync-tag-data"},
-    {"name": "Document Sync (MDR)",      "deployment": "sync-doc-data"},
-    {"name": "Property Values Sync",     "deployment": "sync-property-values"},
-    {"name": "Seed Reference Data",      "deployment": "seed-reference-data"},
-    {"name": "Tag Hierarchy Resolution", "deployment": "tag-parent-resolution"},
+    {"name": "Tag Sync only",            "deployment": "2_sync-tag-data"},
+    {"name": "Document Sync (MDR)",      "deployment": "3_sync-doc-data"},
+    {"name": "Property Values Sync",     "deployment": "4_sync-property-values"},
+    {"name": "Seed Reference Data",      "deployment": "5_seed-reference-data"},
+    {"name": "Tag Hierarchy Resolution", "deployment": "6_tag-parent-resolution"},
 ]
 
 
