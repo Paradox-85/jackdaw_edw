@@ -1,4 +1,4 @@
-"""ui/pages/services.py — Infrastructure links. Admin-only."""
+"""ui/_hidden/services.py — Infrastructure links. Hidden — duplicates Home admin block."""
 from __future__ import annotations
 import pandas as pd
 import streamlit as st

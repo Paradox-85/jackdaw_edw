@@ -1,19 +1,19 @@
 """
-app.py — Jackdaw EDW Control Center v0.3.0
+app.py — Jackdaw EDW Control Center v0.3.1
 
 Auth: DB-backed login gate (app_core.ui_user, bcrypt, viewer/admin roles).
       All users must authenticate before accessing any page.
 
 Two modes:
   Viewer mode  — Home, Tag Register, Reports, Tag History, Validation, Help, Feedback
-  Admin  mode  — + EIS Export
+  Admin  mode  — + EIS Management
 
 Architecture notes:
   - ALL_PAGES defined before sidebar to allow on_change callback access
   - Navigation uses on_change callback to fix single-click navigation
   - DB access via ui/common.py (viewer role by default, admin role for writes)
   - Prefect API called only from admin pages
-  - llm_chat, crs_assistant, etl_import, services hidden — not deleted (Phase 2/3)
+  - llm_chat, crs_assistant, etl_import, services preserved in ui/_hidden/ (Phase 2/3)
 """
 import streamlit as st
 
@@ -32,10 +32,7 @@ from ui.pages import (   # noqa: E402
     home, tag_register, reports, tag_history, validation,
     eis_management, help as help_page, feedback,
 )
-from ui.pages import _llm_chat as llm_chat          # noqa: E402  hidden — Phase 3
-from ui.pages import _crs_assistant as crs_assistant # noqa: E402  hidden — Phase 2
-from ui.pages import _etl_import as etl_import       # noqa: E402  hidden — via Home Quick Sync
-from ui.pages import _services as services           # noqa: E402  hidden — duplicates Home admin block
+# llm_chat, crs_assistant, etl_import, services — moved to ui/_hidden/, Phase 2/3
 
 st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
 

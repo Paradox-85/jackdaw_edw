@@ -1,4 +1,4 @@
-"""ui/pages/crs_assistant.py — CRS Assistant. Phase 1: stub."""
+"""ui/_hidden/crs_assistant.py — CRS Assistant. Hidden — Phase 2."""
 from __future__ import annotations
 import streamlit as st
 from ui.common import wip, section

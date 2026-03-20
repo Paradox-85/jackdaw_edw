@@ -213,6 +213,11 @@ def render() -> None:
         WHERE run_id = (
             SELECT run_id FROM audit_core.sync_run_stats
             WHERE end_time IS NOT NULL
+              AND target_table IN (
+                  'project_core.tag',
+                  'project_core.document',
+                  'project_core.property_value'
+              )
             ORDER BY start_time DESC LIMIT 1
         )
         ORDER BY target_table

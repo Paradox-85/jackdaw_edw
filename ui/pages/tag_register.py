@@ -46,7 +46,7 @@ def _highlight_status(row: pd.Series) -> list[str]:
 
 
 # ─── Cached data loaders ───────────────────────────────────────────────────────
-@st.cache_data(ttl=60, show_spinner="Loading tag register…")
+@st.cache_data(ttl=300, show_spinner="Loading tag register…")
 def _load_tags() -> pd.DataFrame:
     """Load main tag register with resolved FKs."""
     df = db_read("""
@@ -66,14 +66,7 @@ def _load_tags() -> pd.DataFrame:
             d.code                                           AS "Discipline Code",
             t.ex_class                                       AS "_ex_class_raw",
             t.serial_no                                      AS "Serial Number",
-            (SELECT COUNT(*)
-             FROM mapping.tag_document m
-             JOIN project_core.document doc ON doc.id = m.document_id
-             WHERE m.tag_id = t.id
-               AND m.mapping_status = 'Active'
-               AND doc.mdr_flag = TRUE
-               AND doc.status != 'CAN'
-               AND doc.object_status = 'Active')             AS "Tag-Doc Count",
+            COALESCE(td_cnt.cnt, 0)                          AS "Tag-Doc Count",
             t.sync_status                                    AS "Sync Status",
             TO_CHAR(t.sync_timestamp, 'YYYY-MM-DD HH24:MI') AS "Sync Timestamp"
         FROM project_core.tag t
@@ -85,6 +78,16 @@ def _load_tags() -> pd.DataFrame:
         LEFT JOIN reference_core.company           design_co ON design_co.id = t.design_company_id
         LEFT JOIN reference_core.purchase_order    po        ON po.id = t.po_id
         LEFT JOIN reference_core.po_package        pkg       ON pkg.id = po.package_id
+        LEFT JOIN (
+            SELECT m.tag_id, COUNT(*) AS cnt
+            FROM mapping.tag_document m
+            JOIN project_core.document doc ON doc.id = m.document_id
+            WHERE m.mapping_status = 'Active'
+              AND doc.mdr_flag = TRUE
+              AND doc.status != 'CAN'
+              AND doc.object_status = 'Active'
+            GROUP BY m.tag_id
+        ) td_cnt ON td_cnt.tag_id = t.id
         WHERE t.object_status = 'Active'
         ORDER BY t.tag_name
     """)
@@ -146,7 +149,7 @@ def _load_documents(tag_id: str) -> pd.DataFrame:
 # ─── Page render ──────────────────────────────────────────────────────────────
 def render() -> None:
     st.markdown("### 🗂 Master Tag Register")
-    st.caption("Active tags · `project_core.tag` · auto-refreshes every 60s")
+    st.caption("Active tags · `project_core.tag` · auto-refreshes every 5 min")
 
     df = _load_tags()
 

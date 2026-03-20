@@ -1,4 +1,4 @@
-"""ui/pages/llm_chat.py"""
+"""ui/_hidden/llm_chat.py — LLM Chat. Hidden — Phase 3."""
 from __future__ import annotations
 import httpx
 import streamlit as st

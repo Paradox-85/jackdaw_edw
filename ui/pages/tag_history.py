@@ -23,21 +23,7 @@ def render() -> None:
     st.markdown("### 📋 Tag History")
     st.caption("SCD audit trail · `audit_core.tag_status_history`")
 
-    # ── Timeline chart ────────────────────────────────────────────────────────
-    section("Tag Activity Timeline")
-    df_chart = db_read("""
-        SELECT DATE(sync_timestamp) AS dt,
-               sync_status          AS status,
-               COUNT(*)             AS cnt
-        FROM audit_core.tag_status_history
-        GROUP BY DATE(sync_timestamp), sync_status
-        ORDER BY dt
-    """)
-    if not df_chart.empty:
-        df_pivot = df_chart.pivot(index="dt", columns="status", values="cnt").fillna(0)
-        st.bar_chart(df_pivot, height=160)
-
-    # ── Filters ───────────────────────────────────────────────────────────────
+    # Filters are declared before the chart so that the chart respects the period
     section("Filters")
     f1, f2, f3 = st.columns([2, 2, 2])
     search  = f1.text_input("Tag name (contains)", placeholder="JDA-21-", key="th_s")
@@ -50,6 +36,27 @@ def render() -> None:
         "All time":    None,
     }
     period = f3.selectbox("Period", list(periods.keys()), index=1, key="th_p")
+    since = (datetime.now() - periods[period]) if periods[period] else None
+
+    # ── Timeline chart ────────────────────────────────────────────────────────
+    section("Tag Activity Timeline")
+    chart_params: dict = {}
+    chart_where = ""
+    if since is not None:
+        chart_where = "WHERE sync_timestamp >= :since"
+        chart_params["since"] = since
+    df_chart = db_read(f"""
+        SELECT DATE(sync_timestamp) AS dt,
+               sync_status          AS status,
+               COUNT(*)             AS cnt
+        FROM audit_core.tag_status_history
+        {chart_where}
+        GROUP BY DATE(sync_timestamp), sync_status
+        ORDER BY dt
+    """, chart_params)
+    if not df_chart.empty:
+        df_pivot = df_chart.pivot(index="dt", columns="status", values="cnt").fillna(0)
+        st.bar_chart(df_pivot, height=160)
 
     # SECURITY NOTE: {w} contains only hardcoded WHERE clauses assembled from
     # selectbox constants and ILIKE bind parameters. All user input uses
@@ -63,9 +70,9 @@ def render() -> None:
     if status != "All":
         where.append("h.sync_status = :ss")
         p["ss"] = status
-    if periods[period]:
+    if since is not None:
         where.append("h.sync_timestamp >= :since")
-        p["since"] = datetime.now() - periods[period]
+        p["since"] = since
     w = ("WHERE " + " AND ".join(where)) if where else ""
 
     # Add LAG to detect tag name changes per source_id
@@ -92,8 +99,6 @@ def render() -> None:
             axis=1,
         )
         df = df.drop(columns=["prev_name"])
-        # Sort: rows with name changes (YES) first
-        df = df.sort_values("Name Changed", ascending=True)  # NO < YES alphabetically → NO first
 
     cr, cdl, _ = st.columns([1, 1, 6])
     if cr.button("⟳", key="th_ref"):
@@ -116,18 +121,18 @@ def render() -> None:
         )
 
         st.caption(f"{len(df):,} rows" + (" (limit)" if len(df) == limit else ""))
-
-        def _highlight_name_change(row: pd.Series):
-            if row.get("Name Changed") == "NO":
-                return ["color: #F85149"] * len(row)
-            return [""] * len(row)
+        st.caption(f"Period: {period} — showing {len(df):,} history records (not total tag count)")
 
         styled = df.style.applymap(
             lambda v: f"color:{_STATUS_CLR.get(v, '#C9D1D9')};font-weight:500",
             subset=["Status"],
         )
         if "Name Changed" in df.columns:
-            styled = styled.apply(_highlight_name_change, axis=1)
+            # YES = name changed → red; NO = unchanged → green (applied to column only)
+            styled = styled.applymap(
+                lambda v: "color: #F85149; font-weight: 600" if v == "YES" else "color: #3FB950",
+                subset=["Name Changed"],
+            )
 
         st.dataframe(styled, use_container_width=True, hide_index=True, height=440)
 

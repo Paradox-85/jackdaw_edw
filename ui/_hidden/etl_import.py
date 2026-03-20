@@ -1,10 +1,8 @@
 """
-ui/pages/etl_import.py — ETL Import control. ADMIN ONLY.
+ui/_hidden/etl_import.py — ETL Import control. Hidden — trigger via Home Quick Sync.
 
 IMPLEMENTED (deployments confirmed in repo):
   - sequential-master-sync   (main_sync.py → main_sync_flow.serve())
-  - export-tag-register      (export_tag_register.py → .serve())
-  - export-equipment-register (export_equipment_register.py → .serve())
 
 UNDER CONSTRUCTION:
   - sync-tag-data standalone deployment

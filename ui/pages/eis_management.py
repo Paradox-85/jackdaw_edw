@@ -2,16 +2,19 @@
 ui/pages/eis_management.py — EIS Management. ADMIN ONLY.
 
 Sections:
-  1. Active Export Deployments — live list from Prefect API (export-* pattern)
-  2. Individual Export — select one register, set revision, trigger or download
-  3. Full EIS Package Export — trigger all registered export deployments at once
+  1. Export Flows — live list from Prefect API (export-* pattern)
+  2. Run Export — select one or all flows, set revision, trigger via Prefect
+  3. Download Exported Files — browse and download files from EIS_EXPORT_DIR
 """
 from __future__ import annotations
-import io, re
+import re
+from datetime import datetime
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 from ui.common import (
-    EIS_EXPORT_DIR, db_read, log, render_log,
+    EIS_EXPORT_DIR, log, render_log,
     require_admin, section, trigger_deployment, prefect_post,
 )
 
@@ -124,8 +127,8 @@ def render() -> None:
 
     require_admin()
 
-    # ── Active Export Deployments ─────────────────────────────────────────────
-    section("Active Export Deployments")
+    # ── Export Flows ──────────────────────────────────────────────────────────
+    section("Export Flows")
     if st.button("⟳", key="eis_dep_refresh", help="Refresh deployment list"):
         st.rerun()
     df_deps = _fetch_export_deployments()
@@ -134,61 +137,68 @@ def render() -> None:
     else:
         st.caption("⚠ No export deployments found in Prefect — run `python scripts/deploy_all.py` to register them.")
 
-    # ── Individual Export ─────────────────────────────────────────────────────
-    section("Individual Export")
-    col_l, col_r = st.columns([1, 1], gap="large")
+    # ── Run Export ────────────────────────────────────────────────────────────
+    section("Run Export")
+    live_flows = [f for f in EXPORT_FLOWS if f["live"]]
 
+    col_l, col_r = st.columns([2, 1], gap="large")
     with col_l:
-        sel_id = st.radio(
-            "Export",
-            [f["id"] for f in EXPORT_FLOWS],
-            format_func=lambda x: next(f["name"] for f in EXPORT_FLOWS if f["id"] == x),
-            key="eis_radio",
-            label_visibility="collapsed",
+        export_scope = st.radio(
+            "Scope",
+            ["Single flow", "Full EIS Package (all flows)"],
+            key="eis_scope",
+            horizontal=True,
         )
-        sel = next(f for f in EXPORT_FLOWS if f["id"] == sel_id)
-        st.caption(f"Output: `{sel['file_tmpl']}`")
+        if export_scope == "Single flow":
+            sel_id = st.selectbox(
+                "Flow",
+                [f["id"] for f in live_flows],
+                format_func=lambda x: next(f["name"] for f in live_flows if f["id"] == x),
+                key="eis_sel_flow",
+            )
+            selected_flows = [next(f for f in live_flows if f["id"] == sel_id)]
+            st.caption(f"Output: `{selected_flows[0]['file_tmpl']}`")
+        else:
+            selected_flows = live_flows
+            st.caption(
+                f"{len(live_flows)} flows: "
+                + " · ".join(f["name"] for f in live_flows)
+            )
 
     with col_r:
-        rev = st.text_input("Document revision", value="A35", help="Format: [A-Z]\\d{2} e.g. A35")
-        fmt = st.selectbox("Output format", ["CSV", "XLSX"], key="eis_fmt")
-        dest = st.radio(
-            "Destination",
-            ["⬇ Browser download (direct query)", "💾 Server-side via Prefect flow"],
-            key="eis_dest",
-        )
-        server_side = dest.startswith("💾")
-        out_dir = st.text_input("Server directory", value=EIS_EXPORT_DIR) if server_side else None
-
+        rev = st.text_input("Document revision", value="A35", help="Format: [A-Z]\\d{2} e.g. A35", key="eis_rev")
         rev_err = None if _REV_RE.match(rev) else f"Invalid revision '{rev}' — expected e.g. A35"
         if rev_err:
             st.warning(rev_err)
 
         if st.button("▶ Run Export", type="primary", use_container_width=True,
-                     disabled=bool(rev_err), key="btn_eis_single"):
-            _trigger_or_download([sel], rev, fmt, server_side, out_dir)
+                     disabled=bool(rev_err), key="btn_eis_run"):
+            _trigger_flows(selected_flows, rev)
 
-    # ── Full EIS Package Export ───────────────────────────────────────────────
-    section("Full EIS Package Export")
-    st.caption("Triggers all registered export deployments via Prefect in sequence.")
-
-    live_flows = [f for f in EXPORT_FLOWS if f["live"]]
-    pkg_rev = st.text_input(
-        "Package revision", value="A35",
-        help="Format: [A-Z]\\d{2} — applied to all exports", key="eis_pkg_rev",
-    )
-    pkg_rev_err = None if _REV_RE.match(pkg_rev) else f"Invalid revision '{pkg_rev}'"
-    if pkg_rev_err:
-        st.warning(pkg_rev_err)
-
-    st.caption(
-        f"{len(live_flows)} flows will be triggered: "
-        + " · ".join(f["name"] for f in live_flows)
-    )
-
-    if st.button("▶ Export Full EIS Package", type="primary", use_container_width=True,
-                 disabled=bool(pkg_rev_err), key="btn_eis_pkg"):
-        _trigger_or_download(live_flows, pkg_rev, "CSV", server_side=True, out_dir=None)
+    # ── Download Exported Files ───────────────────────────────────────────────
+    section("Download Exported Files")
+    export_path = Path(EIS_EXPORT_DIR)
+    if export_path.exists():
+        files = sorted(export_path.glob("*.CSV"), key=lambda f: f.stat().st_mtime, reverse=True)
+        files += sorted(export_path.glob("*.xlsx"), key=lambda f: f.stat().st_mtime, reverse=True)
+        if files:
+            st.caption(f"{len(files)} file(s) in `{EIS_EXPORT_DIR}`")
+            for fpath in files[:20]:
+                col_name, col_dl = st.columns([5, 1])
+                col_name.caption(
+                    f"`{fpath.name}` · {fpath.stat().st_size // 1024} KB · "
+                    f"{datetime.fromtimestamp(fpath.stat().st_mtime):%Y-%m-%d %H:%M}"
+                )
+                col_dl.download_button(
+                    "⬇",
+                    data=fpath.read_bytes(),
+                    file_name=fpath.name,
+                    key=f"dl_{fpath.name}",
+                )
+        else:
+            st.caption("No exported files found in export directory.")
+    else:
+        st.warning(f"Export directory not mounted: `{EIS_EXPORT_DIR}`")
 
     # ── Execution Log ─────────────────────────────────────────────────────────
     section("Execution Log")
@@ -198,77 +208,14 @@ def render() -> None:
         st.rerun()
 
 
-def _trigger_or_download(
-    flows: list[dict],
-    rev: str,
-    fmt: str,
-    server_side: bool,
-    out_dir: str | None,
-) -> None:
+def _trigger_flows(flows: list[dict], rev: str) -> None:
     for f in flows:
-        if server_side:
-            params: dict = {"doc_revision": rev}
-            if out_dir:
-                params["output_dir"] = out_dir
-            log("info", f"Triggering: {f['name']} rev={rev}", "eis_log")
-            result = trigger_deployment(f["deployment"], params)
-            if result and "id" in result:
-                log("ok", f"Scheduled — ID: {result['id'][:8]}", "eis_log")
-                st.success(f"✓ {f['name']} · `{result['id'][:8]}`")
-            else:
-                log("err", str(result), "eis_log")
-                st.error(str(result))
+        params: dict = {"doc_revision": rev}
+        log("info", f"Triggering: {f['name']} rev={rev}", "eis_log")
+        result = trigger_deployment(f["deployment"], params)
+        if result and "id" in result:
+            log("ok", f"Scheduled — ID: {result['id'][:8]}", "eis_log")
+            st.success(f"✓ {f['name']} · `{result['id'][:8]}`")
         else:
-            df = _quick_query(f["id"])
-            if not df.empty:
-                _download(df, f["file_tmpl"].format(rev=rev), fmt)
-
-
-def _quick_query(eid: str) -> pd.DataFrame:
-    """Direct DB query for browser-side download (no Prefect, no audit)."""
-    if eid == "tag_register":
-        return db_read("""
-            SELECT pl.code AS PLANT_CODE, t.tag_name AS TAG_NAME,
-                   t.tag_status AS TAG_STATUS, a.code AS AREA_CODE,
-                   c.name AS TAG_CLASS_NAME, t.object_status
-            FROM   project_core.tag t
-            LEFT JOIN reference_core.plant pl ON pl.id = t.plant_id
-            LEFT JOIN reference_core.area  a  ON a.id = t.area_id
-            LEFT JOIN ontology_core.class  c  ON c.id = t.class_id
-            WHERE  t.object_status = 'Active' ORDER BY t.tag_name
-        """)
-    if eid == "equipment_register":
-        return db_read("""
-            SELECT pl.code AS PLANT_CODE, t.tag_name AS TAG_NAME,
-                   t.equip_no AS EQUIPMENT_NUMBER, t.tag_status,
-                   a.code AS AREA_CODE, c.name AS TAG_CLASS_NAME
-            FROM   project_core.tag t
-            LEFT JOIN reference_core.plant pl ON pl.id = t.plant_id
-            LEFT JOIN reference_core.area  a  ON a.id = t.area_id
-            LEFT JOIN ontology_core.class  c  ON c.id = t.class_id
-            WHERE  t.object_status = 'Active' AND t.equip_no IS NOT NULL
-            ORDER  BY t.tag_name
-        """)
-    return pd.DataFrame()
-
-
-def _download(df: pd.DataFrame, filename: str, fmt: str) -> None:
-    if fmt == "CSV":
-        st.download_button(
-            "⬇ Download CSV",
-            data=df.to_csv(index=False).encode("utf-8-sig"),
-            file_name=filename,
-            mime="text/csv",
-            key=f"dl_{filename}",
-        )
-    else:
-        buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine="openpyxl") as w:
-            df.to_excel(w, index=False)
-        st.download_button(
-            "⬇ Download XLSX",
-            data=buf.getvalue(),
-            file_name=filename.replace(".CSV", ".xlsx"),
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key=f"dl_{filename}_xl",
-        )
+            log("err", str(result), "eis_log")
+            st.error(str(result))
