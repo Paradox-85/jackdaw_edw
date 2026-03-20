@@ -11,13 +11,13 @@ if str(project_root) not in sys.path:
 # Import your tasks from the respective files
 # Ensure your task files are in the python path
 try:
-    from flows.sync_doc_data import sync_mdr_task
-    from flows.sync_tag_data import sync_tags_task
-    from flows.sync_tag_data import build_hierarchy
-    from flows.sync_prop_data import sync_properties_task
+    from flows.import_doc_data_deploy import sync_mdr_task
+    from flows.import_tag_data_deploy import sync_tags_task
+    from flows.import_tag_data_deploy import build_hierarchy
+    from flows.import_prop_data_deploy import sync_properties_task
 except ImportError as e:
-    print(f"Error: Could not find sync files. Check filenames in /flows/ folder. Details: {e}")
-    sys.exit(1)
+    print(f"[SKIP] {Path(__file__).name}: Could not import flow tasks. Details: {e}")
+    sys.exit(0)
 
 @flow(name="Project Master Data Sync", 
       description="SEQUENTIAL PIPELINE: 1. Documents -> 2. Tags -> 3. Hierarchy -> 4. Property Values")

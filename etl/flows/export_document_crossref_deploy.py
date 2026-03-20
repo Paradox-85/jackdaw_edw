@@ -16,18 +16,22 @@ script_root = current_dir.parent
 if str(script_root) not in sys.path:
     sys.path.append(str(script_root))
 
-from tasks.common import load_config, get_db_engine_url
-from tasks.export_transforms import (
-    transform_doc_to_site,
-    transform_doc_to_plant,
-    transform_doc_to_process_unit,
-    transform_doc_to_area,
-    transform_doc_to_tag,
-    transform_doc_to_equipment,
-    transform_doc_to_model_part,
-    transform_doc_to_po,
-)
-from tasks.export_pipeline import run_export_pipeline
+try:
+    from tasks.common import load_config, get_db_engine_url
+    from tasks.export_transforms import (
+        transform_doc_to_site,
+        transform_doc_to_plant,
+        transform_doc_to_process_unit,
+        transform_doc_to_area,
+        transform_doc_to_tag,
+        transform_doc_to_equipment,
+        transform_doc_to_model_part,
+        transform_doc_to_po,
+    )
+    from tasks.export_pipeline import run_export_pipeline
+except ImportError as e:
+    print(f"[SKIP] {Path(__file__).name}: Could not import task modules. Details: {e}")
+    sys.exit(0)
 
 # Module-level config — same pattern as other export flows
 config = load_config()

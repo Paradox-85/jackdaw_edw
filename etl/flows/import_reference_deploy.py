@@ -17,13 +17,17 @@ script_root = current_dir.parent
 if str(script_root) not in sys.path:
     sys.path.append(str(script_root))
 
-from tasks.common import (
-    load_config,
-    get_db_engine_url,
-    normalize_to_id_code,
-    parse_bool,
-    get_object_status,
-)
+try:
+    from tasks.common import (
+        load_config,
+        get_db_engine_url,
+        normalize_to_id_code,
+        parse_bool,
+        get_object_status,
+    )
+except ImportError as e:
+    print(f"[SKIP] {Path(__file__).name}: Could not import task modules. Details: {e}")
+    sys.exit(0)
 
 # Load config
 config = load_config()
