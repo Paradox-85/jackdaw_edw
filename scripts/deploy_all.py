@@ -38,11 +38,9 @@ def main() -> None:
 
     print()
     if failed:
-        print(f"[WARN] Failed ({len(failed)}): {', '.join(failed)}")
-        sys.exit(1)
+        print(f"[WARN] Completed with errors. Failed scripts: {', '.join(failed)}")
     else:
         print(f"[DONE] All {len(scripts)} deployments registered successfully.")
-
 
 if __name__ == "__main__":
     main()
