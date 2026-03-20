@@ -2,6 +2,7 @@ import uuid
 import sys
 from pathlib import Path
 from prefect import flow, get_run_logger
+from prefect.client.schemas.schedules import CronSchedule
 
 current_dir = Path(__file__).resolve().parent
 project_root = current_dir.parent
@@ -60,4 +61,10 @@ if __name__ == "__main__":
         name="import_master_sync_deploy",
         work_pool_name="default-agent-pool",
         tags=["production", "master-data", "integrated-pipeline"],
+        schedules=[
+            CronSchedule(
+                cron="0 6 * * 1-5", 
+                timezone="Europe/Lisbon"
+            ) 
+        ],
     )
