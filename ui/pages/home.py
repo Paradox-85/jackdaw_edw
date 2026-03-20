@@ -3,7 +3,6 @@ ui/pages/home.py — Dashboard: KPIs, service health, recent runs, tag analytics
 Read-only queries only. No write operations except admin sync trigger.
 """
 from __future__ import annotations
-import os
 from pathlib import Path
 
 import pandas as pd
@@ -13,13 +12,6 @@ from ui.common import (
     prefect_get, ollama_models, recent_flow_runs, section, trigger_deployment,
 )
 from ui.version import version_string
-
-# Path to docker-compose.yml — configurable via env for Docker deployments
-_DOCKER_COMPOSE_PATH = os.getenv(
-    "DOCKER_COMPOSE_PATH",
-    "/mnt/shared-data/ram-user/Jackdaw/EDW-repository/docker/jackdaw-edw_docker-compose.yml",
-)
-
 
 # ─── Cached KPI queries (ttl=60s to avoid hammering DB on every rerun) ────────
 @st.cache_data(ttl=60, show_spinner=False)
@@ -169,18 +161,6 @@ def render() -> None:
         else:
             st.caption("No sync history available.")
 
-        # Download docker-compose.yml
-        compose_path = Path(_DOCKER_COMPOSE_PATH)
-        if compose_path.exists():
-            st.download_button(
-                "⬇ Download docker-compose.yml",
-                data=compose_path.read_bytes(),
-                file_name="docker-compose.yml",
-                mime="text/yaml",
-                key="dl_compose",
-            )
-        else:
-            st.caption(f"docker-compose.yml not found at `{_DOCKER_COMPOSE_PATH}`")
 
     # ── Recent Prefect runs ───────────────────────────────────────────────────
     section("Recent Flow Runs")
@@ -224,12 +204,6 @@ def render() -> None:
     """)
     if not df_stats.empty:
         st.dataframe(df_stats, use_container_width=True, hide_index=True)
-        if df_stats["Table"].nunique() == 1:
-            st.warning(
-                "⚠ Only one table row found. "
-                "Check that Prefect flow writes per-table rows to `audit_core.sync_run_stats`, "
-                "not a single aggregate row."
-            )
     else:
         st.caption("No sync run data found.")
 

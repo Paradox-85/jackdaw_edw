@@ -210,10 +210,17 @@ def render() -> None:
     )
 
     # ── Main table with row selection ─────────────────────────────────────────
+    # Apply row-level styler only when cell count is within Pandas Styler limit
+    _STYLER_CELL_LIMIT = 250_000
+    _display_df = df_display.drop(columns=["_tag_id"], errors="ignore")
+    _cell_count = len(_display_df) * len(_display_df.columns)
+    _table_data = (
+        _display_df.style.apply(_highlight_status, axis=1)
+        if _cell_count <= _STYLER_CELL_LIMIT
+        else _display_df
+    )
     selected = st.dataframe(
-        df_display.drop(columns=["_tag_id"], errors="ignore").style.apply(
-            _highlight_status, axis=1
-        ),
+        _table_data,
         use_container_width=True,
         hide_index=True,
         on_select="rerun",

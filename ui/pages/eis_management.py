@@ -7,7 +7,9 @@ Sections:
   3. Download Exported Files — browse and download files from EIS_EXPORT_DIR
 """
 from __future__ import annotations
+import io as _io
 import re
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -90,11 +92,68 @@ EXPORT_FLOWS = [
         "deployment": "export-tag-connections-deployment",
         "live":       True,
     },
+    # Document cross-reference: master + 8 individual sub-flows
     {
         "id":         "document_crossref",
-        "name":       "Document Cross-Reference (doc-to-* registers)",
+        "name":       "Document Cross-Reference — All 8 (seq 408-420)",
         "file_tmpl":  "JDAW-KVE-E-JA-6944-00001-016..024-{rev}.CSV",
         "deployment": "export-document-crossref-deployment",
+        "live":       True,
+    },
+    {
+        "id":         "doc_to_site",
+        "name":       "Doc→Site (seq 408)",
+        "file_tmpl":  "JDAW-KVE-E-JA-6944-00001-024-{rev}.CSV",
+        "deployment": "export-doc-to-site-deployment",
+        "live":       True,
+    },
+    {
+        "id":         "doc_to_plant",
+        "name":       "Doc→Plant (seq 409)",
+        "file_tmpl":  "JDAW-KVE-E-JA-6944-00001-023-{rev}.CSV",
+        "deployment": "export-doc-to-plant-deployment",
+        "live":       True,
+    },
+    {
+        "id":         "doc_to_process_unit",
+        "name":       "Doc→Process Unit (seq 410)",
+        "file_tmpl":  "JDAW-KVE-E-JA-6944-00001-018-{rev}.CSV",
+        "deployment": "export-doc-to-process-unit-deployment",
+        "live":       True,
+    },
+    {
+        "id":         "doc_to_area",
+        "name":       "Doc→Area (seq 411)",
+        "file_tmpl":  "JDAW-KVE-E-JA-6944-00001-017-{rev}.CSV",
+        "deployment": "export-doc-to-area-deployment",
+        "live":       True,
+    },
+    {
+        "id":         "doc_to_tag",
+        "name":       "Doc→Tag (seq 412)",
+        "file_tmpl":  "JDAW-KVE-E-JA-6944-00001-016-{rev}.CSV",
+        "deployment": "export-doc-to-tag-deployment",
+        "live":       True,
+    },
+    {
+        "id":         "doc_to_equipment",
+        "name":       "Doc→Equipment (seq 413)",
+        "file_tmpl":  "JDAW-KVE-E-JA-6944-00001-019-{rev}.CSV",
+        "deployment": "export-doc-to-equipment-deployment",
+        "live":       True,
+    },
+    {
+        "id":         "doc_to_model_part",
+        "name":       "Doc→Model Part (seq 414)",
+        "file_tmpl":  "JDAW-KVE-E-JA-6944-00001-020-{rev}.CSV",
+        "deployment": "export-doc-to-model-part-deployment",
+        "live":       True,
+    },
+    {
+        "id":         "doc_to_po",
+        "name":       "Doc→Purchase Order (seq 420)",
+        "file_tmpl":  "JDAW-KVE-E-JA-6944-00001-022-{rev}.CSV",
+        "deployment": "export-doc-to-po-deployment",
         "live":       True,
     },
 ]
@@ -183,6 +242,19 @@ def render() -> None:
         files += sorted(export_path.glob("*.xlsx"), key=lambda f: f.stat().st_mtime, reverse=True)
         if files:
             st.caption(f"{len(files)} file(s) in `{EIS_EXPORT_DIR}`")
+            # Download All as ZIP
+            zip_buf = _io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for fpath in files:
+                    zf.write(fpath, fpath.name)
+            col_zip, _ = st.columns([2, 6])
+            col_zip.download_button(
+                "⬇ Download All (ZIP)",
+                data=zip_buf.getvalue(),
+                file_name=f"eis_export_{datetime.now():%Y%m%d_%H%M}.zip",
+                mime="application/zip",
+                key="dl_all_zip",
+            )
             for fpath in files[:20]:
                 col_name, col_dl = st.columns([5, 1])
                 col_name.caption(

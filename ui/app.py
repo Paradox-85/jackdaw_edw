@@ -1,5 +1,5 @@
 """
-app.py — Jackdaw EDW Control Center v0.3.1
+app.py — Jackdaw EDW Control Center v0.3.2
 
 Auth: DB-backed login gate (app_core.ui_user, bcrypt, viewer/admin roles).
       All users must authenticate before accessing any page.

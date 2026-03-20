@@ -19,6 +19,32 @@ _STATUS_CLR = {
 }
 
 
+@st.cache_data(ttl=120, show_spinner=False)
+def _load_change_summary(since_ts) -> tuple[int, pd.DataFrame]:
+    """Total active tags + per-status distribution for the selected period."""
+    total_df = db_read("SELECT COUNT(*) AS n FROM project_core.tag WHERE object_status='Active'")
+    total = int(total_df["n"].iloc[0]) if not total_df.empty else 0
+
+    params: dict = {}
+    where = ""
+    if since_ts is not None:
+        where = "WHERE sync_timestamp >= :since"
+        params["since"] = since_ts
+
+    df = db_read(f"""
+        SELECT sync_status AS "Status", COUNT(DISTINCT tag_id) AS "Count"
+        FROM audit_core.tag_status_history
+        {where}
+        GROUP BY sync_status
+        ORDER BY COUNT(DISTINCT tag_id) DESC
+    """, params)
+
+    changed = int(df["Count"].sum()) if not df.empty else 0
+    no_changes = max(0, total - changed)
+    extra = pd.DataFrame([{"Status": "No Changes (est.)", "Count": no_changes}])
+    return total, pd.concat([df, extra], ignore_index=True)
+
+
 def render() -> None:
     st.markdown("### 📋 Tag History")
     st.caption("SCD audit trail · `audit_core.tag_status_history`")
@@ -37,6 +63,19 @@ def render() -> None:
     }
     period = f3.selectbox("Period", list(periods.keys()), index=1, key="th_p")
     since = (datetime.now() - periods[period]) if periods[period] else None
+
+    # ── Change Summary ────────────────────────────────────────────────────────
+    section("Tag Change Summary")
+    total_tags, df_summary = _load_change_summary(since)
+    sm1, sm2 = st.columns([1, 3])
+    sm1.metric("Total Active Tags", f"{total_tags:,}")
+    if not df_summary.empty:
+        with sm2:
+            st.bar_chart(df_summary.set_index("Status")["Count"], height=160)
+    st.caption(
+        "**No Changes (est.)** = Total Active Tags − tags with any history event in period. "
+        "History includes: New · Updated · Extended · Reduced · Deleted."
+    )
 
     # ── Timeline chart ────────────────────────────────────────────────────────
     section("Tag Activity Timeline")

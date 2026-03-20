@@ -128,6 +128,9 @@ def _param_widgets(params_def: dict, key_prefix: str) -> dict:
     return values
 
 
+_MAX_DISPLAY_ROWS = 10_000
+
+
 def _run_and_show(sql: str, params: dict, label: str, fmt: str) -> None:
     str_params = {k: str(v) for k, v in params.items()}
     try:
@@ -137,7 +140,12 @@ def _run_and_show(sql: str, params: dict, label: str, fmt: str) -> None:
             st.info("Query returned no rows.")
             return
         st.caption(f"{len(df):,} rows")
-        st.dataframe(df, use_container_width=True, hide_index=True, height=440)
+        if len(df) > _MAX_DISPLAY_ROWS:
+            st.warning(f"Showing first {_MAX_DISPLAY_ROWS:,} of {len(df):,} rows — download full data below.")
+            df_show = df.head(_MAX_DISPLAY_ROWS)
+        else:
+            df_show = df
+        st.dataframe(df_show, use_container_width=True, hide_index=True, height=440)
         _download_btn(df, label, fmt)
     except Exception as exc:
         st.error(f"Report unavailable: **{label}**")
@@ -259,7 +267,7 @@ COMMENT ON TABLE audit_core.report_metadata IS
     sql_raw = sel["sql_query"]
 
     # Auto-detect :param placeholders
-    detected = re.findall(r":([a-zA-Z_][a-zA-Z0-9_]*)", sql_raw)
+    detected = list(dict.fromkeys(re.findall(r":([a-zA-Z_][a-zA-Z0-9_]*)", sql_raw)))
     dyn_params = {}
     if detected:
         for p in detected:

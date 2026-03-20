@@ -155,8 +155,8 @@ def sync_properties_task(run_id):
 
     with engine.begin() as conn:
         conn.execute(text("""
-            UPDATE audit_core.sync_run_stats SET end_time = :et, count_created = :nc, count_updated = :nu, 
-            count_unchanged = :nch, count_errors = :ne WHERE run_id = :rid
+            UPDATE audit_core.sync_run_stats SET end_time = :et, count_created = :nc, count_updated = :nu,
+            count_unchanged = :nch, count_errors = :ne WHERE run_id = :rid AND target_table = 'project_core.property_value'
         """), {
             "rid": run_id, "et": datetime.now(), "nc": stats["New"], "nu": stats["Updated"], 
             "nch": stats["No Changes"], "ne": stats["Errors"]

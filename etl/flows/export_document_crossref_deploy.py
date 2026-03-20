@@ -788,3 +788,19 @@ if __name__ == "__main__":
         name="export-document-crossref-deployment",
         work_pool_name="default-agent-pool",
     )
+    # Individual sub-flow deployments — allow triggering each register separately
+    _SUB_FLOWS = [
+        (export_doc_to_site_flow,            "export-doc-to-site-deployment"),
+        (export_doc_to_plant_flow,           "export-doc-to-plant-deployment"),
+        (export_doc_to_process_unit_flow,    "export-doc-to-process-unit-deployment"),
+        (export_doc_to_area_flow,            "export-doc-to-area-deployment"),
+        (export_doc_to_tag_flow,             "export-doc-to-tag-deployment"),
+        (export_doc_to_equipment_flow,       "export-doc-to-equipment-deployment"),
+        (export_doc_to_model_part_flow,      "export-doc-to-model-part-deployment"),
+        (export_doc_to_po_flow,              "export-doc-to-po-deployment"),
+    ]
+    for _flow_obj, _dep_name in _SUB_FLOWS:
+        _flow_obj.from_source(
+            source=str(_REPO_ROOT),
+            entrypoint=f"etl/flows/export_document_crossref_deploy.py:{_flow_obj.__name__}",
+        ).deploy(name=_dep_name, work_pool_name="default-agent-pool")
