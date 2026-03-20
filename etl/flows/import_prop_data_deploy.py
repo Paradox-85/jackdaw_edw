@@ -14,8 +14,7 @@ if str(script_root) not in sys.path:
     sys.path.append(str(script_root))
 
 from tasks.common import (
-    load_config, get_db_engine_url, calculate_row_hash,
-    clean_string, normalize_to_id_code
+    load_config, get_db_engine_url, calculate_row_hash
 )
 
 config = load_config()
@@ -170,6 +169,6 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/import_prop_data_deploy.py:properties_sync_flow",
     ).deploy(
-        name="prop-sync-deployment",
+        name="import_prop_data_deploy",
         work_pool_name="default-agent-pool",
     )

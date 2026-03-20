@@ -1,5 +1,4 @@
 import uuid
-import os
 import sys
 from pathlib import Path
 from prefect import flow, get_run_logger
@@ -58,7 +57,7 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/import_master_sync_deploy.py:main_sync_flow",
     ).deploy(
-        name="sequential-master-sync",
+        name="import_master_sync_deploy",
         work_pool_name="default-agent-pool",
         tags=["production", "master-data", "integrated-pipeline"],
     )

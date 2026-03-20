@@ -421,6 +421,6 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/import_ontology_deploy.py:ontology_master_flow",
     ).deploy(
-        name="ontology-seeder",
+        name="import_ontology_deploy",
         work_pool_name="default-agent-pool",
     )

@@ -418,6 +418,6 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/import_tag_data_deploy.py:tag_sync_flow",
     ).deploy(
-        name="tag-sync-deployment",
+        name="import_tag_data_deploy",
         work_pool_name="default-agent-pool",
     )

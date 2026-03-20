@@ -178,6 +178,6 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/import_doc_data_deploy.py:mdr_sync_flow",
     ).deploy(
-        name="doc-sync-deployment",
+        name="import_doc_data_deploy",
         work_pool_name="default-agent-pool",
     )
