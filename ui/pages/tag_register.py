@@ -48,41 +48,43 @@ def _highlight_status(row: pd.Series) -> list[str]:
 # ─── Cached data loaders ───────────────────────────────────────────────────────
 @st.cache_data(ttl=60, show_spinner="Loading tag register…")
 def _load_tags() -> pd.DataFrame:
-    """Load main tag register — 18 columns with resolved FKs."""
+    """Load main tag register with resolved FKs."""
     df = db_read("""
         SELECT
-            t.id                                            AS _tag_id,
-            t.tag_name                                      AS "Tag Name",
-            t.description                                   AS "Description",
-            t.owner                                         AS "Owner",
-            t.tag_status                                    AS "Tag Status",
-            t.po_number                                     AS "PO Number",
-            t.package_code                                  AS "Package",
-            c.name                                          AS "Class Name",
-            t.mc_package                                    AS "MC Package",
-            a.code                                          AS "Area",
-            u.code                                          AS "Process Unit",
-            t.install_by                                    AS "Install By",
-            pt.tag_name                                     AS "Parent Tag",
-            d.code                                          AS "Discipline Code",
-            t.ex_class                                      AS "_ex_class_raw",
-            t.serial_number                                 AS "Serial Number",
+            t.id                                             AS _tag_id,
+            t.tag_name                                       AS "Tag Name",
+            t.description                                    AS "Description",
+            design_co.name                                   AS "Owner",
+            t.tag_status                                     AS "Tag Status",
+            po.name                                          AS "PO Number",
+            pkg.code                                         AS "Package",
+            c.name                                           AS "Class Name",
+            t.mc_package_code                                AS "MC Package",
+            a.code                                           AS "Area",
+            u.code                                           AS "Process Unit",
+            pt.tag_name                                      AS "Parent Tag",
+            d.code                                           AS "Discipline Code",
+            t.ex_class                                       AS "_ex_class_raw",
+            t.serial_no                                      AS "Serial Number",
             (SELECT COUNT(*)
              FROM mapping.tag_document m
              JOIN project_core.document doc ON doc.id = m.document_id
              WHERE m.tag_id = t.id
                AND m.mapping_status = 'Active'
-               AND m.mdr_flag = TRUE
+               AND doc.mdr_flag = TRUE
                AND doc.status != 'CAN'
-               AND doc.object_status = 'Active')            AS "Tag-Doc Count",
-            t.sync_status                                   AS "Sync Status",
+               AND doc.object_status = 'Active')             AS "Tag-Doc Count",
+            t.sync_status                                    AS "Sync Status",
             TO_CHAR(t.sync_timestamp, 'YYYY-MM-DD HH24:MI') AS "Sync Timestamp"
         FROM project_core.tag t
-        LEFT JOIN ontology_core.class c          ON c.id = t.class_id
-        LEFT JOIN reference_core.area a          ON a.id = t.area_id
-        LEFT JOIN reference_core.process_unit u  ON u.id = t.process_unit_id
-        LEFT JOIN reference_core.discipline d    ON d.id = t.discipline_id
-        LEFT JOIN project_core.tag pt            ON pt.id = t.parent_tag_id
+        LEFT JOIN ontology_core.class              c         ON c.id = t.class_id
+        LEFT JOIN reference_core.area              a         ON a.id = t.area_id
+        LEFT JOIN reference_core.process_unit      u         ON u.id = t.process_unit_id
+        LEFT JOIN reference_core.discipline        d         ON d.id = t.discipline_id
+        LEFT JOIN project_core.tag                 pt        ON pt.id = t.parent_tag_id
+        LEFT JOIN reference_core.company           design_co ON design_co.id = t.design_company_id
+        LEFT JOIN reference_core.purchase_order    po        ON po.id = t.po_id
+        LEFT JOIN reference_core.po_package        pkg       ON pkg.id = po.package_id
         WHERE t.object_status = 'Active'
         ORDER BY t.tag_name
     """)
@@ -134,7 +136,7 @@ def _load_documents(tag_id: str) -> pd.DataFrame:
         JOIN project_core.document doc ON doc.id = m.document_id
         LEFT JOIN reference_core.company co ON co.id = doc.company_id
         WHERE m.tag_id = :tid
-          AND m.mdr_flag = TRUE
+          AND doc.mdr_flag = TRUE
           AND doc.status != 'CAN'
           AND doc.object_status = 'Active'
         ORDER BY doc.doc_number

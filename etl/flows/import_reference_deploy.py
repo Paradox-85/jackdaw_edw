@@ -607,9 +607,10 @@ def seed_reference_flow() -> None:
 
 
 if __name__ == "__main__":
+    _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
     seed_reference_flow.from_source(
-        source="/mnt/shared-data/ram-user/Jackdaw/prefect-worker/scripts",
-        entrypoint="etl/flows/seed_reference.py:seed_reference_flow",
+        source=str(_REPO_ROOT),
+        entrypoint="etl/flows/import_reference_deploy.py:seed_reference_flow",
     ).deploy(
         name="reference-data-seeder",
         work_pool_name="default-agent-pool",

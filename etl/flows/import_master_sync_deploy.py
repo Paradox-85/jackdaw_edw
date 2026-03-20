@@ -53,9 +53,10 @@ def main_sync_flow():
     logger.info("Integrated Master Sync Pipeline completed successfully.")
 
 if __name__ == "__main__":
+    _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
     main_sync_flow.from_source(
-        source="/mnt/shared-data/ram-user/Jackdaw/prefect-worker/scripts",
-        entrypoint="etl/flows/main_sync.py:main_sync_flow",
+        source=str(_REPO_ROOT),
+        entrypoint="etl/flows/import_master_sync_deploy.py:main_sync_flow",
     ).deploy(
         name="sequential-master-sync",
         work_pool_name="default-agent-pool",

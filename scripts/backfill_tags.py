@@ -7,16 +7,21 @@ from pathlib import Path
 from datetime import datetime
 from prefect import flow, get_run_logger
 
-# Add project root to path
-current_dir = Path(__file__).resolve().parent
-project_root = current_dir.parent
-if str(project_root) not in sys.path:
-    sys.path.append(str(project_root))
+# Add project root to path — scripts/ → repo root
+_HERE = Path(__file__).resolve()
+_REPO_ROOT = _HERE.parent.parent  # scripts/ → repo root
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-from flows.sync_tag_data import sync_tags_task, build_hierarchy
+from etl.flows.import_tag_data_deploy import sync_tags_task, build_hierarchy
+from etl.tasks.common import load_config
 
-# Historical data path
-HISTORY_DIR = "/mnt/shared-data/ram-user/Jackdaw/Master-Data/_master/data/_history"
+# Historical data path — from config.yaml (storage.history_dir)
+_config = load_config()
+HISTORY_DIR = _config.get("storage", {}).get(
+    "history_dir",
+    "/mnt/shared-data/ram-user/Jackdaw/Master-Data/_master/data/_history",
+)
 FILE_MASK = r"MTR-dataset-(\d{4}-\d{2}-\d{2})_\d{2}\.xlsx"
 
 def get_sorted_history():

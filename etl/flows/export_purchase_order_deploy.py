@@ -130,6 +130,11 @@ def export_purchase_order_flow(
 
 
 if __name__ == "__main__":
-    import os
-    os.chdir(Path(__file__).resolve().parent.parent)
-    export_purchase_order_flow.serve(name="export-purchase-order-deployment")
+    _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+    export_purchase_order_flow.from_source(
+        source=str(_REPO_ROOT),
+        entrypoint="etl/flows/export_purchase_order_deploy.py:export_purchase_order_flow",
+    ).deploy(
+        name="export-purchase-order-deployment",
+        work_pool_name="default-agent-pool",
+    )

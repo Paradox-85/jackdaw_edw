@@ -173,9 +173,10 @@ def mdr_sync_flow():
     sync_mdr_task(str(uuid.uuid4()))
 
 if __name__ == "__main__":
+    _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
     mdr_sync_flow.from_source(
-        source="/mnt/shared-data/ram-user/Jackdaw/prefect-worker/scripts",
-        entrypoint="etl/flows/sync_doc_data.py:mdr_sync_flow",
+        source=str(_REPO_ROOT),
+        entrypoint="etl/flows/import_doc_data_deploy.py:mdr_sync_flow",
     ).deploy(
         name="doc-sync-deployment",
         work_pool_name="default-agent-pool",

@@ -30,9 +30,12 @@ from ui.common import (  # noqa: E402
 from ui.version import version_string  # noqa: E402
 from ui.pages import (   # noqa: E402
     home, tag_register, reports, tag_history, validation,
-    llm_chat, crs_assistant, services,
-    etl_import, eis_export, help as help_page, feedback,
+    eis_management, help as help_page, feedback,
 )
+from ui.pages import _llm_chat as llm_chat          # noqa: E402  hidden — Phase 3
+from ui.pages import _crs_assistant as crs_assistant # noqa: E402  hidden — Phase 2
+from ui.pages import _etl_import as etl_import       # noqa: E402  hidden — via Home Quick Sync
+from ui.pages import _services as services           # noqa: E402  hidden — duplicates Home admin block
 
 st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
 
@@ -87,7 +90,7 @@ VIEWER_PAGES: dict = {
 }
 
 ADMIN_EXTRA_PAGES: dict = {
-    "📤  EIS Export":    eis_export,
+    "📤  EIS Management": eis_management,
     # "📥  ETL Import":  etl_import,   # hidden — trigger via Home Quick Sync
     # "🔗  Services":    services,     # hidden — duplicates Home admin block
 }

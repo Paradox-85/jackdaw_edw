@@ -165,9 +165,10 @@ def properties_sync_flow():
     sync_properties_task(rid)
 
 if __name__ == "__main__":
+    _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
     properties_sync_flow.from_source(
-        source="/mnt/shared-data/ram-user/Jackdaw/prefect-worker/scripts",
-        entrypoint="etl/flows/sync_prop_data.py:properties_sync_flow",
+        source=str(_REPO_ROOT),
+        entrypoint="etl/flows/import_prop_data_deploy.py:properties_sync_flow",
     ).deploy(
         name="prop-sync-deployment",
         work_pool_name="default-agent-pool",

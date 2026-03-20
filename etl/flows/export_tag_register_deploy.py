@@ -169,6 +169,11 @@ def export_tag_register_flow(
 
 
 if __name__ == "__main__":
-    import os
-    os.chdir(Path(__file__).resolve().parent.parent)
-    export_tag_register_flow.serve(name="export-tag-register-deployment")
+    _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+    export_tag_register_flow.from_source(
+        source=str(_REPO_ROOT),
+        entrypoint="etl/flows/export_tag_register_deploy.py:export_tag_register_flow",
+    ).deploy(
+        name="export-tag-register-deployment",
+        work_pool_name="default-agent-pool",
+    )

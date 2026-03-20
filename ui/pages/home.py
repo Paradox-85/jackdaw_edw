@@ -146,7 +146,16 @@ def render() -> None:
         # Last 5 sync runs from audit log
         df_recent = db_read("""
             SELECT target_table AS "Table",
-                   TO_CHAR(start_time,'YYYY-MM-DD HH24:MI') AS "Started",
+                   COALESCE(
+                       NULLIF(
+                           REGEXP_REPLACE(
+                               COALESCE(source_file, ''),
+                               '^.*?(\d{4}-\d{2}-\d{2}).*$', '\1'
+                           ),
+                           COALESCE(source_file, '')
+                       ),
+                       TO_CHAR(end_time, 'YYYY-MM-DD')
+                   )              AS "File Date",
                    count_created  AS "New",
                    count_updated  AS "Updated",
                    count_deleted  AS "Deleted",
@@ -299,30 +308,32 @@ def render() -> None:
     else:
         st.caption("No timeline data in audit_core.tag_status_history.")
 
-    # ── Tag Name Changes — Last 30 Days ───────────────────────────────────────
-    section("Tag Name Changes — Last 30 Days")
-    df_name_changes = db_read("""
-        WITH ranked AS (
+    # ── Tag Name Changes (all time) ────────────────────────────────────────────
+    section("Tag Name Changes")
+    with st.expander("🔄 Tag Name Changes — all time (click to expand)", expanded=False):
+        df_name_changes = db_read("""
+            WITH ranked AS (
+                SELECT
+                    h.source_id,
+                    h.tag_name,
+                    h.sync_timestamp,
+                    LAG(h.tag_name) OVER (PARTITION BY h.source_id ORDER BY h.sync_timestamp) AS prev_name
+                FROM audit_core.tag_status_history h
+                JOIN project_core.tag t ON t.source_id = h.source_id
+                WHERE t.object_status = 'Active'
+            )
             SELECT
-                h.source_id,
-                h.tag_name,
-                h.sync_timestamp,
-                LAG(h.tag_name) OVER (PARTITION BY h.source_id ORDER BY h.sync_timestamp) AS prev_name
-            FROM audit_core.tag_status_history h
-            WHERE h.sync_timestamp >= NOW() - INTERVAL '30 days'
-        )
-        SELECT
-            source_id                                      AS "Source ID",
-            prev_name                                      AS "Name (was)",
-            tag_name                                       AS "Name (now)",
-            TO_CHAR(sync_timestamp, 'YYYY-MM-DD HH24:MI') AS "Changed At"
-        FROM ranked
-        WHERE prev_name IS NOT NULL
-          AND prev_name != tag_name
-        ORDER BY sync_timestamp DESC
-    """)
-    if df_name_changes.empty:
-        st.success("✓ No tag name changes detected in the last 30 days.")
-    else:
-        st.warning(f"⚠ {len(df_name_changes)} tag name change(s) detected")
-        st.dataframe(df_name_changes, use_container_width=True, hide_index=True)
+                source_id                                      AS "Source ID",
+                prev_name                                      AS "Name (was)",
+                tag_name                                       AS "Name (now)",
+                TO_CHAR(sync_timestamp, 'YYYY-MM-DD HH24:MI') AS "Changed At"
+            FROM ranked
+            WHERE prev_name IS NOT NULL
+              AND prev_name != tag_name
+            ORDER BY sync_timestamp DESC
+        """)
+        if df_name_changes.empty:
+            st.success("✓ No tag name changes found.")
+        else:
+            st.warning(f"⚠ {len(df_name_changes)} tag name change(s) detected")
+            st.dataframe(df_name_changes, use_container_width=True, hide_index=True)

@@ -129,6 +129,11 @@ def export_process_unit_flow(
 
 
 if __name__ == "__main__":
-    import os
-    os.chdir(Path(__file__).resolve().parent.parent)
-    export_process_unit_flow.serve(name="export-process-unit-deployment")
+    _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+    export_process_unit_flow.from_source(
+        source=str(_REPO_ROOT),
+        entrypoint="etl/flows/export_process_unit_deploy.py:export_process_unit_flow",
+    ).deploy(
+        name="export-process-unit-deployment",
+        work_pool_name="default-agent-pool",
+    )

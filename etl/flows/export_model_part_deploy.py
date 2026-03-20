@@ -136,6 +136,11 @@ def export_model_part_flow(
 
 
 if __name__ == "__main__":
-    import os
-    os.chdir(Path(__file__).resolve().parent.parent)
-    export_model_part_flow.serve(name="export-model-part-deployment")
+    _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+    export_model_part_flow.from_source(
+        source=str(_REPO_ROOT),
+        entrypoint="etl/flows/export_model_part_deploy.py:export_model_part_flow",
+    ).deploy(
+        name="export-model-part-deployment",
+        work_pool_name="default-agent-pool",
+    )

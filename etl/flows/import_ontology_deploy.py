@@ -416,9 +416,10 @@ def ontology_master_flow() -> None:
 
 
 if __name__ == "__main__":
+    _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
     ontology_master_flow.from_source(
-        source="/mnt/shared-data/ram-user/Jackdaw/prefect-worker/scripts",
-        entrypoint="etl/flows/seed_ontology.py:ontology_master_flow",
+        source=str(_REPO_ROOT),
+        entrypoint="etl/flows/import_ontology_deploy.py:ontology_master_flow",
     ).deploy(
         name="ontology-seeder",
         work_pool_name="default-agent-pool",

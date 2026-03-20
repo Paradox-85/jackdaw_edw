@@ -413,9 +413,10 @@ def tag_sync_flow():
     build_hierarchy()
 
 if __name__ == "__main__":
+    _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
     tag_sync_flow.from_source(
-        source="/mnt/shared-data/ram-user/Jackdaw/prefect-worker/scripts",
-        entrypoint="etl/flows/sync_tag_data.py:tag_sync_flow",
+        source=str(_REPO_ROOT),
+        entrypoint="etl/flows/import_tag_data_deploy.py:tag_sync_flow",
     ).deploy(
         name="tag-sync-deployment",
         work_pool_name="default-agent-pool",

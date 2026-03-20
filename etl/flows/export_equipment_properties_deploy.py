@@ -158,6 +158,11 @@ def export_equipment_properties_flow(
 
 
 if __name__ == "__main__":
-    import os
-    os.chdir(Path(__file__).resolve().parent.parent)
-    export_equipment_properties_flow.serve(name="export-equipment-properties-deployment")
+    _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+    export_equipment_properties_flow.from_source(
+        source=str(_REPO_ROOT),
+        entrypoint="etl/flows/export_equipment_properties_deploy.py:export_equipment_properties_flow",
+    ).deploy(
+        name="export-equipment-properties-deployment",
+        work_pool_name="default-agent-pool",
+    )
