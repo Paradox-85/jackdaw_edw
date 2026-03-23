@@ -130,11 +130,35 @@ def render() -> None:
             "CANCELLED": "#8B949E",
         }
         color = _STATE_COLOR.get(state, "#8B949E")
-        progress_val = 1.0 if is_terminal else 0.5
-        st.progress(
-            progress_val,
-            text=f'<span style="color:{color};font-weight:600">{state}</span> — {run["name"]}',
+
+        # Steps completed so far (based on Prefect logs order)
+        _STEPS = [
+            "tag_register", "equipment_register", "model_part",
+            "tag_connections", "purchase_order", "area_register",
+            "process_unit", "tag_properties", "equipment_properties",
+            "tag_class_properties", "document_crossref",
+        ]
+        _TOTAL = len(_STEPS)
+
+        if is_terminal:
+            progress_val = 1.0
+            steps_done = _TOTAL if state == "COMPLETED" else "?"
+            step_label = f"{_TOTAL}/{_TOTAL}" if state == "COMPLETED" else "failed"
+        else:
+            progress_val = 0.05  # indeterminate — show something moving
+            step_label = "running…"
+
+        st.markdown(
+            f'<span style="color:{color};font-weight:600;font-size:14px">'
+            f'● {state}</span> &nbsp; <span style="color:#8B949E">{run["name"]}</span>',
+            unsafe_allow_html=True,
         )
+        st.progress(progress_val, text=f"Steps: {step_label} / {_TOTAL}")
+
+        if state == "FAILED" or state == "CRASHED":
+            st.error("Export failed — check Prefect logs for details.")
+        elif state == "CANCELLED":
+            st.warning("Export was cancelled.")
 
         if not is_terminal:
             time.sleep(5)

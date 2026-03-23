@@ -138,7 +138,7 @@ WHERE m.mapping_status = 'Active'
   AND t.object_status = 'Active'
   AND UPPER(COALESCE(t.tag_status, '')) NOT IN ('VOID', '')
   AND t.process_unit_id IS NOT NULL
-ORDER BY d.doc_number, pu.code
+ORDER BY DOCUMENT_NUMBER, PROCESS_UNIT_CODE
 """
 
 _FILE_410 = "JDAW-KVE-E-JA-6944-00001-018-{revision}.CSV"
