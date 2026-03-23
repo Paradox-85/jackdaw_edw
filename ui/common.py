@@ -277,6 +277,10 @@ def trigger_deployment(name: str, params: dict) -> dict:
     return prefect_post(f"/deployments/{dep_id}/create_flow_run",
                         {"parameters": params, "state": {"type": "SCHEDULED"}})
 
+def get_flow_run_status(run_id: str) -> dict | None:
+    """Return Prefect flow run dict for a single run ID, or None on failure."""
+    return prefect_get(f"/flow-runs/{run_id}")
+
 def recent_flow_runs(limit: int = 10) -> pd.DataFrame:
     data = prefect_post("/flow_runs/filter", {
         "limit": limit, "sort": "START_TIME_DESC",

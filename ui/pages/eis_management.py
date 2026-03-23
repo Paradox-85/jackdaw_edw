@@ -4,11 +4,13 @@ ui/pages/eis_management.py — EIS Management. ADMIN ONLY.
 Sections:
   1. Export Flows — live list from Prefect API (export-* pattern)
   2. Run Export — select one or all flows, set revision, trigger via Prefect
-  3. Download Exported Files — browse and download files from EIS_EXPORT_DIR
+  3. Export Progress — real-time polling of triggered Prefect flow runs
+  4. Download Exported Files — browse and download files from EIS_EXPORT_DIR
 """
 from __future__ import annotations
 import io as _io
 import re
+import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -16,7 +18,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 from ui.common import (
-    EIS_EXPORT_DIR, log, render_log,
+    EIS_EXPORT_DIR, get_flow_run_status, log, render_log,
     require_admin, section, trigger_deployment, prefect_post,
 )
 
@@ -160,6 +162,9 @@ EXPORT_FLOWS = [
 
 _REV_RE = re.compile(r"^[A-Z]\d{2}$")
 
+# Flow run states that require no further polling
+_TERMINAL_STATES = {"COMPLETED", "FAILED", "CRASHED", "CANCELLED"}
+
 
 def _fetch_export_deployments() -> pd.DataFrame:
     """Query Prefect API for all export-* deployments."""
@@ -178,6 +183,25 @@ def _fetch_export_deployments() -> pd.DataFrame:
             "Updated":    last_run,
         })
     return pd.DataFrame(rows)
+
+
+def _poll_runs() -> list[dict]:
+    """
+    Refresh state for all tracked export runs from Prefect.
+
+    Skips polling for runs already in a terminal state to avoid
+    unnecessary API calls on completed exports.
+    """
+    runs = st.session_state.get("export_runs", [])
+    updated = []
+    for r in runs:
+        if r["run_id"] and r["state"] not in _TERMINAL_STATES:
+            info = get_flow_run_status(r["run_id"])
+            if info:
+                r = {**r, "state": (info.get("state") or {}).get("type", r["state"])}
+        updated.append(r)
+    st.session_state["export_runs"] = updated
+    return updated
 
 
 def render() -> None:
@@ -234,16 +258,70 @@ def render() -> None:
                      disabled=bool(rev_err), key="btn_eis_run"):
             _trigger_flows(selected_flows, rev)
 
+    # ── Export Progress ───────────────────────────────────────────────────────
+    section("Export Progress")
+    runs = _poll_runs()
+
+    if not runs:
+        st.caption("No active export. Trigger a run above.")
+    else:
+        done  = sum(1 for r in runs if r["state"] in _TERMINAL_STATES)
+        total = len(runs)
+        failed = sum(1 for r in runs if r["state"] in {"FAILED", "CRASHED"})
+
+        progress_text = f"{done} / {total} flows finished"
+        if failed:
+            progress_text += f" · {failed} failed"
+        st.progress(done / total if total else 0, text=progress_text)
+
+        # Per-flow status rows — colour-coded via badge HTML
+        _STATE_COLOR = {
+            "COMPLETED": "#3FB950",
+            "FAILED":    "#F85149",
+            "CRASHED":   "#F85149",
+            "RUNNING":   "#1976D2",
+            "SCHEDULED": "#D29922",
+            "CANCELLED": "#8B949E",
+        }
+        rows_html = []
+        for r in runs:
+            color = _STATE_COLOR.get(r["state"], "#8B949E")
+            state_html = (
+                f'<span style="color:{color};font-weight:600;font-size:11px">'
+                f'{r["state"]}</span>'
+            )
+            rows_html.append(
+                f'<tr><td style="padding:4px 12px;font-size:12px;color:#C9D1D9">{r["name"]}</td>'
+                f'<td style="padding:4px 12px">{state_html}</td></tr>'
+            )
+        table_html = (
+            '<table style="width:100%;border-collapse:collapse">'
+            + "".join(rows_html)
+            + "</table>"
+        )
+        st.markdown(table_html, unsafe_allow_html=True)
+
+        # Auto-rerun every 5 s while any flow is still in-progress
+        if done < total:
+            time.sleep(5)
+            st.rerun()
+
     # ── Download Exported Files ───────────────────────────────────────────────
     section("Download Exported Files")
-    last = st.session_state.get("last_export")
-    if not last:
-        st.caption("Запустите экспорт для получения файлов.")
+    last  = st.session_state.get("last_export")
+    runs  = st.session_state.get("export_runs", [])
+    any_completed = any(r["state"] == "COMPLETED" for r in runs)
+
+    if not last or not any_completed:
+        if last and runs:
+            st.caption("Waiting for flows to complete before download is available.")
+        else:
+            st.caption("Run an export to generate files.")
     else:
         export_path = Path(last["folder"])
         rev = last["revision"]
         triggered_at = last["triggered_at"].strftime("%Y-%m-%d %H:%M")
-        st.caption(f"Ревизия `{rev}` · Запущено: {triggered_at} · `{last['folder']}`")
+        st.caption(f"Revision `{rev}` · Triggered: {triggered_at} · `{last['folder']}`")
         if export_path.exists():
             files = sorted(export_path.glob("*.CSV"), key=lambda f: f.stat().st_mtime, reverse=True)
             if files:
@@ -272,9 +350,9 @@ def render() -> None:
                         key=f"dl_{fpath.name}",
                     )
             else:
-                st.info("Файлы ещё не сгенерированы — потоки запущены, ожидайте завершения.")
+                st.info("Files not yet written — flows are running, please wait.")
         else:
-            st.info("Папка ещё не создана — потоки запущены, ожидайте завершения.")
+            st.info("Output folder not yet created — flows are running, please wait.")
 
     # ── Execution Log ─────────────────────────────────────────────────────────
     section("Execution Log")
@@ -288,17 +366,19 @@ def _trigger_flows(flows: list[dict], rev: str) -> None:
     subdir = f"{rev}/{datetime.now():%Y%m%d_%H%M}"
     output_dir = str(Path(EIS_EXPORT_DIR) / subdir)
     st.session_state["last_export"] = {
-        "revision": rev,
-        "folder": output_dir,
+        "revision":     rev,
+        "folder":       output_dir,
         "triggered_at": datetime.now(),
     }
+    runs: list[dict] = []
     for f in flows:
         params: dict = {"doc_revision": rev, "output_dir": output_dir}
         log("info", f"Triggering: {f['name']} rev={rev} → {subdir}", "eis_log")
         result = trigger_deployment(f["deployment"], params)
         if result and "id" in result:
+            runs.append({"name": f["name"], "run_id": result["id"], "state": "SCHEDULED"})
             log("ok", f"Scheduled — ID: {result['id'][:8]}", "eis_log")
-            st.success(f"✓ {f['name']} · `{result['id'][:8]}`")
         else:
+            runs.append({"name": f["name"], "run_id": None, "state": "FAILED"})
             log("err", str(result), "eis_log")
-            st.error(str(result))
+    st.session_state["export_runs"] = runs
