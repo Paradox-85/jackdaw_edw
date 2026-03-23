@@ -77,6 +77,7 @@ def _poll_run() -> dict | None:
         return None
     if run.get("run_id") and run["state"] not in _TERMINAL_STATES:
         info = get_flow_run_status(run["run_id"])
+        st.sidebar.write("RAW API response:", info)
         if info:
             state_obj  = info.get("state") or {}
             state_type = state_obj.get("type", run["state"]).upper()
