@@ -14,7 +14,7 @@
 2. **Before ANY schema/architecture change** — validate against live DB via pgedge MCP
 3. **After any schema change** — update `schema.sql` immediately (same commit)
 4. **Language** — ENGLISH ONLY: all code, SQL, comments, YAML, docs
-5. **Responses to user** - RUSSIAN ONLY
+5. **Responses to user in plans** - RUSSIAN ONLY
 6. **Secrets** — never hardcode: use `os.getenv("DATABASE_URL")` or `.env` (never commit)
 
 ---

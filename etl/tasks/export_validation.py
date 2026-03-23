@@ -400,7 +400,11 @@ def apply_builtin_fixes(
                     or idx
                 ),
                 "column_name":    col_spec if col_spec != "*" else None,
-                "original_value": str(fixed_df.at[idx, col_spec])[:200] if col_spec != "*" else None,
+                "original_value": (
+                    str(fixed_df.at[idx, col_spec])[:200]
+                    if col_spec != "*" and col_spec in fixed_df.columns
+                    else None
+                ),
                 "detail":         f"Rule {rule_code!r} violated at row {idx}",
             }
             for idx in violating_rows.index
