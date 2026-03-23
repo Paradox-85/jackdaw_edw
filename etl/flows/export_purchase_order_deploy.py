@@ -139,6 +139,6 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/export_purchase_order_deploy.py:export_purchase_order_flow",
     ).deploy(
-        name="export-purchase-order-deployment",
+        name="export-purchase-order-deploy",
         work_pool_name="default-agent-pool",
     )

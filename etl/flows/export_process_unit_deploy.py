@@ -138,6 +138,6 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/export_process_unit_deploy.py:export_process_unit_flow",
     ).deploy(
-        name="export-process-unit-deployment",
+        name="export-process-unit-deploy",
         work_pool_name="default-agent-pool",
     )

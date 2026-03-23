@@ -13,8 +13,19 @@
       "type": "http",
       "url": "https://ai-db.adzv-pt.dev/mcp/v1",
       "headers": {
-        "Authorization": "Bearer VMTcjQkxhb6UgGG3wtO70imRyxXmh9LeHFuKPY2zqoA="
+        "Authorization": "Bearer ShZzR1FkhTA7ggZRmdF8dQAcfIaD4LHs7HY88W7al5U="
       }
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@playwright/mcp@0.0.68"
+      ],
+      "env": {}
     }
   }
 }

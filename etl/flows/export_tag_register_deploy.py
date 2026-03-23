@@ -178,6 +178,6 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/export_tag_register_deploy.py:export_tag_register_flow",
     ).deploy(
-        name="export-tag-register-deployment",
+        name="export-tag-register-deploy",
         work_pool_name="default-agent-pool",
     )

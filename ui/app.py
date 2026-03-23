@@ -1,11 +1,11 @@
 """
-app.py — Jackdaw EDW Control Center v0.3.2
+app.py — Jackdaw EDW Control Center v1.0.0
 
 Auth: DB-backed login gate (app_core.ui_user, bcrypt, viewer/admin roles).
       All users must authenticate before accessing any page.
 
 Two modes:
-  Viewer mode  — Home, Tag Register, Reports, Tag History, Validation, Help, Feedback
+  Viewer mode  — Home
   Admin  mode  — + EIS Management
 
 Architecture notes:
@@ -13,7 +13,8 @@ Architecture notes:
   - Navigation uses on_change callback to fix single-click navigation
   - DB access via ui/common.py (viewer role by default, admin role for writes)
   - Prefect API called only from admin pages
-  - llm_chat, crs_assistant, etl_import, services preserved in ui/_hidden/ (Phase 2/3)
+  - tag_register, reports, tag_history, validation, help, feedback preserved in ui/_hidden/ (Phase 2)
+  - llm_chat, crs_assistant, etl_import, services preserved in ui/_hidden/ (Phase 3)
 """
 import streamlit as st
 
@@ -29,10 +30,10 @@ from ui.common import (  # noqa: E402
 )
 from ui.version import version_string  # noqa: E402
 from ui.pages import (   # noqa: E402
-    home, tag_register, reports, tag_history, validation,
-    eis_management, help as help_page, feedback,
+    home, eis_management,
 )
-# llm_chat, crs_assistant, etl_import, services — moved to ui/_hidden/, Phase 2/3
+# tag_register, reports, tag_history, validation, help, feedback — moved to ui/_hidden/, Phase 2
+# llm_chat, crs_assistant, etl_import, services — moved to ui/_hidden/, Phase 3
 
 st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
 
@@ -75,15 +76,15 @@ if not st.session_state.get("authenticated"):
 
 # ─── Page registry (must be defined before sidebar) ───────────────────────────
 VIEWER_PAGES: dict = {
-    "🏠  Home":          home,
-    "🗂  Tag Register":  tag_register,
-    "📊  Reports":       reports,
-    "📋  Tag History":   tag_history,
-    "✅  Validation":    validation,
-    # "🤖  LLM Chat":      llm_chat,       # hidden — Phase 3
-    # "📎  CRS Assistant": crs_assistant,  # hidden — Phase 2 (part of EIS Management)
-    "❓  Help":          help_page,
-    "💬  Feedback":      feedback,
+    "🏠  Home": home,
+    # "🗂  Tag Register":  tag_register,  # hidden — Phase 2
+    # "📊  Reports":       reports,       # hidden — Phase 2
+    # "📋  Tag History":   tag_history,   # hidden — Phase 2
+    # "✅  Validation":    validation,    # hidden — Phase 2
+    # "❓  Help":          help_page,     # hidden — Phase 2
+    # "💬  Feedback":      feedback,      # hidden — Phase 2
+    # "🤖  LLM Chat":      llm_chat,      # hidden — Phase 3
+    # "📎  CRS Assistant": crs_assistant, # hidden — Phase 3
 }
 
 ADMIN_EXTRA_PAGES: dict = {
@@ -149,19 +150,6 @@ with st.sidebar:
       <span style="color:#444;font-family:monospace">{version_string()}</span>
     </div>
     """, unsafe_allow_html=True)
-
-# ─── Top-right icon bar (Help / Feedback shortcuts) ───────────────────────────
-_, col_icons = st.columns([8, 1])
-with col_icons:
-    icon_col1, icon_col2 = st.columns(2)
-    with icon_col1:
-        if st.button("❓", key="top_help", help="Help & Guidelines"):
-            st.session_state["page"] = "❓  Help"
-            st.rerun()
-    with icon_col2:
-        if st.button("💬", key="top_feedback", help="Submit Feedback"):
-            st.session_state["page"] = "💬  Feedback"
-            st.rerun()
 
 # ─── Render current page ──────────────────────────────────────────────────────
 ALL_PAGES[st.session_state["page"]].render()

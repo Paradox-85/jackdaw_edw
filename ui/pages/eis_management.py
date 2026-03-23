@@ -236,41 +236,45 @@ def render() -> None:
 
     # ── Download Exported Files ───────────────────────────────────────────────
     section("Download Exported Files")
-    export_path = Path(EIS_EXPORT_DIR)
-    if export_path.exists():
-        files = sorted(export_path.glob("*.CSV"), key=lambda f: f.stat().st_mtime, reverse=True)
-        files += sorted(export_path.glob("*.xlsx"), key=lambda f: f.stat().st_mtime, reverse=True)
-        if files:
-            st.caption(f"{len(files)} file(s) in `{EIS_EXPORT_DIR}`")
-            # Download All as ZIP
-            zip_buf = _io.BytesIO()
-            with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                for fpath in files:
-                    zf.write(fpath, fpath.name)
-            col_zip, _ = st.columns([2, 6])
-            col_zip.download_button(
-                "⬇ Download All (ZIP)",
-                data=zip_buf.getvalue(),
-                file_name=f"eis_export_{datetime.now():%Y%m%d_%H%M}.zip",
-                mime="application/zip",
-                key="dl_all_zip",
-            )
-            for fpath in files[:20]:
-                col_name, col_dl = st.columns([5, 1])
-                col_name.caption(
-                    f"`{fpath.name}` · {fpath.stat().st_size // 1024} KB · "
-                    f"{datetime.fromtimestamp(fpath.stat().st_mtime):%Y-%m-%d %H:%M}"
-                )
-                col_dl.download_button(
-                    "⬇",
-                    data=fpath.read_bytes(),
-                    file_name=fpath.name,
-                    key=f"dl_{fpath.name}",
-                )
-        else:
-            st.caption("No exported files found in export directory.")
+    last = st.session_state.get("last_export")
+    if not last:
+        st.caption("Запустите экспорт для получения файлов.")
     else:
-        st.warning(f"Export directory not mounted: `{EIS_EXPORT_DIR}`")
+        export_path = Path(last["folder"])
+        rev = last["revision"]
+        triggered_at = last["triggered_at"].strftime("%Y-%m-%d %H:%M")
+        st.caption(f"Ревизия `{rev}` · Запущено: {triggered_at} · `{last['folder']}`")
+        if export_path.exists():
+            files = sorted(export_path.glob("*.CSV"), key=lambda f: f.stat().st_mtime, reverse=True)
+            if files:
+                zip_buf = _io.BytesIO()
+                with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for fpath in files:
+                        zf.write(fpath, fpath.name)
+                col_zip, _ = st.columns([2, 6])
+                col_zip.download_button(
+                    "⬇ Download All (ZIP)",
+                    data=zip_buf.getvalue(),
+                    file_name=f"eis_export_{rev}_{datetime.now():%Y%m%d_%H%M}.zip",
+                    mime="application/zip",
+                    key="dl_all_zip",
+                )
+                for fpath in files:
+                    col_name, col_dl = st.columns([5, 1])
+                    col_name.caption(
+                        f"`{fpath.name}` · {fpath.stat().st_size // 1024} KB · "
+                        f"{datetime.fromtimestamp(fpath.stat().st_mtime):%Y-%m-%d %H:%M}"
+                    )
+                    col_dl.download_button(
+                        "⬇",
+                        data=fpath.read_bytes(),
+                        file_name=fpath.name,
+                        key=f"dl_{fpath.name}",
+                    )
+            else:
+                st.info("Файлы ещё не сгенерированы — потоки запущены, ожидайте завершения.")
+        else:
+            st.info("Папка ещё не создана — потоки запущены, ожидайте завершения.")
 
     # ── Execution Log ─────────────────────────────────────────────────────────
     section("Execution Log")
@@ -281,9 +285,16 @@ def render() -> None:
 
 
 def _trigger_flows(flows: list[dict], rev: str) -> None:
+    subdir = f"{rev}/{datetime.now():%Y%m%d_%H%M}"
+    output_dir = str(Path(EIS_EXPORT_DIR) / subdir)
+    st.session_state["last_export"] = {
+        "revision": rev,
+        "folder": output_dir,
+        "triggered_at": datetime.now(),
+    }
     for f in flows:
-        params: dict = {"doc_revision": rev}
-        log("info", f"Triggering: {f['name']} rev={rev}", "eis_log")
+        params: dict = {"doc_revision": rev, "output_dir": output_dir}
+        log("info", f"Triggering: {f['name']} rev={rev} → {subdir}", "eis_log")
         result = trigger_deployment(f["deployment"], params)
         if result and "id" in result:
             log("ok", f"Scheduled — ID: {result['id'][:8]}", "eis_log")

@@ -8,7 +8,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-__version__ = "0.3.2"
+__version__ = "1.0.0"
 
 
 def _git(args: list[str]) -> str:

@@ -216,3 +216,29 @@ edw/
 - [ ] **Error handling** with logging via `get_run_logger()` (not `print()`)
 
 ---
+
+## UI/UX STANDARDS (React Frontend)
+<!-- Triggers: component, page, tsx, frontend, UI, React, Next, table, sidebar -->
+
+Framework: Next.js 15 App Router + TypeScript + shadcn/ui + Tailwind CSS
+Tables: TanStack Table v8 — useReactTable() API, server-side pagination
+Data: React Query v5 — staleTime:60_000, gcTime:300_000, retry:1
+Icons: Lucide React only
+
+ALWAYS read @docs/design_system.md before UI work
+ALWAYS use /new-ui-page command for new pages
+NEVER call Prefect API from React — FastAPI proxies it
+NEVER show admin elements to viewer role (even hidden)
+NEVER inline hex colors — CSS variables only
+
+Tailwind version: check if v3 (tailwind.config.ts) or v4 (@theme inline in globals.css)
+If v4: add design_system.md colors as CSS variables in @theme inline block
+
+After every page: playwright screenshot → verify vs design_system.md → fix deviations
+```
+
+### 2.7 `.gitignore` — add
+```
+.claude/playwright-auth.json
+
+---

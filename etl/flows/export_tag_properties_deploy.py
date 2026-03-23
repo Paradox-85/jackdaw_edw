@@ -167,6 +167,6 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/export_tag_properties_deploy.py:export_tag_properties_flow",
     ).deploy(
-        name="export-tag-properties-deployment",
+        name="export-tag-properties-deploy",
         work_pool_name="default-agent-pool",
     )
