@@ -254,12 +254,13 @@ def db_write(sql: str, params: dict | None = None) -> bool:
 
 # ─── Prefect helpers ──────────────────────────────────────────────────────────
 def prefect_get(path: str, timeout: int = 10):
+    """GET request to Prefect API. Returns parsed JSON or None on failure."""
     try:
         r = httpx.get(f"{PREFECT_URL}{path}", timeout=timeout)
         r.raise_for_status()
         return r.json()
     except httpx.TimeoutException:
-        return {"error": f"Timeout reaching Prefect API: {path}"}
+        return {"error": f"Timeout: {path}"}
     except Exception as exc:
         return {"error": str(exc)}
 
@@ -281,27 +282,25 @@ def trigger_deployment(name: str, params: dict) -> dict:
                         {"parameters": params, "state": {"type": "SCHEDULED"}})
 
 def get_flow_run_status(run_id: str) -> dict | None:
-    """Return Prefect flow run dict for a single run ID, or None on failure.
-
-    Normalises state fields: Prefect returns state_type/state_name at the top
-    level; this ensures the nested ``state`` object always has ``type`` and
-    ``name`` populated so callers can rely on a single access pattern.
+    """
+    Return normalised Prefect flow run dict.
+    Guarantees data['state']['type'] is always populated.
     """
     data = prefect_get(f"/flow-runs/{run_id}", timeout=10)
     if not data or "error" in data:
         return None
 
-    if not data.get("state"):
-        state_type = data.get("state_type", "UNKNOWN")
-        state_name = data.get("state_name", state_type)
-        data["state"] = {"type": state_type, "name": state_name}
-    else:
-        state_obj = data["state"]
-        if not state_obj.get("type"):
-            state_obj["type"] = data.get("state_type", "UNKNOWN")
-        if not state_obj.get("name"):
-            state_obj["name"] = data.get("state_name", state_obj["type"])
+    top_type = (data.get("state_type") or "").upper() or None
+    top_name = data.get("state_name") or top_type
 
+    state_obj = data.get("state") or {}
+    nested_type = (state_obj.get("type") or "").upper() or None
+    nested_name = state_obj.get("name") or nested_type
+
+    resolved_type = nested_type or top_type or "UNKNOWN"
+    resolved_name = nested_name or top_name or resolved_type
+
+    data["state"] = {"type": resolved_type, "name": resolved_name}
     return data
 
 def recent_flow_runs(limit: int = 10) -> pd.DataFrame:
