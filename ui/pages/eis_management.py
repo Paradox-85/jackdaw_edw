@@ -79,12 +79,11 @@ def _poll_run() -> dict | None:
         info = get_flow_run_status(run["run_id"])
         if info:
             state_obj  = info.get("state") or {}
-            state_type = state_obj.get("type", run["state"])
-            state_name = state_obj.get("name", state_type)  # e.g. "Retrying", "Late"
+            state_type = state_obj.get("type", run["state"]).upper()
+            state_name = state_obj.get("name", state_type)
             run = {**run, "state": state_type, "state_name": state_name}
             st.session_state["export_run"] = run
     return run
-
 
 def _fetch_child_runs(parent_run_id: str) -> list[dict]:
     """Query child flow runs for real step-level progress."""

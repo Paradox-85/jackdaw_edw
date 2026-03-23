@@ -253,12 +253,15 @@ def db_write(sql: str, params: dict | None = None) -> bool:
         return False
 
 # ─── Prefect helpers ──────────────────────────────────────────────────────────
-def prefect_get(path: str):
+def prefect_get(path: str, timeout: int = 10):
     try:
-        r = httpx.get(f"{PREFECT_URL}{path}", timeout=5)
-        r.raise_for_status(); return r.json()
-    except Exception:
-        return None
+        r = httpx.get(f"{PREFECT_URL}{path}", timeout=timeout)
+        r.raise_for_status()
+        return r.json()
+    except httpx.TimeoutException:
+        return {"error": f"Timeout reaching Prefect API: {path}"}
+    except Exception as exc:
+        return {"error": str(exc)}
 
 def prefect_post(path: str, payload: dict):
     try:
@@ -278,8 +281,28 @@ def trigger_deployment(name: str, params: dict) -> dict:
                         {"parameters": params, "state": {"type": "SCHEDULED"}})
 
 def get_flow_run_status(run_id: str) -> dict | None:
-    """Return Prefect flow run dict for a single run ID, or None on failure."""
-    return prefect_get(f"/flow-runs/{run_id}")
+    """Return Prefect flow run dict for a single run ID, or None on failure.
+
+    Normalises state fields: Prefect returns state_type/state_name at the top
+    level; this ensures the nested ``state`` object always has ``type`` and
+    ``name`` populated so callers can rely on a single access pattern.
+    """
+    data = prefect_get(f"/flow-runs/{run_id}", timeout=10)
+    if not data or "error" in data:
+        return None
+
+    if not data.get("state"):
+        state_type = data.get("state_type", "UNKNOWN")
+        state_name = data.get("state_name", state_type)
+        data["state"] = {"type": state_type, "name": state_name}
+    else:
+        state_obj = data["state"]
+        if not state_obj.get("type"):
+            state_obj["type"] = data.get("state_type", "UNKNOWN")
+        if not state_obj.get("name"):
+            state_obj["name"] = data.get("state_name", state_obj["type"])
+
+    return data
 
 def recent_flow_runs(limit: int = 10) -> pd.DataFrame:
     data = prefect_post("/flow_runs/filter", {
