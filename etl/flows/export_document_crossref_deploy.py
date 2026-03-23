@@ -173,7 +173,7 @@ WHERE m.mapping_status = 'Active'
   AND t.object_status = 'Active'
   AND UPPER(COALESCE(t.tag_status, '')) NOT IN ('VOID', '')
   AND t.area_id IS NOT NULL
-ORDER BY d.doc_number, a.code
+ORDER BY DOCUMENT_NUMBER, AREA_CODE
 """
 
 _FILE_411 = "JDAW-KVE-E-JA-6944-00001-017-{revision}.CSV"
@@ -282,7 +282,7 @@ WHERE m.mapping_status = 'Active'
   AND UPPER(COALESCE(d.status, '')) != 'CAN'
   AND t.object_status = 'Active'
   AND UPPER(COALESCE(t.tag_status, '')) NOT IN ('VOID', '')
-ORDER BY d.doc_number, mp.code
+ORDER BY DOCUMENT_NUMBER, MODEL_PART_CODE
 """
 
 _FILE_414 = "JDAW-KVE-E-JA-6944-00001-020-{revision}.CSV"
