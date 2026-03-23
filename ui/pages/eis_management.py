@@ -188,18 +188,23 @@ def render() -> None:
         elif state_name == "Late":
             st.warning("Run is late — check that workers are healthy and polling.")
 
-        if not is_terminal and state not in _WARN_STATES:
+        if is_terminal:
+            # One final rerun to re-render the Download section with updated state
+            if not st.session_state.get("_eis_final_rerun_done"):
+                st.session_state["_eis_final_rerun_done"] = True
+                st.rerun()
+        elif state not in _WARN_STATES:
             time.sleep(5)
             st.rerun()
 
     # ── Download Exported Files ───────────────────────────────────────────────
     section("Download Exported Files")
-    last = st.session_state.get("last_export")
-    run  = st.session_state.get("export_run")
-    any_completed = run is not None and run["state"] == "COMPLETED"
+    last        = st.session_state.get("last_export")
+    current_run = st.session_state.get("export_run")
+    any_completed = current_run is not None and current_run["state"] == "COMPLETED"
 
     if not last or not any_completed:
-        if last and run:
+        if last and current_run:
             st.caption("Waiting for export to complete before download is available.")
         else:
             st.caption("Run an export to generate files.")
@@ -250,6 +255,7 @@ def render() -> None:
 
 def _trigger_export(rev: str) -> None:
     """Trigger the master EIS package export deployment."""
+    st.session_state.pop("_eis_final_rerun_done", None)  # reset on new run
     log("info", f"Triggering EIS Full Package Export rev={rev}", "eis_log")
     result = trigger_deployment(_EIS_DEPLOYMENT, {"doc_revision": rev})
     if result and "id" in result:
