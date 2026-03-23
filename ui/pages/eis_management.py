@@ -28,6 +28,21 @@ _REV_RE = re.compile(r"^[A-Z]\d{2}$")
 
 # Flow run states that require no further polling
 _TERMINAL_STATES = {"COMPLETED", "FAILED", "CRASHED", "CANCELLED"}
+_WARN_STATES     = {"PAUSED", "CANCELLING"}
+
+_STATE_COLOR = {
+    "COMPLETED":  "#3FB950",
+    "FAILED":     "#F85149",
+    "CRASHED":    "#F85149",
+    "RUNNING":    "#1976D2",
+    "SCHEDULED":  "#D29922",
+    "CANCELLED":  "#8B949E",
+    "PAUSED":     "#D29922",
+    "CANCELLING": "#D29922",
+    "PENDING":    "#8B949E",
+}
+
+_TOTAL_STEPS = 11
 
 
 def _fetch_export_deployments():
@@ -60,12 +75,24 @@ def _poll_run() -> dict | None:
     run = st.session_state.get("export_run")
     if not run:
         return None
-    if run["run_id"] and run["state"] not in _TERMINAL_STATES:
+    if run.get("run_id") and run["state"] not in _TERMINAL_STATES:
         info = get_flow_run_status(run["run_id"])
         if info:
-            run = {**run, "state": (info.get("state") or {}).get("type", run["state"])}
+            state_obj  = info.get("state") or {}
+            state_type = state_obj.get("type", run["state"])
+            state_name = state_obj.get("name", state_type)  # e.g. "Retrying", "Late"
+            run = {**run, "state": state_type, "state_name": state_name}
             st.session_state["export_run"] = run
     return run
+
+
+def _fetch_child_runs(parent_run_id: str) -> list[dict]:
+    """Query child flow runs for real step-level progress."""
+    data = prefect_post("/flow_runs/filter", {
+        "flow_runs": {"parent_flow_run_id": {"any_": [parent_run_id]}},
+        "limit": 50,
+    })
+    return data if isinstance(data, list) else []
 
 
 def render() -> None:
@@ -118,49 +145,50 @@ def render() -> None:
     if not run:
         st.caption("No active export. Trigger a run above.")
     else:
-        state = run["state"]
+        state      = run["state"]
+        state_name = run.get("state_name", state)
         is_terminal = state in _TERMINAL_STATES
-
-        _STATE_COLOR = {
-            "COMPLETED": "#3FB950",
-            "FAILED":    "#F85149",
-            "CRASHED":   "#F85149",
-            "RUNNING":   "#1976D2",
-            "SCHEDULED": "#D29922",
-            "CANCELLED": "#8B949E",
-        }
         color = _STATE_COLOR.get(state, "#8B949E")
-
-        # Steps completed so far (based on Prefect logs order)
-        _STEPS = [
-            "tag_register", "equipment_register", "model_part",
-            "tag_connections", "purchase_order", "area_register",
-            "process_unit", "tag_properties", "equipment_properties",
-            "tag_class_properties", "document_crossref",
-        ]
-        _TOTAL = len(_STEPS)
-
-        if is_terminal:
-            progress_val = 1.0
-            steps_done = _TOTAL if state == "COMPLETED" else "?"
-            step_label = f"{_TOTAL}/{_TOTAL}" if state == "COMPLETED" else "failed"
-        else:
-            progress_val = 0.05  # indeterminate — show something moving
-            step_label = "running…"
 
         st.markdown(
             f'<span style="color:{color};font-weight:600;font-size:14px">'
-            f'● {state}</span> &nbsp; <span style="color:#8B949E">{run["name"]}</span>',
+            f'● {state_name}</span>'
+            f' &nbsp; <span style="color:#8B949E">{run["name"]}</span>',
             unsafe_allow_html=True,
         )
-        st.progress(progress_val, text=f"Steps: {step_label} / {_TOTAL}")
 
-        if state == "FAILED" or state == "CRASHED":
+        # Real progress via child flow runs
+        if run.get("run_id") and not is_terminal:
+            children  = _fetch_child_runs(run["run_id"])
+            completed = sum(
+                1 for c in children
+                if (c.get("state") or {}).get("type") == "COMPLETED"
+            )
+            if len(children) == 0:
+                progress_val = 0.02
+                step_label   = "waiting for first step…"
+            else:
+                progress_val = completed / _TOTAL_STEPS
+                step_label   = f"{completed}/{_TOTAL_STEPS}"
+        elif state == "COMPLETED":
+            progress_val = 1.0
+            step_label   = f"{_TOTAL_STEPS}/{_TOTAL_STEPS}"
+        else:
+            progress_val = 0.0
+            step_label   = "failed"
+
+        st.progress(progress_val, text=f"Steps: {step_label}")
+
+        if state in ("FAILED", "CRASHED"):
             st.error("Export failed — check Prefect logs for details.")
         elif state == "CANCELLED":
             st.warning("Export was cancelled.")
+        elif state == "PAUSED":
+            st.warning("Export is paused — waiting for manual approval in Prefect UI.")
+        elif state_name == "Late":
+            st.warning("Run is late — check that workers are healthy and polling.")
 
-        if not is_terminal:
+        if not is_terminal and state not in _WARN_STATES:
             time.sleep(5)
             st.rerun()
 
