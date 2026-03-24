@@ -1,0 +1,81 @@
+name: Mirror selected folders to Gist
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Push selected folders to Gist
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID_MIRROR: ${{ secrets.GIST_ID_MIRROR }}
+        run: |
+          python3 - <<'EOF'
+          import os, json, urllib.request
+          from pathlib import Path
+
+          INCLUDE = [
+              Path("etl"),
+              Path("scripts"),
+              Path("ui"),
+              Path("sql/schema/schema.sql"),
+          ]
+
+          EXCLUDE_SUFFIXES = {
+              '.pyc', '.png', '.jpg', '.jpeg', '.gif',
+              '.ico', '.xlsx', '.xls', '.db', '.sqlite',
+              '.sqlite3', '.pdf', '.zip', '.tar', '.gz'
+          }
+
+          files = {}
+
+          for target in INCLUDE:
+              if target.is_file():
+                  # Одиночный файл (schema.sql)
+                  paths = [target]
+              elif target.is_dir():
+                  paths = sorted(target.rglob("*"))
+              else:
+                  print(f"⚠️ Not found: {target}")
+                  continue
+
+              for path in paths:
+                  if not path.is_file():
+                      continue
+                  if path.suffix in EXCLUDE_SUFFIXES:
+                      continue
+
+                  # Эмулируем папки: sql/schema/schema.sql → sql__schema__schema.sql
+                  gist_name = str(path).replace("/", "__")
+
+                  try:
+                      content = path.read_text(encoding="utf-8", errors="ignore")
+                      files[gist_name] = {"content": content or " "}
+                  except Exception as e:
+                      print(f"⚠️ Skipped {path}: {e}")
+                      continue
+
+          print(f"📦 Files to push: {len(files)}")
+          for name in sorted(files.keys()):
+              print(f"  {name}")
+
+          payload = json.dumps({"files": files}).encode("utf-8")
+
+          req = urllib.request.Request(
+              f"https://api.github.com/gists/{os.environ['GIST_ID_MIRROR']}",
+              data=payload,
+              method="PATCH"
+          )
+          req.add_header("Authorization", f"token {os.environ['GIST_TOKEN']}")
+          req.add_header("Content-Type", "application/json")
+          req.add_header("Accept", "application/vnd.github+json")
+
+          with urllib.request.urlopen(req) as resp:
+              print(f"✅ Mirror Gist updated: https://gist.github.com/{os.environ['GIST_ID_MIRROR']}")
+          EOF
