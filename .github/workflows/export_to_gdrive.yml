@@ -25,7 +25,18 @@ jobs:
             ! -name '*.pyc' \
             ! -name '*.png' \
             ! -name '*.jpg' \
+            ! -name '*.jpeg' \
+            ! -name '*.gif' \
+            ! -name '*.ico' \
             ! -name '*.xlsx' \
+            ! -name '*.xls' \
+            ! -name '*.db' \
+            ! -name '*.sqlite' \
+            ! -name '*.sqlite3' \
+            ! -name '*.pdf' \
+            ! -name '*.zip' \
+            ! -name '*.tar' \
+            ! -name '*.gz' \
             | sort | while read file; do
               echo "## \`$file\`" >> $OUTPUT
               echo '```' >> $OUTPUT
@@ -42,7 +53,7 @@ jobs:
           python3 - <<'EOF'
           import os, json, urllib.request
 
-          with open("repo_export.md", "r", encoding="utf-8") as f:
+          with open("repo_export.md", "r", encoding="utf-8", errors="ignore") as f:
               content = f.read()
 
           payload = json.dumps({
