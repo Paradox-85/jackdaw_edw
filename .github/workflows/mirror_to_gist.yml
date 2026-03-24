@@ -17,7 +17,7 @@ jobs:
           GIST_ID_MIRROR: ${{ secrets.GIST_ID_MIRROR }}
         run: |
           python3 - <<'EOF'
-          import os, json, urllib.request, urllib.error
+          import os, json, urllib.request, urllib.error, time
           from pathlib import Path
 
           INCLUDE = [
@@ -63,11 +63,7 @@ jobs:
           def sanitize_content(content):
               return "".join(c for c in content if c >= " " or c in "\n\t")
 
-          # Получаем существующие файлы
-          existing = gh_request(f"https://api.github.com/gists/{GIST_ID}")
-          existing_files = list(existing.get("files", {}).keys())
-
-          # Собираем новые файлы
+          # Собираем новые файлы (без логики удаления старых)
           all_files = {}
           total_size = 0
           for target in INCLUDE:
@@ -97,15 +93,10 @@ jobs:
                   all_files[gist_name] = {"content": content or " "}
                   total_size += file_size
 
-          # Помечаем старые на удаление
-          for old in existing_files:
-              if old not in all_files:
-                  all_files[old] = None
-
-          print(f"📦 Total files: {len([f for f in all_files.values() if f])}")
+          print(f"📦 Total files: {len(all_files)}")
           print(f"📊 Total size: {total_size / 1024:.1f} KB")
 
-          # Пушим батчами по 10
+          # Пушим батчами по 10 с паузой между батчами
           items = list(all_files.items())
           for i in range(0, len(items), 10):
               batch = dict(items[i:i+10])
@@ -116,7 +107,7 @@ jobs:
                   method="PATCH"
               )
               print(f"✅ Batch {i//10 + 1} OK")
+              time.sleep(1)  # пауза чтобы не триггерить rate limit
 
           print(f"✅ Done: https://gist.github.com/{GIST_ID}")
           EOF
-
