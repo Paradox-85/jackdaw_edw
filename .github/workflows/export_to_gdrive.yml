@@ -4,6 +4,7 @@ name: Export repo to Google Drive
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   export:
