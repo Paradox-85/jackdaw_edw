@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Merge all files into one MD
+      - name: Merge files into one MD
         run: |
           OUTPUT="repo_export.md"
           echo "# Jackdaw EDW — Full Export" > $OUTPUT
@@ -22,6 +22,14 @@ jobs:
             ! -name 'repo_export.md' \
             ! -path './.git/*' \
             ! -path './.github/*' \
+            ! -path './.claude/*' \
+            ! -path './.streamlit/*' \
+            ! -path './.vscode/*' \
+            ! -path './.superpowers/*' \
+            ! -path './docs/*' \
+            ! -path './frontend/*' \
+            ! -path './prompts/*' \
+            ! -maxdepth 1 \
             ! -name '*.pyc' \
             ! -name '*.png' \
             ! -name '*.jpg' \
@@ -58,9 +66,7 @@ jobs:
 
           payload = json.dumps({
               "files": {
-                  "repo_export.md": {
-                      "content": content
-                  }
+                  "repo_export.md": {"content": content}
               }
           }).encode("utf-8")
 
