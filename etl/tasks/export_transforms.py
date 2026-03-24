@@ -426,6 +426,17 @@ def transform_equipment_register(df: pd.DataFrame) -> pd.DataFrame:
     """
     df = _apply_common_eis_transforms(df)
 
+    # Override ACTION_DATE: use last status change from tag_status_history,
+    # not sync_timestamp (which reflects last ETL run, not last status change).
+    # Source column: action_date_raw (correlated subquery in _EQUIPMENT_REGISTER_SQL).
+    if "ACTION_DATE_RAW" in df.columns:
+        df["ACTION_DATE"] = (
+            pd.to_datetime(df["ACTION_DATE_RAW"], errors="coerce")
+            .dt.strftime("%d.%m.%Y")
+            .fillna("")
+        )
+        df = df.drop(columns=["ACTION_DATE_RAW"], errors="ignore")
+
     # Equipment-specific second-level defence: reject rows without equipment number
     df = df[df["EQUIPMENT_NUMBER"].notna() & (df["EQUIPMENT_NUMBER"] != "")]
 

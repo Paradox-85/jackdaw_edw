@@ -41,6 +41,7 @@ Note:    STARTUP_DATE, PRICE, WARRANTY_END_DATE, TECHIDENTNO, ALIAS always expor
          PART_OF = po_package.name via purchase_order.package_id.
 Changes: 2026-03-10 — Initial implementation.
          2026-03-12 — PART_OF: pkg.name → pkg.code per EIS specification.
+         2026-03-24 — ACTION_DATE sourced from audit_core.tag_status_history
 */
 SELECT
     t.equip_no                              AS equipment_number,
@@ -60,6 +61,14 @@ SELECT
     'NA'                                    AS techidentno,
     'NA'                                    AS alias,
     t.description                           AS equipment_description,
+    -- ACTION_DATE: date of last status change from audit history
+    -- Why correlated subquery: same pattern as tag register (seq 003).
+    -- NULL possible if tag has no history yet — handled in transform.
+    (
+        SELECT MAX(tsh.sync_timestamp)
+        FROM audit_core.tag_status_history tsh
+        WHERE tsh.tag_id = t.id
+    ) AS action_date_raw,
     -- raw FK fields below: used by built-in FK validation rules, dropped by transform before CSV write
     t.model_part_raw                        AS model_part_raw,
     t.manufacturer_company_raw              AS manufacturer_company_raw,
