@@ -33,7 +33,9 @@ jobs:
             ! -name '*.png' \
             ! -name '*.jpg' \
             ! -name '*.jpeg' \
+            ! -name '*.json' \
             ! -name '*.gif' \
+            ! -name '*.md' \
             ! -name '*.ico' \
             ! -name '*.xlsx' \
             ! -name '*.xls' \
