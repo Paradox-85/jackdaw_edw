@@ -81,7 +81,7 @@ def _poll_run() -> dict | None:
             run = {**run, "state": state_type, "state_name": state_name}
             st.session_state["export_run"] = run
         else:
-            log("warn", f"[parent] API вернул None для {run['run_id'][:8]}", "eis_log")
+            log("warn", f"[parent] API returned None for {run['run_id'][:8]}", "eis_log")
     return run
 
 def _fetch_child_runs(parent_run_id: str) -> list[dict]:
@@ -90,7 +90,21 @@ def _fetch_child_runs(parent_run_id: str) -> list[dict]:
         "flow_runs": {"parent_flow_run_id": {"any_": [parent_run_id]}},
         "limit": 50,
     })
-    return data if isinstance(data, list) else []
+    if not isinstance(data, list):
+        return []
+    # Query flow names if flow_name is missing
+    flow_ids = list({c["flow_id"] for c in data if c.get("flow_id") and not c.get("flow_name")})
+    if flow_ids:
+        flows_data = prefect_post("/flows/filter", {
+            "flows": {"id": {"any_": flow_ids}},
+            "limit": len(flow_ids),
+        })
+        if isinstance(flows_data, list):
+            flow_map = {f["id"]: f.get("name", "") for f in flows_data}
+            for c in data:
+                if not c.get("flow_name") and c.get("flow_id"):
+                    c["flow_name"] = flow_map.get(c["flow_id"], "")
+    return data
 
 def _log_child_changes(children: list[dict]) -> None:
     """Log state changes in child runs — compare against last known snapshot."""
@@ -98,14 +112,18 @@ def _log_child_changes(children: list[dict]) -> None:
     curr = {}
     for c in children:
         run_id   = c.get("id", "")[:8]
-        name     = c.get("name") or c.get("flow_run_name") or run_id
+        label = (
+            c.get("deployment_name")          # "export-tag-register-deployment"
+            or c.get("flow_name")              # "export_tag_register"
+            or c.get("name")                   # "merry-rabbit" — fallback
+            or run_id
+        )
         state_obj = c.get("state") or {}
         state    = (state_obj.get("type") or "UNKNOWN").upper()
         curr[run_id] = state
 
         prev_state = prev.get(run_id)
         if prev_state != state:
-            # Время завершения если есть
             end_time = c.get("end_time") or c.get("updated") or ""
             end_str  = end_time[:19].replace("T", " ") if end_time else ""
             duration = ""
@@ -114,7 +132,7 @@ def _log_child_changes(children: list[dict]) -> None:
                 duration = f" [{secs}s]"
 
             level = "ok" if state == "COMPLETED" else ("err" if state in ("FAILED", "CRASHED") else "info")
-            log(level, f"[subflow] {name} → {state}{duration} {end_str}", "eis_log")
+            log(level, f"[subflow] {label} → {state}{duration} {end_str}", "eis_log")
 
     st.session_state["_eis_child_snapshot"] = curr
 
@@ -259,7 +277,21 @@ def render() -> None:
         triggered_at = last["triggered_at"].strftime("%Y-%m-%d %H:%M")
         st.caption(f"Revision `{rev}` · Triggered: {triggered_at} · `{last['folder']}`")
         if export_path.exists():
-            files = sorted(export_path.glob("*.CSV"), key=lambda f: f.stat().st_mtime, reverse=True)
+            rev_upper = rev.upper()
+            all_csvs  = list(export_path.glob("*.CSV")) if export_path.exists() else []
+
+            # Priority 1: by revision mask in file name
+            by_rev = [f for f in all_csvs if rev_upper in f.name.upper()]
+            # Fallback: by triggered time if mask did not yield results
+            if by_rev:
+                files = sorted(by_rev, key=lambda f: f.stat().st_mtime, reverse=True)
+            else:
+                triggered_ts = last["triggered_at"].timestamp()
+                files = sorted(
+                    [f for f in all_csvs if f.stat().st_mtime >= triggered_ts - 30],
+                    key=lambda f: f.stat().st_mtime,
+                    reverse=True,
+                )
             if files:
                 zip_buf = _io.BytesIO()
                 with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
