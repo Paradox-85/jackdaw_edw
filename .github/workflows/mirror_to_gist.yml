@@ -32,8 +32,10 @@ jobs:
               '.ico', '.xlsx', '.xls', '.db', '.sqlite',
               '.sqlite3', '.pdf', '.zip', '.tar', '.gz'
           }
+          EXCLUDE_NAMES = {'__init__.py'}
 
           MAX_FILE_BYTES = 500_000
+          MAX_TOTAL_BYTES = 8_000_000
           TOKEN = os.environ['GIST_TOKEN']
           GIST_ID = os.environ['GIST_ID_MIRROR']
 
@@ -61,14 +63,21 @@ jobs:
           def sanitize_content(content):
               return "".join(c for c in content if c >= " " or c in "\n\t")
 
-          # Собираем все файлы
+          # Получаем существующие файлы
+          existing = gh_request(f"https://api.github.com/gists/{GIST_ID}")
+          existing_files = list(existing.get("files", {}).keys())
+
+          # Собираем новые файлы
           all_files = {}
+          total_size = 0
           for target in INCLUDE:
               paths = [target] if target.is_file() else sorted(target.rglob("*"))
               for path in paths:
                   if not path.is_file():
                       continue
                   if path.suffix in EXCLUDE_SUFFIXES:
+                      continue
+                  if path.name in EXCLUDE_NAMES:
                       continue
                   gist_name = sanitize_name(str(path))
                   try:
@@ -81,22 +90,33 @@ jobs:
                   if len(encoded) > MAX_FILE_BYTES:
                       content = encoded[:MAX_FILE_BYTES].decode("utf-8", errors="ignore")
                       content += "\n\n... [TRUNCATED]"
+                  file_size = len(content.encode("utf-8"))
+                  if total_size + file_size > MAX_TOTAL_BYTES:
+                      print(f"⛔ Size limit reached, skipping: {gist_name}")
+                      continue
                   all_files[gist_name] = {"content": content or " "}
+                  total_size += file_size
 
-          print(f"📦 Total files: {len(all_files)}")
+          # Помечаем старые на удаление
+          for old in existing_files:
+              if old not in all_files:
+                  all_files[old] = None
 
-          # Пушим по ОДНОМУ файлу — найдём точного виновника
+          print(f"📦 Total files: {len([f for f in all_files.values() if f])}")
+          print(f"📊 Total size: {total_size / 1024:.1f} KB")
+
+          # Пушим батчами по 10
           items = list(all_files.items())
-          for i, (name, file_data) in enumerate(items):
-              print(f"📤 [{i+1}/{len(items)}] {name}")
-              payload = json.dumps({"files": {name: file_data}}).encode("utf-8")
+          for i in range(0, len(items), 10):
+              batch = dict(items[i:i+10])
+              payload = json.dumps({"files": batch}).encode("utf-8")
               gh_request(
                   f"https://api.github.com/gists/{GIST_ID}",
                   data=payload,
                   method="PATCH"
               )
-              print(f"✅ OK")
+              print(f"✅ Batch {i//10 + 1} OK")
 
-          print(f"✅ All done: https://gist.github.com/{GIST_ID}")
+          print(f"✅ Done: https://gist.github.com/{GIST_ID}")
           EOF
 
