@@ -16,10 +16,11 @@ jobs:
         run: |
           OUTPUT="repo_export.md"
           echo "# Jackdaw EDW — Full Export" > $OUTPUT
-          echo "_Generated: $(date UTC)_" >> $OUTPUT
+          echo "_Generated: $(date -u)_" >> $OUTPUT
           echo "" >> $OUTPUT
 
           find . -type f \
+            ! -name 'repo_export.md' \
             ! -path './.git/*' \
             ! -path './.github/*' \
             ! -name '*.pyc' \
