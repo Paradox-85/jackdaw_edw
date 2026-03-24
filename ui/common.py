@@ -306,7 +306,7 @@ def get_flow_run_status(run_id: str) -> dict | None:
 def recent_flow_runs(limit: int = 10) -> pd.DataFrame:
     # Step 1: get id flows with prefix import_
     _import_flows = prefect_post("/flows/filter", {
-        "flows": {"name": {"like_": "import%"}},
+        "flows": {"name": {"like_": "import_%"}},
         "limit": 50,
     })
     _import_flow_ids = [f["id"] for f in _import_flows] if isinstance(_import_flows, list) else []
