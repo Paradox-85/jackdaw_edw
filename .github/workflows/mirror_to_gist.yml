@@ -35,15 +35,28 @@ jobs:
 
           MAX_FILE_BYTES = 500_000
           MAX_TOTAL_BYTES = 8_000_000
+          TOKEN = os.environ['GIST_TOKEN']
+          GIST_ID = os.environ['GIST_ID_MIRROR']
+
+          def gh_request(url, data=None, method="GET"):
+              req = urllib.request.Request(url, data=data, method=method)
+              req.add_header("Authorization", f"token {TOKEN}")
+              req.add_header("Content-Type", "application/json")
+              req.add_header("Accept", "application/vnd.github+json")
+              with urllib.request.urlopen(req) as resp:
+                  return json.loads(resp.read().decode("utf-8"))
 
           def sanitize_name(path_str):
-              # Заменяем / на --, убираем точки из начала имён папок
-              name = path_str.replace("/", "--")
-              # Убираем leading dots (например .hidden -> _hidden)
-              parts = name.split("--")
+              parts = path_str.replace("/", "--").split("--")
               parts = [p.lstrip(".") or p for p in parts]
               return "--".join(parts)
 
+          # Шаг 1 — получаем существующие файлы в Gist
+          existing = gh_request(f"https://api.github.com/gists/{GIST_ID}")
+          existing_files = list(existing.get("files", {}).keys())
+          print(f"🗂  Existing files in Gist: {existing_files}")
+
+          # Шаг 2 — собираем новые файлы
           files = {}
           total_size = 0
 
@@ -77,27 +90,21 @@ jobs:
                   files[gist_name] = {"content": content or " "}
                   total_size += file_size
 
-          print(f"📦 Files to push: {len(files)}")
+          # Шаг 3 — помечаем старые файлы на удаление через null
+          for old_name in existing_files:
+              if old_name not in files:
+                  files[old_name] = None
+                  print(f"🗑  Deleting old file: {old_name}")
+
+          print(f"📦 Files to push: {len([f for f in files.values() if f is not None])}")
           print(f"📊 Total size: {total_size / 1024:.1f} KB")
-          for name in sorted(files.keys()):
-              print(f"  {name}")
 
           payload = json.dumps({"files": files}).encode("utf-8")
 
-          req = urllib.request.Request(
-              f"https://api.github.com/gists/{os.environ['GIST_ID_MIRROR']}",
+          result = gh_request(
+              f"https://api.github.com/gists/{GIST_ID}",
               data=payload,
               method="PATCH"
           )
-          req.add_header("Authorization", f"token {os.environ['GIST_TOKEN']}")
-          req.add_header("Content-Type", "application/json")
-          req.add_header("Accept", "application/vnd.github+json")
-
-          try:
-              with urllib.request.urlopen(req) as resp:
-                  print(f"✅ Mirror Gist updated: https://gist.github.com/{os.environ['GIST_ID_MIRROR']}")
-          except urllib.error.HTTPError as e:
-              print(f"❌ HTTP {e.code}: {e.reason}")
-              print(e.read().decode("utf-8"))  # покажет детали ошибки от GitHub
-              raise
+          print(f"✅ Mirror Gist updated: https://gist.github.com/{GIST_ID}")
           EOF
