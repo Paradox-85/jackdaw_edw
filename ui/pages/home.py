@@ -3,7 +3,6 @@ ui/pages/home.py — Dashboard: KPIs, service health, recent runs, tag analytics
 Read-only queries only. No write operations except admin sync trigger.
 """
 from __future__ import annotations
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -134,33 +133,6 @@ def render() -> None:
         if col_s2.button("▶ Sync Ref Data", key="home_sync_ref", disabled=True,
                          help="Planned — run via Prefect UI"):
             pass  # stub: Phase 2
-
-        # Last 5 sync runs from audit log
-        df_recent = db_read("""
-            SELECT target_table AS "Table",
-                   COALESCE(
-                       NULLIF(
-                           REGEXP_REPLACE(
-                               COALESCE(source_file, ''),
-                               '^.*?(\d{4}-\d{2}-\d{2}).*$', '\1'
-                           ),
-                           COALESCE(source_file, '')
-                       ),
-                       TO_CHAR(end_time, 'YYYY-MM-DD')
-                   )              AS "File Date",
-                   count_created  AS "New",
-                   count_updated  AS "Updated",
-                   count_deleted  AS "Deleted",
-                   count_errors   AS "Errors"
-            FROM audit_core.sync_run_stats
-            ORDER BY start_time DESC
-            LIMIT 5
-        """)
-        if not df_recent.empty:
-            st.dataframe(df_recent, use_container_width=True, hide_index=True)
-        else:
-            st.caption("No sync history available.")
-
 
     # ── Recent Prefect runs ───────────────────────────────────────────────────
     section("Recent Flow Runs")

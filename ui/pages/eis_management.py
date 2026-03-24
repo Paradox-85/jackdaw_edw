@@ -179,8 +179,18 @@ def render() -> None:
                      disabled=bool(rev_err), key="btn_eis_run"):
             _trigger_export(rev)
 
+    # ── Execution Log ─────────────────────────────────────────────────────────
+    section("Execution Log")
+    render_log("eis_log")
+    if st.button("Clear", key="eis_clr"):
+        st.session_state["eis_log"] = []
+        st.rerun()
+
     # ── Export Progress ───────────────────────────────────────────────────────
     section("Export Progress")
+    # Create placeholder for log BEFORE calling _poll_run
+    # It will be updated immediately after writing new lines
+    _log_placeholder = st.empty()
     run = _poll_run()
 
     if not run:
@@ -321,14 +331,6 @@ def render() -> None:
                 st.info("Files not yet written — flow is running, please wait.")
         else:
             st.info("Output folder not yet created — flow is running, please wait.")
-
-    # ── Execution Log ─────────────────────────────────────────────────────────
-    section("Execution Log")
-    render_log("eis_log")
-    if st.button("Clear", key="eis_clr"):
-        st.session_state["eis_log"] = []
-        st.rerun()
-
 
 def _trigger_export(rev: str) -> None:
     """Trigger the master EIS package export deployment."""
