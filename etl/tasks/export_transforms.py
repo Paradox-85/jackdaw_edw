@@ -239,13 +239,11 @@ def transform_tag_register(df: pd.DataFrame) -> pd.DataFrame:
     # Override ACTION_DATE: use last status change from tag_status_history,
     # not sync_timestamp (which reflects last ETL run, not last status change).
     # Source column: action_date_raw (correlated subquery in _TAG_REGISTER_SQL).
-    # Fallback to empty string when tag has no history entries yet.
     if "ACTION_DATE_RAW" in df.columns:
         df["ACTION_DATE"] = (
             pd.to_datetime(df["ACTION_DATE_RAW"], errors="coerce")
-            .fillna(pd.to_datetime(df["SYNC_TIMESTAMP"], errors="coerce"))  # fallback
             .dt.strftime("%d.%m.%Y")
-            .fillna("")
+            .fillna("")   # если ACTION_DATE_RAW пустой — оставить пустую строку
         )
         df = df.drop(columns=["ACTION_DATE_RAW"], errors="ignore")
 

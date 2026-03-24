@@ -312,7 +312,11 @@ def recent_flow_runs(limit: int = 10) -> pd.DataFrame:
     })
     if not data or isinstance(data, dict): return pd.DataFrame()
     return pd.DataFrame([{
-        "Flow":       r.get("flow_name",""),
+        "Flow": (
+            r.get("deployment_name")
+            or r.get("flow_name")
+            or r.get("name", "—")
+        ),
         "Run":        r.get("name",""),
         "State":      r.get("state",{}).get("type",""),
         "Started":    (r.get("start_time") or "")[:19].replace("T"," "),
