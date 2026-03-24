@@ -18,7 +18,7 @@ jobs:
           echo "_Generated: $(date -u)_" >> $OUTPUT
           echo "" >> $OUTPUT
 
-          find . -type f \
+          find . -mindepth 2 -type f \
             ! -name 'repo_export.md' \
             ! -path './.git/*' \
             ! -path './.github/*' \
@@ -29,7 +29,6 @@ jobs:
             ! -path './docs/*' \
             ! -path './frontend/*' \
             ! -path './prompts/*' \
-            ! -maxdepth 1 \
             ! -name '*.pyc' \
             ! -name '*.png' \
             ! -name '*.jpg' \
