@@ -43,21 +43,25 @@ jobs:
               req.add_header("Authorization", f"token {TOKEN}")
               req.add_header("Content-Type", "application/json")
               req.add_header("Accept", "application/vnd.github+json")
-              with urllib.request.urlopen(req) as resp:
-                  return json.loads(resp.read().decode("utf-8"))
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      return json.loads(resp.read().decode("utf-8"))
+              except urllib.error.HTTPError as e:
+                  print(f"❌ HTTP {e.code}: {e.read().decode('utf-8')}")
+                  raise
 
           def sanitize_name(path_str):
               parts = path_str.replace("/", "--").split("--")
               parts = [p.lstrip(".") or p for p in parts]
               return "--".join(parts)
 
-          # Шаг 1 — получаем существующие файлы в Gist
+          # Шаг 1 — получаем существующие файлы
           existing = gh_request(f"https://api.github.com/gists/{GIST_ID}")
           existing_files = list(existing.get("files", {}).keys())
-          print(f"🗂  Existing files in Gist: {existing_files}")
+          print(f"🗂  Existing: {existing_files}")
 
           # Шаг 2 — собираем новые файлы
-          files = {}
+          new_files = {}
           total_size = 0
 
           for target in INCLUDE:
@@ -87,24 +91,32 @@ jobs:
                       print(f"⛔ Size limit reached, skipping: {gist_name}")
                       continue
 
-                  files[gist_name] = {"content": content or " "}
+                  new_files[gist_name] = {"content": content or " "}
                   total_size += file_size
 
-          # Шаг 3 — помечаем старые файлы на удаление через null
-          for old_name in existing_files:
-              if old_name not in files:
-                  files[old_name] = None
-                  print(f"🗑  Deleting old file: {old_name}")
-
-          print(f"📦 Files to push: {len([f for f in files.values() if f is not None])}")
+          print(f"📦 Files to push: {len(new_files)}")
           print(f"📊 Total size: {total_size / 1024:.1f} KB")
 
-          payload = json.dumps({"files": files}).encode("utf-8")
-
-          result = gh_request(
+          # Шаг 3 — PATCH только новые файлы (без удаления старых)
+          payload = json.dumps({"files": new_files}).encode("utf-8")
+          gh_request(
               f"https://api.github.com/gists/{GIST_ID}",
               data=payload,
               method="PATCH"
           )
+          print("✅ New files pushed")
+
+          # Шаг 4 — отдельный PATCH для удаления старых файлов
+          to_delete = {name: None for name in existing_files if name not in new_files}
+          if to_delete:
+              print(f"🗑  Deleting: {list(to_delete.keys())}")
+              payload2 = json.dumps({"files": to_delete}).encode("utf-8")
+              gh_request(
+                  f"https://api.github.com/gists/{GIST_ID}",
+                  data=payload2,
+                  method="PATCH"
+              )
+              print("✅ Old files deleted")
+
           print(f"✅ Mirror Gist updated: https://gist.github.com/{GIST_ID}")
           EOF
