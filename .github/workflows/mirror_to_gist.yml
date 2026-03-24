@@ -20,6 +20,20 @@ jobs:
           import os, json, urllib.request, urllib.error
           from pathlib import Path
 
+          INCLUDE = [
+              Path("etl"),
+              Path("scripts"),
+              Path("ui"),
+              Path("sql/schema/schema.sql"),
+          ]
+
+          EXCLUDE_SUFFIXES = {
+              '.pyc', '.png', '.jpg', '.jpeg', '.gif',
+              '.ico', '.xlsx', '.xls', '.db', '.sqlite',
+              '.sqlite3', '.pdf', '.zip', '.tar', '.gz'
+          }
+
+          MAX_FILE_BYTES = 500_000
           TOKEN = os.environ['GIST_TOKEN']
           GIST_ID = os.environ['GIST_ID_MIRROR']
 
@@ -32,36 +46,56 @@ jobs:
                   with urllib.request.urlopen(req) as resp:
                       return json.loads(resp.read().decode("utf-8"))
               except urllib.error.HTTPError as e:
-                  body = e.read().decode('utf-8')
-                  print(f"❌ HTTP {e.code}: {body}")
+                  print(f"❌ HTTP {e.code}: {e.read().decode('utf-8')}")
                   raise
 
-          # Тест 1 — имя с --
-          print("🧪 Test 1: filename with --")
-          gh_request(
-              f"https://api.github.com/gists/{GIST_ID}",
-              data=json.dumps({"files": {"etl--flows--test.py": {"content": "# test\n"}}}).encode(),
-              method="PATCH"
-          )
-          print("✅ Test 1 passed")
+          def sanitize_name(path_str):
+              parts = path_str.replace("/", "--").split("--")
+              parts = [p.lstrip(".") or p for p in parts]
+              return "--".join(parts)
 
-          # Тест 2 — 5 файлов одновременно
-          print("🧪 Test 2: 5 files at once")
-          five_files = {f"test--file--{i}.py": {"content": f"# file {i}\n"} for i in range(5)}
-          gh_request(
-              f"https://api.github.com/gists/{GIST_ID}",
-              data=json.dumps({"files": five_files}).encode(),
-              method="PATCH"
-          )
-          print("✅ Test 2 passed")
+          def sanitize_content(content):
+              # Убираем null-байты и управляющие символы кроме \n \t
+              return "".join(c for c in content if c >= " " or c in "\n\t")
 
-          # Тест 3 — 45 файлов одновременно
-          print("🧪 Test 3: 45 files at once")
-          many_files = {f"test--file--{i:02d}.py": {"content": f"# file {i}\n"} for i in range(45)}
-          gh_request(
-              f"https://api.github.com/gists/{GIST_ID}",
-              data=json.dumps({"files": many_files}).encode(),
-              method="PATCH"
-          )
-          print("✅ Test 3 passed")
+          # Собираем все файлы
+          all_files = {}
+          for target in INCLUDE:
+              paths = [target] if target.is_file() else sorted(target.rglob("*"))
+              for path in paths:
+                  if not path.is_file():
+                      continue
+                  if path.suffix in EXCLUDE_SUFFIXES:
+                      continue
+                  gist_name = sanitize_name(str(path))
+                  try:
+                      content = path.read_text(encoding="utf-8", errors="ignore")
+                      content = sanitize_content(content)  # <- чистим контент
+                  except Exception as e:
+                      print(f"⚠️ Skipped {path}: {e}")
+                      continue
+                  encoded = content.encode("utf-8")
+                  if len(encoded) > MAX_FILE_BYTES:
+                      content = encoded[:MAX_FILE_BYTES].decode("utf-8", errors="ignore")
+                      content += f"\n\n... [TRUNCATED]"
+                  all_files[gist_name] = {"content": content or " "}
+
+          print(f"📦 Total files: {len(all_files)}")
+
+          # Пушим батчами по 10 — найдём проблемный батч
+          items = list(all_files.items())
+          BATCH_SIZE = 10
+          for i in range(0, len(items), BATCH_SIZE):
+              batch = dict(items[i:i+BATCH_SIZE])
+              batch_names = list(batch.keys())
+              print(f"📤 Batch {i//BATCH_SIZE + 1}: {batch_names}")
+              payload = json.dumps({"files": batch}).encode("utf-8")
+              gh_request(
+                  f"https://api.github.com/gists/{GIST_ID}",
+                  data=payload,
+                  method="PATCH"
+              )
+              print(f"✅ Batch {i//BATCH_SIZE + 1} OK")
+
+          print(f"✅ All done: https://gist.github.com/{GIST_ID}")
           EOF
