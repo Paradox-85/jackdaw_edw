@@ -36,30 +36,32 @@ jobs:
                   print(f"❌ HTTP {e.code}: {body}")
                   raise
 
-          # Тест с одним простым файлом
-          test_files = {
-              "test_single_file.py": {"content": "# test content\nprint('hello')"}
-          }
-
-          print("🧪 Testing with single file...")
-          payload = json.dumps({"files": test_files}).encode("utf-8")
+          # Тест 1 — имя с --
+          print("🧪 Test 1: filename with --")
           gh_request(
               f"https://api.github.com/gists/{GIST_ID}",
-              data=payload,
+              data=json.dumps({"files": {"etl--flows--test.py": {"content": "# test\n"}}}).encode(),
               method="PATCH"
           )
-          print("✅ Single file test passed!")
+          print("✅ Test 1 passed")
 
-          # Тест с именем содержащим --
-          test_files2 = {
-              "etl--flows--test.py": {"content": "# test\n"}
-          }
-          print("🧪 Testing with -- in filename...")
-          payload2 = json.dumps({"files": test_files2}).encode("utf-8")
+          # Тест 2 — 5 файлов одновременно
+          print("🧪 Test 2: 5 files at once")
+          five_files = {f"test--file--{i}.py": {"content": f"# file {i}\n"} for i in range(5)}
           gh_request(
               f"https://api.github.com/gists/{GIST_ID}",
-              data=payload2,
+              data=json.dumps({"files": five_files}).encode(),
               method="PATCH"
           )
-          print("✅ Filename with -- passed!")
+          print("✅ Test 2 passed")
+
+          # Тест 3 — 45 файлов одновременно
+          print("🧪 Test 3: 45 files at once")
+          many_files = {f"test--file--{i:02d}.py": {"content": f"# file {i}\n"} for i in range(45)}
+          gh_request(
+              f"https://api.github.com/gists/{GIST_ID}",
+              data=json.dumps({"files": many_files}).encode(),
+              method="PATCH"
+          )
+          print("✅ Test 3 passed")
           EOF
