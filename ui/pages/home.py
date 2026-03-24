@@ -124,7 +124,7 @@ def render() -> None:
         col_s1, col_s2, col_s3 = st.columns([1, 1, 4])
 
         if col_s1.button("▶ Sync Tag Data", type="primary", key="home_sync_tags"):
-            result = trigger_deployment("1_sequential-master-sync", {})
+            result = trigger_deployment("import_master_sync_deploy", {})
             if result and "id" in result:
                 st.toast(f"✓ Sync scheduled — {result['id'][:8]}", icon="✅")
             else:

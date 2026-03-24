@@ -22,7 +22,7 @@ from ui.common import (
 )
 
 # Single master deployment — runs all 11 EIS export flows sequentially
-_EIS_DEPLOYMENT = "export-eis-package-deployment"
+_EIS_DEPLOYMENT = "export_eis_package_data_deploy"
 
 _REV_RE = re.compile(r"^[A-Z]\d{2}$")
 
@@ -113,8 +113,8 @@ def _log_child_changes(children: list[dict]) -> None:
     for c in children:
         run_id   = c.get("id", "")[:8]
         label = (
-            c.get("deployment_name")          # "export-tag-register-deployment"
-            or c.get("flow_name")              # "export_tag_register"
+            c.get("deployment_name")          # "export_tag_register_data_deploy"
+            or c.get("flow_name")              # "export_tag_register_data"
             or c.get("name")                   # "merry-rabbit" — fallback
             or run_id
         )

@@ -616,6 +616,6 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/import_reference_deploy.py:seed_reference_flow",
     ).deploy(
-        name="import_referenc_data_deploy",
+        name="import_reference_data_deploy",
         work_pool_name="default-agent-pool",
     )
