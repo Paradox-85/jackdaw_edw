@@ -20,21 +20,6 @@ jobs:
           import os, json, urllib.request, urllib.error
           from pathlib import Path
 
-          INCLUDE = [
-              Path("etl"),
-              Path("scripts"),
-              Path("ui"),
-              Path("sql/schema/schema.sql"),
-          ]
-
-          EXCLUDE_SUFFIXES = {
-              '.pyc', '.png', '.jpg', '.jpeg', '.gif',
-              '.ico', '.xlsx', '.xls', '.db', '.sqlite',
-              '.sqlite3', '.pdf', '.zip', '.tar', '.gz'
-          }
-
-          MAX_FILE_BYTES = 500_000
-          MAX_TOTAL_BYTES = 8_000_000
           TOKEN = os.environ['GIST_TOKEN']
           GIST_ID = os.environ['GIST_ID_MIRROR']
 
@@ -47,76 +32,34 @@ jobs:
                   with urllib.request.urlopen(req) as resp:
                       return json.loads(resp.read().decode("utf-8"))
               except urllib.error.HTTPError as e:
-                  print(f"❌ HTTP {e.code}: {e.read().decode('utf-8')}")
+                  body = e.read().decode('utf-8')
+                  print(f"❌ HTTP {e.code}: {body}")
                   raise
 
-          def sanitize_name(path_str):
-              parts = path_str.replace("/", "--").split("--")
-              parts = [p.lstrip(".") or p for p in parts]
-              return "--".join(parts)
+          # Тест с одним простым файлом
+          test_files = {
+              "test_single_file.py": {"content": "# test content\nprint('hello')"}
+          }
 
-          # Шаг 1 — получаем существующие файлы
-          existing = gh_request(f"https://api.github.com/gists/{GIST_ID}")
-          existing_files = list(existing.get("files", {}).keys())
-          print(f"🗂  Existing: {existing_files}")
-
-          # Шаг 2 — собираем новые файлы
-          new_files = {}
-          total_size = 0
-
-          for target in INCLUDE:
-              paths = [target] if target.is_file() else sorted(target.rglob("*"))
-              for path in paths:
-                  if not path.is_file():
-                      continue
-                  if path.suffix in EXCLUDE_SUFFIXES:
-                      continue
-
-                  gist_name = sanitize_name(str(path))
-
-                  try:
-                      content = path.read_text(encoding="utf-8", errors="ignore")
-                  except Exception as e:
-                      print(f"⚠️ Skipped {path}: {e}")
-                      continue
-
-                  encoded = content.encode("utf-8")
-                  if len(encoded) > MAX_FILE_BYTES:
-                      content = encoded[:MAX_FILE_BYTES].decode("utf-8", errors="ignore")
-                      content += f"\n\n... [TRUNCATED: exceeded {MAX_FILE_BYTES//1000}KB]"
-                      print(f"✂️  Truncated: {gist_name}")
-
-                  file_size = len(content.encode("utf-8"))
-                  if total_size + file_size > MAX_TOTAL_BYTES:
-                      print(f"⛔ Size limit reached, skipping: {gist_name}")
-                      continue
-
-                  new_files[gist_name] = {"content": content or " "}
-                  total_size += file_size
-
-          print(f"📦 Files to push: {len(new_files)}")
-          print(f"📊 Total size: {total_size / 1024:.1f} KB")
-
-          # Шаг 3 — PATCH только новые файлы (без удаления старых)
-          payload = json.dumps({"files": new_files}).encode("utf-8")
+          print("🧪 Testing with single file...")
+          payload = json.dumps({"files": test_files}).encode("utf-8")
           gh_request(
               f"https://api.github.com/gists/{GIST_ID}",
               data=payload,
               method="PATCH"
           )
-          print("✅ New files pushed")
+          print("✅ Single file test passed!")
 
-          # Шаг 4 — отдельный PATCH для удаления старых файлов
-          to_delete = {name: None for name in existing_files if name not in new_files}
-          if to_delete:
-              print(f"🗑  Deleting: {list(to_delete.keys())}")
-              payload2 = json.dumps({"files": to_delete}).encode("utf-8")
-              gh_request(
-                  f"https://api.github.com/gists/{GIST_ID}",
-                  data=payload2,
-                  method="PATCH"
-              )
-              print("✅ Old files deleted")
-
-          print(f"✅ Mirror Gist updated: https://gist.github.com/{GIST_ID}")
+          # Тест с именем содержащим --
+          test_files2 = {
+              "etl--flows--test.py": {"content": "# test\n"}
+          }
+          print("🧪 Testing with -- in filename...")
+          payload2 = json.dumps({"files": test_files2}).encode("utf-8")
+          gh_request(
+              f"https://api.github.com/gists/{GIST_ID}",
+              data=payload2,
+              method="PATCH"
+          )
+          print("✅ Filename with -- passed!")
           EOF
