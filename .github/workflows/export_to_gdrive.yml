@@ -39,10 +39,29 @@ jobs:
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
           GIST_ID: ${{ secrets.GIST_ID }}
         run: |
-          CONTENT=$(cat repo_export.md | jq -Rs .)
-          curl -s -X PATCH \
-            -H "Authorization: token $GIST_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{\"files\":{\"repo_export.md\":{\"content\":$CONTENT}}}" \
-            "https://api.github.com/gists/$GIST_ID"
-          echo "✅ Gist updated: https://gist.github.com/$GIST_ID"
+          python3 - <<'EOF'
+          import os, json, urllib.request
+
+          with open("repo_export.md", "r", encoding="utf-8") as f:
+              content = f.read()
+
+          payload = json.dumps({
+              "files": {
+                  "repo_export.md": {
+                      "content": content
+                  }
+              }
+          }).encode("utf-8")
+
+          req = urllib.request.Request(
+              f"https://api.github.com/gists/{os.environ['GIST_ID']}",
+              data=payload,
+              method="PATCH"
+          )
+          req.add_header("Authorization", f"token {os.environ['GIST_TOKEN']}")
+          req.add_header("Content-Type", "application/json")
+          req.add_header("Accept", "application/vnd.github+json")
+
+          with urllib.request.urlopen(req) as resp:
+              print(f"✅ Gist updated: https://gist.github.com/{os.environ['GIST_ID']}")
+          EOF
