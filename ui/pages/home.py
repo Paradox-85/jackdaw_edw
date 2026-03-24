@@ -136,13 +136,6 @@ def render() -> None:
 
     # ── Recent Prefect runs ───────────────────────────────────────────────────
     section("Recent Flow Runs")
-    
-    #dubug
-    from ui.common import prefect_post
-    _all_flows = prefect_post("/flows/filter", {"limit": 50})
-    if isinstance(_all_flows, list):
-        st.write([f["name"] for f in _all_flows])
-
     col_r, _ = st.columns([1, 8])
     if col_r.button("⟳", key="home_refresh", help="Refresh"):
         st.cache_data.clear()
