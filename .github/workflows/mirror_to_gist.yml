@@ -17,7 +17,7 @@ jobs:
           GIST_ID_MIRROR: ${{ secrets.GIST_ID_MIRROR }}
         run: |
           python3 - <<'EOF'
-          import os, json, urllib.request
+          import os, json, urllib.request, urllib.error
           from pathlib import Path
 
           INCLUDE = [
@@ -33,8 +33,16 @@ jobs:
               '.sqlite3', '.pdf', '.zip', '.tar', '.gz'
           }
 
-          MAX_FILE_BYTES = 500_000   # 500KB на файл
-          MAX_TOTAL_BYTES = 8_000_000  # 8MB суммарно
+          MAX_FILE_BYTES = 500_000
+          MAX_TOTAL_BYTES = 8_000_000
+
+          def sanitize_name(path_str):
+              # Заменяем / на --, убираем точки из начала имён папок
+              name = path_str.replace("/", "--")
+              # Убираем leading dots (например .hidden -> _hidden)
+              parts = name.split("--")
+              parts = [p.lstrip(".") or p for p in parts]
+              return "--".join(parts)
 
           files = {}
           total_size = 0
@@ -47,7 +55,7 @@ jobs:
                   if path.suffix in EXCLUDE_SUFFIXES:
                       continue
 
-                  gist_name = str(path).replace("/", "__")
+                  gist_name = sanitize_name(str(path))
 
                   try:
                       content = path.read_text(encoding="utf-8", errors="ignore")
@@ -55,11 +63,10 @@ jobs:
                       print(f"⚠️ Skipped {path}: {e}")
                       continue
 
-                  # Обрезаем слишком большие файлы
                   encoded = content.encode("utf-8")
                   if len(encoded) > MAX_FILE_BYTES:
-                      content = content.encode("utf-8")[:MAX_FILE_BYTES].decode("utf-8", errors="ignore")
-                      content += f"\n\n... [TRUNCATED: file exceeded {MAX_FILE_BYTES//1000}KB]"
+                      content = encoded[:MAX_FILE_BYTES].decode("utf-8", errors="ignore")
+                      content += f"\n\n... [TRUNCATED: exceeded {MAX_FILE_BYTES//1000}KB]"
                       print(f"✂️  Truncated: {gist_name}")
 
                   file_size = len(content.encode("utf-8"))
@@ -72,6 +79,8 @@ jobs:
 
           print(f"📦 Files to push: {len(files)}")
           print(f"📊 Total size: {total_size / 1024:.1f} KB")
+          for name in sorted(files.keys()):
+              print(f"  {name}")
 
           payload = json.dumps({"files": files}).encode("utf-8")
 
@@ -84,6 +93,11 @@ jobs:
           req.add_header("Content-Type", "application/json")
           req.add_header("Accept", "application/vnd.github+json")
 
-          with urllib.request.urlopen(req) as resp:
-              print(f"✅ Mirror Gist updated: https://gist.github.com/{os.environ['GIST_ID_MIRROR']}")
+          try:
+              with urllib.request.urlopen(req) as resp:
+                  print(f"✅ Mirror Gist updated: https://gist.github.com/{os.environ['GIST_ID_MIRROR']}")
+          except urllib.error.HTTPError as e:
+              print(f"❌ HTTP {e.code}: {e.reason}")
+              print(e.read().decode("utf-8"))  # покажет детали ошибки от GitHub
+              raise
           EOF
