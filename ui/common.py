@@ -304,24 +304,53 @@ def get_flow_run_status(run_id: str) -> dict | None:
     return data
 
 def recent_flow_runs(limit: int = 10) -> pd.DataFrame:
-    data = prefect_post("/flow_runs/filter", {
+    # Step 1: get id flows with prefix import_
+    _import_flows = prefect_post("/flows/filter", {
+        "flows": {"name": {"like_": "import%"}},
+        "limit": 50,
+    })
+    _import_flow_ids = [f["id"] for f in _import_flows] if isinstance(_import_flows, list) else []
+
+    payload: dict = {
         "limit": limit, "sort": "START_TIME_DESC",
         "flow_runs": {"state": {"operator": "and_", "type": {"any_": [
             "COMPLETED","FAILED","RUNNING","CRASHED","SCHEDULED"
         ]}}},
+    }
+    if _import_flow_ids:
+        payload["flow_runs"]["flow_id"] = {"any_": _import_flow_ids}
+
+    data = prefect_post("/flow_runs/filter", payload)
+    if not data or isinstance(data, dict):
+        return pd.DataFrame()
+
+    # Step 2: resolve flow_id → flow_name for empty entries
+    flow_ids = list({
+        r["flow_id"] for r in data
+        if r.get("flow_id") and not r.get("flow_name")
     })
-    if not data or isinstance(data, dict): return pd.DataFrame()
+    flow_map: dict[str, str] = {}
+    if flow_ids:
+        flows = prefect_post("/flows/filter", {
+            "flows": {"id": {"any_": flow_ids}},
+            "limit": len(flow_ids),
+        })
+        if isinstance(flows, list):
+            flow_map = {f["id"]: f.get("name", "") for f in flows}
+
     return pd.DataFrame([{
         "Flow": (
             r.get("deployment_name")
             or r.get("flow_name")
+            or flow_map.get(r.get("flow_id", ""), "")
             or r.get("name", "—")
         ),
-        "Run":        r.get("name",""),
-        "State":      r.get("state",{}).get("type",""),
-        "Started":    (r.get("start_time") or "")[:19].replace("T"," "),
-        "Duration s": round(r.get("total_run_time",0),1),
+        "Run":        r.get("name", ""),
+        "State":      (r.get("state") or {}).get("type", ""),
+        "Started":    (r.get("start_time") or r.get("expected_start_time") or "")[:19].replace("T", " "),
+        "Duration s": round(r.get("total_run_time") or 0, 1),
     } for r in data])
+
 
 # ─── Ollama helpers ───────────────────────────────────────────────────────────
 @st.cache_data(ttl=60, show_spinner=False)
