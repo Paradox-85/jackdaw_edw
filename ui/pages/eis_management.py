@@ -50,7 +50,7 @@ def _fetch_export_deployments():
     import pandas as pd
     data = prefect_post("/deployments/filter", {
         "limit": 50,
-        "deployments": {"name": {"like_": "export-%"}},
+        "deployments": {"name": {"like_": "export_%"}},
     })
     if not data or isinstance(data, dict):
         return pd.DataFrame()
