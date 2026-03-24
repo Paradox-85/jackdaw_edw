@@ -51,8 +51,12 @@ jobs:
 
           def sanitize_name(path_str):
               parts = path_str.replace("/", "--").split("--")
-              parts = [p.lstrip(".") or p for p in parts]
-              return "--".join(parts)
+              cleaned = []
+              for p in parts:
+                  p = p.lstrip(".")          # убираем leading dots
+                  p = p.replace("__", "_")   # __ → _ (двойные подчёркивания)
+                  cleaned.append(p)
+              return "--".join(cleaned)
 
           def sanitize_content(content):
               # Убираем null-байты и управляющие символы кроме \n \t
