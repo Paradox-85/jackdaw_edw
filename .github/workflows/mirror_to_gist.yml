@@ -33,37 +33,45 @@ jobs:
               '.sqlite3', '.pdf', '.zip', '.tar', '.gz'
           }
 
+          MAX_FILE_BYTES = 500_000   # 500KB на файл
+          MAX_TOTAL_BYTES = 8_000_000  # 8MB суммарно
+
           files = {}
+          total_size = 0
 
           for target in INCLUDE:
-              if target.is_file():
-                  # Одиночный файл (schema.sql)
-                  paths = [target]
-              elif target.is_dir():
-                  paths = sorted(target.rglob("*"))
-              else:
-                  print(f"⚠️ Not found: {target}")
-                  continue
-
+              paths = [target] if target.is_file() else sorted(target.rglob("*"))
               for path in paths:
                   if not path.is_file():
                       continue
                   if path.suffix in EXCLUDE_SUFFIXES:
                       continue
 
-                  # Эмулируем папки: sql/schema/schema.sql → sql__schema__schema.sql
                   gist_name = str(path).replace("/", "__")
 
                   try:
                       content = path.read_text(encoding="utf-8", errors="ignore")
-                      files[gist_name] = {"content": content or " "}
                   except Exception as e:
                       print(f"⚠️ Skipped {path}: {e}")
                       continue
 
+                  # Обрезаем слишком большие файлы
+                  encoded = content.encode("utf-8")
+                  if len(encoded) > MAX_FILE_BYTES:
+                      content = content.encode("utf-8")[:MAX_FILE_BYTES].decode("utf-8", errors="ignore")
+                      content += f"\n\n... [TRUNCATED: file exceeded {MAX_FILE_BYTES//1000}KB]"
+                      print(f"✂️  Truncated: {gist_name}")
+
+                  file_size = len(content.encode("utf-8"))
+                  if total_size + file_size > MAX_TOTAL_BYTES:
+                      print(f"⛔ Size limit reached, skipping: {gist_name}")
+                      continue
+
+                  files[gist_name] = {"content": content or " "}
+                  total_size += file_size
+
           print(f"📦 Files to push: {len(files)}")
-          for name in sorted(files.keys()):
-              print(f"  {name}")
+          print(f"📊 Total size: {total_size / 1024:.1f} KB")
 
           payload = json.dumps({"files": files}).encode("utf-8")
 
