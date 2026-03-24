@@ -53,13 +53,12 @@ jobs:
               parts = path_str.replace("/", "--").split("--")
               cleaned = []
               for p in parts:
-                  p = p.lstrip(".")          # убираем leading dots
-                  p = p.replace("__", "_")   # __ → _ (двойные подчёркивания)
+                  p = p.lstrip(".")
+                  p = p.replace("__", "_")
                   cleaned.append(p)
               return "--".join(cleaned)
 
           def sanitize_content(content):
-              # Убираем null-байты и управляющие символы кроме \n \t
               return "".join(c for c in content if c >= " " or c in "\n\t")
 
           # Собираем все файлы
@@ -74,32 +73,30 @@ jobs:
                   gist_name = sanitize_name(str(path))
                   try:
                       content = path.read_text(encoding="utf-8", errors="ignore")
-                      content = sanitize_content(content)  # <- чистим контент
+                      content = sanitize_content(content)
                   except Exception as e:
                       print(f"⚠️ Skipped {path}: {e}")
                       continue
                   encoded = content.encode("utf-8")
                   if len(encoded) > MAX_FILE_BYTES:
                       content = encoded[:MAX_FILE_BYTES].decode("utf-8", errors="ignore")
-                      content += f"\n\n... [TRUNCATED]"
+                      content += "\n\n... [TRUNCATED]"
                   all_files[gist_name] = {"content": content or " "}
 
           print(f"📦 Total files: {len(all_files)}")
 
-          # Пушим батчами по 10 — найдём проблемный батч
+          # Пушим по ОДНОМУ файлу — найдём точного виновника
           items = list(all_files.items())
-          BATCH_SIZE = 10
-          for i in range(0, len(items), BATCH_SIZE):
-              batch = dict(items[i:i+BATCH_SIZE])
-              batch_names = list(batch.keys())
-              print(f"📤 Batch {i//BATCH_SIZE + 1}: {batch_names}")
-              payload = json.dumps({"files": batch}).encode("utf-8")
+          for i, (name, file_data) in enumerate(items):
+              print(f"📤 [{i+1}/{len(items)}] {name}")
+              payload = json.dumps({"files": {name: file_data}}).encode("utf-8")
               gh_request(
                   f"https://api.github.com/gists/{GIST_ID}",
                   data=payload,
                   method="PATCH"
               )
-              print(f"✅ Batch {i//BATCH_SIZE + 1} OK")
+              print(f"✅ OK")
 
           print(f"✅ All done: https://gist.github.com/{GIST_ID}")
           EOF
+
