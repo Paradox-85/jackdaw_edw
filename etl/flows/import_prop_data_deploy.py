@@ -162,7 +162,7 @@ def sync_properties_task(run_id):
             "nch": stats["No Changes"], "ne": stats["Errors"]
         })
 
-@flow(name="Property Values Sync")
+@flow(name="import_prop_data", log_prints=True)
 def properties_sync_flow():
     rid = str(uuid.uuid4())
     sync_properties_task(rid)

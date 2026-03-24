@@ -325,7 +325,7 @@ _FILE_420 = "JDAW-KVE-E-JA-6944-00001-022-{revision}.CSV"
 # Prefect tasks (one per export)
 # ---------------------------------------------------------------------------
 
-@task(name="extract-doc-to-site", retries=1, cache_policy=NO_CACHE)
+@task(name="extract_doc_to_site_data", retries=1, cache_policy=NO_CACHE)
 def extract_doc_to_site(engine: Engine) -> pd.DataFrame:
     """Run Doc→Site SQL query and return raw DataFrame."""
     logger = get_run_logger()
@@ -335,7 +335,7 @@ def extract_doc_to_site(engine: Engine) -> pd.DataFrame:
     return df
 
 
-@task(name="extract-doc-to-plant", retries=1, cache_policy=NO_CACHE)
+@task(name="extract_doc_to_plant_data", retries=1, cache_policy=NO_CACHE)
 def extract_doc_to_plant(engine: Engine) -> pd.DataFrame:
     """Run Doc→Plant SQL query and return raw DataFrame."""
     logger = get_run_logger()
@@ -345,7 +345,7 @@ def extract_doc_to_plant(engine: Engine) -> pd.DataFrame:
     return df
 
 
-@task(name="extract-doc-to-process-unit", retries=1, cache_policy=NO_CACHE)
+@task(name="extract_doc_to_process_unit_data", retries=1, cache_policy=NO_CACHE)
 def extract_doc_to_process_unit(engine: Engine) -> pd.DataFrame:
     """Run Doc→ProcessUnit SQL query and return raw DataFrame."""
     logger = get_run_logger()
@@ -355,7 +355,7 @@ def extract_doc_to_process_unit(engine: Engine) -> pd.DataFrame:
     return df
 
 
-@task(name="extract-doc-to-area", retries=1, cache_policy=NO_CACHE)
+@task(name="extract_doc_to_area_data", retries=1, cache_policy=NO_CACHE)
 def extract_doc_to_area(engine: Engine) -> pd.DataFrame:
     """Run Doc→Area SQL query and return raw DataFrame."""
     logger = get_run_logger()
@@ -365,7 +365,7 @@ def extract_doc_to_area(engine: Engine) -> pd.DataFrame:
     return df
 
 
-@task(name="extract-doc-to-tag", retries=1, cache_policy=NO_CACHE)
+@task(name="extract_doc_to_tag_data", retries=1, cache_policy=NO_CACHE)
 def extract_doc_to_tag(engine: Engine) -> pd.DataFrame:
     """Run Doc→Tag SQL query and return raw DataFrame."""
     logger = get_run_logger()
@@ -375,7 +375,7 @@ def extract_doc_to_tag(engine: Engine) -> pd.DataFrame:
     return df
 
 
-@task(name="extract-doc-to-equipment", retries=1, cache_policy=NO_CACHE)
+@task(name="extract_doc_to_equipment_data", retries=1, cache_policy=NO_CACHE)
 def extract_doc_to_equipment(engine: Engine) -> pd.DataFrame:
     """Run Doc→Equipment SQL query and return raw DataFrame."""
     logger = get_run_logger()
@@ -385,7 +385,7 @@ def extract_doc_to_equipment(engine: Engine) -> pd.DataFrame:
     return df
 
 
-@task(name="extract-doc-to-model-part", retries=1, cache_policy=NO_CACHE)
+@task(name="extract_doc_to_model_part_data", retries=1, cache_policy=NO_CACHE)
 def extract_doc_to_model_part(engine: Engine) -> pd.DataFrame:
     """Run Doc→ModelPart SQL query and return raw DataFrame."""
     logger = get_run_logger()
@@ -395,7 +395,7 @@ def extract_doc_to_model_part(engine: Engine) -> pd.DataFrame:
     return df
 
 
-@task(name="extract-doc-to-po", retries=1, cache_policy=NO_CACHE)
+@task(name="extract_doc_to_po_data", retries=1, cache_policy=NO_CACHE)
 def extract_doc_to_po(engine: Engine) -> pd.DataFrame:
     """Run Doc→PurchaseOrder SQL query and return raw DataFrame."""
     logger = get_run_logger()
@@ -422,7 +422,7 @@ def _validate_revision(doc_revision: str) -> None:
 # Prefect flows (one per EIS sequence)
 # ---------------------------------------------------------------------------
 
-@flow(name="export-doc-to-site", log_prints=True)
+@flow(name="export_doc_to_site_data", log_prints=True)
 def export_doc_to_site_flow(
     doc_revision: str = "A35",
     output_dir: str | None = None,
@@ -460,7 +460,7 @@ def export_doc_to_site_flow(
     )
 
 
-@flow(name="export-doc-to-plant", log_prints=True)
+@flow(name="export_doc_to_plant_data", log_prints=True)
 def export_doc_to_plant_flow(
     doc_revision: str = "A35",
     output_dir: str | None = None,
@@ -498,7 +498,7 @@ def export_doc_to_plant_flow(
     )
 
 
-@flow(name="export-doc-to-process-unit", log_prints=True)
+@flow(name="export_doc_to_process_unit_data", log_prints=True)
 def export_doc_to_process_unit_flow(
     doc_revision: str = "A35",
     output_dir: str | None = None,
@@ -538,7 +538,7 @@ def export_doc_to_process_unit_flow(
     )
 
 
-@flow(name="export-doc-to-area", log_prints=True)
+@flow(name="export_doc_to_area_data", log_prints=True)
 def export_doc_to_area_flow(
     doc_revision: str = "A35",
     output_dir: str | None = None,
@@ -578,7 +578,7 @@ def export_doc_to_area_flow(
     )
 
 
-@flow(name="export-doc-to-tag", log_prints=True)
+@flow(name="export_doc_to_tag_data", log_prints=True)
 def export_doc_to_tag_flow(
     doc_revision: str = "A35",
     output_dir: str | None = None,
@@ -618,7 +618,7 @@ def export_doc_to_tag_flow(
     )
 
 
-@flow(name="export-doc-to-equipment", log_prints=True)
+@flow(name="export_doc_to_equipment_data", log_prints=True)
 def export_doc_to_equipment_flow(
     doc_revision: str = "A35",
     output_dir: str | None = None,
@@ -659,7 +659,7 @@ def export_doc_to_equipment_flow(
     )
 
 
-@flow(name="export-doc-to-model-part", log_prints=True)
+@flow(name="export_doc_to_model_part_data", log_prints=True)
 def export_doc_to_model_part_flow(
     doc_revision: str = "A35",
     output_dir: str | None = None,
@@ -699,7 +699,7 @@ def export_doc_to_model_part_flow(
     )
 
 
-@flow(name="export-doc-to-po", log_prints=True)
+@flow(name="export_doc_to_po_data", log_prints=True)
 def export_doc_to_po_flow(
     doc_revision: str = "A35",
     output_dir: str | None = None,
@@ -743,7 +743,7 @@ def export_doc_to_po_flow(
 # Master flow — runs all 8 exports in sequence
 # ---------------------------------------------------------------------------
 
-@flow(name="export-document-crossref", log_prints=True)
+@flow(name="export_document_crossref_data", log_prints=True)
 def export_document_crossref_flow(
     doc_revision: str = "A35",
     output_dir: str | None = None,
@@ -785,19 +785,19 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/export_document_crossref_deploy.py:export_document_crossref_flow",
     ).deploy(
-        name="export-document-crossref-deployment",
+        name="export_document_crossref_data_deploy",
         work_pool_name="default-agent-pool",
     )
     # Individual sub-flow deployments — allow triggering each register separately
     _SUB_FLOWS = [
-        (export_doc_to_site_flow,            "export-doc-to-site-deploy"),
-        (export_doc_to_plant_flow,           "export-doc-to-plant-deploy"),
-        (export_doc_to_process_unit_flow,    "export-doc-to-process-unit-deploy"),
-        (export_doc_to_area_flow,            "export-doc-to-area-deploy"),
-        (export_doc_to_tag_flow,             "export-doc-to-tag-deploy"),
-        (export_doc_to_equipment_flow,       "export-doc-to-equipment-deploy"),
-        (export_doc_to_model_part_flow,      "export-doc-to-model-part-deploy"),
-        (export_doc_to_po_flow,              "export-doc-to-po-deploy"),
+        (export_doc_to_site_flow,            "export_doc_to_site_data_deploy"),
+        (export_doc_to_plant_flow,           "export_doc_to_plant_data_deploy"),
+        (export_doc_to_process_unit_flow,    "export_doc_to_process_unit_data_deploy"),
+        (export_doc_to_area_flow,            "export_doc_to_area_data_deploy"),
+        (export_doc_to_tag_flow,             "export_doc_to_tag_data_deploy"),
+        (export_doc_to_equipment_flow,       "export_doc_to_equipment_data_deploy"),
+        (export_doc_to_model_part_flow,      "export_doc_to_model_part_data_deploy"),
+        (export_doc_to_po_flow,              "export_doc_to_po_data_deploy"),
     ]
     for _flow_obj, _dep_name in _SUB_FLOWS:
         _flow_obj.from_source(

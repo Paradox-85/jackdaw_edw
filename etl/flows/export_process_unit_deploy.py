@@ -84,7 +84,7 @@ def extract_process_unit(engine: Engine) -> pd.DataFrame:
 # Prefect flow
 # ---------------------------------------------------------------------------
 
-@flow(name="export-process-unit", log_prints=True)
+@flow(name="export_process_unit_data", log_prints=True)
 def export_process_unit_flow(
     doc_revision: str = "A35",
     output_dir: str | None = None,
@@ -138,6 +138,6 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/export_process_unit_deploy.py:export_process_unit_flow",
     ).deploy(
-        name="export-process-unit-deploy",
+        name="export_process_unit_data_deploy",
         work_pool_name="default-agent-pool",
     )

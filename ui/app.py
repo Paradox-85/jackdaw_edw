@@ -77,6 +77,7 @@ if not st.session_state.get("authenticated"):
 # ─── Page registry (must be defined before sidebar) ───────────────────────────
 VIEWER_PAGES: dict = {
     "🏠  Home": home,
+    "📤  EIS Management": eis_management,
     # "🗂  Tag Register":  tag_register,  # hidden — Phase 2
     # "📊  Reports":       reports,       # hidden — Phase 2
     # "📋  Tag History":   tag_history,   # hidden — Phase 2
@@ -88,7 +89,7 @@ VIEWER_PAGES: dict = {
 }
 
 ADMIN_EXTRA_PAGES: dict = {
-    "📤  EIS Management": eis_management,
+    # "📤  EIS Management": eis_management,
     # "📥  ETL Import":  etl_import,   # hidden — trigger via Home Quick Sync
     # "🔗  Services":    services,     # hidden — duplicates Home admin block
 }

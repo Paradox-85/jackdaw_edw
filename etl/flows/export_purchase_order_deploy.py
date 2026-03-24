@@ -85,7 +85,7 @@ def extract_purchase_order(engine: Engine) -> pd.DataFrame:
 # Prefect flow
 # ---------------------------------------------------------------------------
 
-@flow(name="export-purchase-order", log_prints=True)
+@flow(name="export_purchase_order_data", log_prints=True)
 def export_purchase_order_flow(
     doc_revision: str = "A35",
     output_dir: str | None = None,
@@ -139,6 +139,6 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/export_purchase_order_deploy.py:export_purchase_order_flow",
     ).deploy(
-        name="export-purchase-order-deploy",
+        name="export_purchase_order_data_deploy",
         work_pool_name="default-agent-pool",
     )

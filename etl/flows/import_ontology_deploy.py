@@ -387,7 +387,7 @@ def sync_mappings() -> None:
 # Prefect flow
 # ---------------------------------------------------------------------------
 
-@flow(name="Ontology Master Seed", log_prints=True)
+@flow(name="import_ontology_data", log_prints=True)
 def ontology_master_flow() -> None:
     """
     Full ontology seed pipeline from Master RDL Excel.
@@ -425,6 +425,6 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/import_ontology_deploy.py:ontology_master_flow",
     ).deploy(
-        name="import_ontology_deploy",
+        name="import_ontology_data_deploy",
         work_pool_name="default-agent-pool",
     )

@@ -110,7 +110,7 @@ def extract_tag_properties(engine: Engine) -> pd.DataFrame:
 # Prefect flow
 # ---------------------------------------------------------------------------
 
-@flow(name="export-tag-properties", log_prints=True)
+@flow(name="export_tag_properties_data", log_prints=True)
 def export_tag_properties_flow(
     doc_revision: str = "A01",
     output_dir: str | None = None,
@@ -167,6 +167,6 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/export_tag_properties_deploy.py:export_tag_properties_flow",
     ).deploy(
-        name="export-tag-properties-deploy",
+        name="export_tag_properties_data_deploy",
         work_pool_name="default-agent-pool",
     )

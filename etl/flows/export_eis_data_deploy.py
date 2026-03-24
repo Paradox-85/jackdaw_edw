@@ -37,8 +37,7 @@ except ImportError as e:
     sys.exit(0)
 
 
-@flow(name="EIS Full Package Export",
-      description="SEQUENTIAL PIPELINE: all 11 EIS export flows — registers, properties, connections, doc cross-refs.")
+@flow(name="export_eis_package_data", log_prints=True, description="SEQUENTIAL PIPELINE: all 11 EIS export flows — registers, properties, connections, doc cross-refs.")
 def export_eis_package_flow(doc_revision: str = "A35") -> dict[str, dict]:
     """
     Run all EIS export flows sequentially to produce a complete EIS data package.
@@ -97,7 +96,7 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/export_eis_data_deploy.py:export_eis_package_flow",
     ).deploy(
-        name="export-eis-package-deployment",
+        name="export_eis_package_data_deploy",
         work_pool_name="default-agent-pool",
         tags=["production", "eis-export", "full-package"],
     )

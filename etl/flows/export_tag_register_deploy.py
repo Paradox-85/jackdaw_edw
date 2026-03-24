@@ -132,7 +132,7 @@ def extract_tag_register(engine: Engine) -> pd.DataFrame:
 # Prefect flow
 # ---------------------------------------------------------------------------
 
-@flow(name="export-tag-register", log_prints=True)
+@flow(name="export_tag_register_data", log_prints=True)
 def export_tag_register_flow(
     doc_revision: str = "A35",
     output_dir: str | None = None,
@@ -187,6 +187,6 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/export_tag_register_deploy.py:export_tag_register_flow",
     ).deploy(
-        name="export-tag-register-deploy",
+        name="export_tag_register_data_deploy",
         work_pool_name="default-agent-pool",
     )

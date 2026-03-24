@@ -122,7 +122,7 @@ def extract_equipment_register(engine: Engine) -> pd.DataFrame:
 # Prefect flow
 # ---------------------------------------------------------------------------
 
-@flow(name="export-equipment-register", log_prints=True)
+@flow(name="export_equipment_register_data", log_prints=True)
 def export_equipment_register_flow(
     doc_revision: str = "A01",
     output_dir: str | None = None,
@@ -177,6 +177,6 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/export_equipment_register_deploy.py:export_equipment_register_flow",
     ).deploy(
-        name="export-equipment-register-deploy",
+        name="export_equipment_register_data_deploy",
         work_pool_name="default-agent-pool",
     )

@@ -110,7 +110,7 @@ def extract_equipment_properties(engine: Engine) -> pd.DataFrame:
 # Prefect flow
 # ---------------------------------------------------------------------------
 
-@flow(name="export-equipment-properties", log_prints=True)
+@flow(name="export_equipment_properties_data", log_prints=True)
 def export_equipment_properties_flow(
     doc_revision: str = "A01",
     output_dir: str | None = None,
@@ -167,6 +167,6 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/export_equipment_properties_deploy.py:export_equipment_properties_flow",
     ).deploy(
-        name="export-equipment-properties-deploy",
+        name="export_equipment_properties_data_deploy",
         work_pool_name="default-agent-pool",
     )

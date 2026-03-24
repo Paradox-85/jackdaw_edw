@@ -20,8 +20,8 @@ except ImportError as e:
     print(f"[SKIP] {Path(__file__).name}: Could not import flow tasks. Details: {e}")
     sys.exit(0)
 
-@flow(name="Project Master Data Sync", 
-      description="SEQUENTIAL PIPELINE: 1. Documents -> 2. Tags -> 3. Hierarchy -> 4. Property Values")
+@flow(name="import_master_sync", 
+      description="SEQUENTIAL PIPELINE: 1. Documents -> 2. Tags -> 3. Hierarchy -> 4. Property Values", log_prints=True)
 def main_sync_flow():
     logger = get_run_logger()
     

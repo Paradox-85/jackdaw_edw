@@ -572,7 +572,7 @@ def seed_article(engine: Engine) -> None:
 # Prefect flow
 # ---------------------------------------------------------------------------
 
-@flow(name="Reference Data Seed", log_prints=True)
+@flow(name="import_reference_data", log_prints=True)
 def seed_reference_flow() -> None:
     """
     Full reference_core seed pipeline from Master Reference Data Excel.
@@ -616,6 +616,6 @@ if __name__ == "__main__":
         source=str(_REPO_ROOT),
         entrypoint="etl/flows/import_reference_deploy.py:seed_reference_flow",
     ).deploy(
-        name="import_reference_deploy",
+        name="import_referenc_data_deploy",
         work_pool_name="default-agent-pool",
     )

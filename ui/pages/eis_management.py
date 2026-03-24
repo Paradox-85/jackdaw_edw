@@ -18,7 +18,7 @@ from pathlib import Path
 import streamlit as st
 from ui.common import (
     EIS_EXPORT_DIR, get_flow_run_status, log, render_log,
-    require_admin, section, trigger_deployment, prefect_post,
+    section, trigger_deployment, prefect_post,
 )
 
 # Single master deployment — runs all 11 EIS export flows sequentially
@@ -139,8 +139,6 @@ def _log_child_changes(children: list[dict]) -> None:
 def render() -> None:
     st.markdown("### 📤 EIS Management")
     st.caption("Export EIS data packages · Revision control · Prefect orchestration")
-
-    require_admin()
 
     # ── Export Deployments ────────────────────────────────────────────────────
     section("Export Deployments")

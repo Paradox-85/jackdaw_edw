@@ -410,7 +410,7 @@ def build_hierarchy(override_file=None):
               AND t.to_tag_raw != '';
         """))
 
-@flow(name="Tag Register Master Sync", log_prints=True)
+@flow(name="import_tag_data", log_prints=True)
 def tag_sync_flow():
     rid = str(uuid.uuid4())
     sync_tags_task(rid)
