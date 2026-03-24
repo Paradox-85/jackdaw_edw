@@ -236,6 +236,19 @@ def transform_tag_register(df: pd.DataFrame) -> pd.DataFrame:
     """
     df = _apply_common_eis_transforms(df)
 
+    # Override ACTION_DATE: use last status change from tag_status_history,
+    # not sync_timestamp (which reflects last ETL run, not last status change).
+    # Source column: action_date_raw (correlated subquery in _TAG_REGISTER_SQL).
+    # Fallback to empty string when tag has no history entries yet.
+    if "ACTION_DATE_RAW" in df.columns:
+        df["ACTION_DATE"] = (
+            pd.to_datetime(df["ACTION_DATE_RAW"], errors="coerce")
+            .fillna(pd.to_datetime(df["SYNC_TIMESTAMP"], errors="coerce"))  # fallback
+            .dt.strftime("%d.%m.%Y")
+            .fillna("")
+        )
+        df = df.drop(columns=["ACTION_DATE_RAW"], errors="ignore")
+
     # Normalise PARENT_TAG_NAME: literal 'unset' → empty string
     df["PARENT_TAG_NAME"] = df["PARENT_TAG_NAME"].replace("unset", "")
 

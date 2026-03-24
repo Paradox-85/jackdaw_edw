@@ -40,6 +40,7 @@ Gate:    t.object_status = 'Active' — primary indexed filter.
 Note:    SAFETY_CRITICAL_ITEM_GROUP aggregated via correlated subquery
          (one tag may map to N active SECEs).
 Changes: 2026-03-10 — Initial implementation.
+         2026-03-24 — ACTION_DATE sourced from audit_core.tag_status_history (last status change).
 */
 SELECT
     pl.code                                     AS PLANT_CODE,
@@ -65,6 +66,14 @@ SELECT
     )                                           AS SAFETY_CRITICAL_ITEM_GROUP,
     t.safety_critical_item_reason_awarded       AS SAFETY_CRITICAL_ITEM_REASON_AWARDED,
     t.description                               AS TAG_DESCRIPTION,
+    -- ACTION_DATE: date of last status change from audit history
+    -- Why correlated subquery: same pattern as SAFETY_CRITICAL_ITEM_GROUP above.
+    -- NULL possible if tag has no history yet — handled in transform.
+    (
+        SELECT MAX(tsh.sync_timestamp)
+        FROM audit_core.tag_status_history tsh
+        WHERE tsh.tag_id = t.id
+    ) AS action_date_raw,
     -- raw FK fields below: used by built-in FK validation rules, dropped by transform before CSV write
     t.area_code_raw                             AS area_code_raw,
     t.tag_class_raw                             AS tag_class_raw,
