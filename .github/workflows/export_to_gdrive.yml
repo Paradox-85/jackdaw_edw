@@ -1,5 +1,4 @@
-# .github/workflows/export_to_gdrive.yml
-name: Export repo to Google Drive
+name: Export repo to Gist
 
 on:
   push:
@@ -33,45 +32,17 @@ jobs:
               cat "$file" >> $OUTPUT
               echo '```' >> $OUTPUT
               echo "" >> $OUTPUT
-          done
+            done
 
-      - name: Upload to Google Drive
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - run: pip install google-api-python-client google-auth
-
-      - name: Push to Google Drive
+      - name: Push to Gist
         env:
-          GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
-          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
         run: |
-          python - <<'EOF'
-          import os, json
-          from google.oauth2 import service_account
-          from googleapiclient.discovery import build
-          from googleapiclient.http import MediaFileUpload
-
-          creds_info = json.loads(os.environ["GDRIVE_CREDENTIALS"])
-          creds = service_account.Credentials.from_service_account_info(
-              creds_info,
-              scopes=["https://www.googleapis.com/auth/drive"]
-          )
-          service = build("drive", "v3", credentials=creds)
-          folder_id = os.environ["GDRIVE_FOLDER_ID"]
-
-          # Удаляем старый файл если есть
-          results = service.files().list(
-              q=f"name='repo_export.md' and '{folder_id}' in parents",
-              fields="files(id)"
-          ).execute()
-          for f in results.get("files", []):
-              service.files().delete(fileId=f["id"]).execute()
-
-          # Загружаем новый
-          file_metadata = {"name": "repo_export.md", "parents": [folder_id]}
-          media = MediaFileUpload("repo_export.md", mimetype="text/plain")
-          service.files().create(body=file_metadata, media_body=media).execute()
-          print("✅ Uploaded repo_export.md to Google Drive")
-          EOF
+          CONTENT=$(cat repo_export.md | jq -Rs .)
+          curl -s -X PATCH \
+            -H "Authorization: token $GIST_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"files\":{\"repo_export.md\":{\"content\":$CONTENT}}}" \
+            "https://api.github.com/gists/$GIST_ID"
+          echo "✅ Gist updated: https://gist.github.com/$GIST_ID"
