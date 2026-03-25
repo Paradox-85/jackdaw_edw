@@ -1,4 +1,4 @@
-name: Mirror to Google Drive
+name: Export repo to Google Drive
 
 on:
   push:
@@ -6,41 +6,83 @@ on:
   workflow_dispatch:
 
 jobs:
-  sync:
+  export:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rclone
-        run: sudo apt-get install -y rclone
+      - name: Merge files into one MD
+        run: |
+          OUTPUT="jackdaw_edw_repository.md"
+          echo "# Jackdaw EDW — Full Repository Export" > $OUTPUT
+          echo "_Generated: $(date -u)_" >> $OUTPUT
+          echo "" >> $OUTPUT
 
-      - name: Create Rclone Config
+          find . -mindepth 1 -type f \
+            ! -name 'jackdaw_edw_repository.md' \
+            ! -path './.git/*' \
+            ! -path './.github/*' \
+            ! -path './.claude/*' \
+            ! -path './.streamlit/*' \
+            ! -path './.vscode/*' \
+            ! -path './.superpowers/*' \
+            ! -path './docs/*' \
+            ! -path './frontend/*' \
+            ! -path './prompts/*' \
+            ! -name '*.pyc' \
+            ! -name '*.png' \
+            ! -name '*.jpg' \
+            ! -name '*.jpeg' \
+            ! -name '*.json' \
+            ! -name '*.gif' \
+            ! -name '*.md' \
+            ! -name '*.ico' \
+            ! -name '*.xlsx' \
+            ! -name '*.xls' \
+            ! -name '*.db' \
+            ! -name '*.sqlite' \
+            ! -name '*.sqlite3' \
+            ! -name '*.pdf' \
+            ! -name '*.zip' \
+            ! -name '*.tar' \
+            ! -name '*.gz' \
+            | sort | while read file; do
+              echo "## \`$file\`" >> $OUTPUT
+              # detect extension for syntax highlighting
+              ext="${file##*.}"
+              echo "\`\`\`${ext}" >> $OUTPUT
+              cat "$file" >> $OUTPUT
+              echo '```' >> $OUTPUT
+              echo "" >> $OUTPUT
+            done
+
+          echo "✅ Generated $(wc -l < $OUTPUT) lines"
+
+      - name: Install rclone
+        run: |
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+          rclone version
+
+      - name: Configure rclone for Google Drive
+        env:
+          RCLONE_GDRIVE_TOKEN: ${{ secrets.RCLONE_GDRIVE_TOKEN }}
+          RCLONE_GDRIVE_ROOT_FOLDER_ID: ${{ secrets.RCLONE_GDRIVE_ROOT_FOLDER_ID }}
         run: |
           mkdir -p ~/.config/rclone
-          cat > ~/.config/rclone/rclone.conf << 'EOF'
+          cat > ~/.config/rclone/rclone.conf << EOF
           [gdrive]
           type = drive
+          client_id =
+          client_secret =
           scope = drive
-          token = ${{ secrets.RCLONE_GDRIVE_TOKEN }}
+          root_folder_id = ${RCLONE_GDRIVE_ROOT_FOLDER_ID}
+          token = ${RCLONE_GDRIVE_TOKEN}
           EOF
 
-      - name: Mirror repo to Google Drive
+      - name: Upload to Google Drive
         run: |
-          rclone sync ./ "gdrive:LLM/jackdaw_edw" \
-            --exclude ".git/**" \
-            --exclude ".github/**" \
-            --exclude ".claude/**" \
-            --exclude ".streamlit/**" \
-            --exclude ".vscode/**" \
-            --exclude ".superpowers/**" \
-            --exclude "docs/**" \
-            --exclude "frontend/**" \
-            --exclude "prompts/**" \
-            --exclude "*.pyc" \
-            --exclude "*.png" \
-            --exclude "*.jpg" \
-            --exclude "*.jpeg" \
-            --exclude "*.gif" \
-            --drive-use-trash \
-            --transfers 8 \
-            -v
+          rclone copy jackdaw_edw_repository.md gdrive: \
+            --transfers=4 \
+            --checksum \
+            --verbose
+          echo "✅ Uploaded to Google Drive"
