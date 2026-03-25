@@ -1,0 +1,46 @@
+name: Mirror to Google Drive
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rclone
+        run: sudo apt-get install -y rclone
+
+      - name: Create Rclone Config
+        run: |
+          mkdir -p ~/.config/rclone
+          cat > ~/.config/rclone/rclone.conf << 'EOF'
+          [gdrive]
+          type = drive
+          scope = drive
+          token = ${{ secrets.RCLONE_GDRIVE_TOKEN }}
+          EOF
+
+      - name: Mirror repo to Google Drive
+        run: |
+          rclone sync ./ "gdrive:LLM/jackdaw_edw" \
+            --exclude ".git/**" \
+            --exclude ".github/**" \
+            --exclude ".claude/**" \
+            --exclude ".streamlit/**" \
+            --exclude ".vscode/**" \
+            --exclude ".superpowers/**" \
+            --exclude "docs/**" \
+            --exclude "frontend/**" \
+            --exclude "prompts/**" \
+            --exclude "*.pyc" \
+            --exclude "*.png" \
+            --exclude "*.jpg" \
+            --exclude "*.jpeg" \
+            --exclude "*.gif" \
+            --drive-use-trash \
+            --transfers 8 \
+            -v
