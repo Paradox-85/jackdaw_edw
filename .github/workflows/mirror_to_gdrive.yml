@@ -33,10 +33,11 @@ jobs:
             ! -name '*.png' \
             ! -name '*.jpg' \
             ! -name '*.jpeg' \
-            ! -name '*.json' \
             ! -name '*.gif' \
-            ! -name '*.md' \
             ! -name '*.ico' \
+            ! -name '*.md' \
+            ! -name '*.json' \
+            ! -name '*.toml' \
             ! -name '*.xlsx' \
             ! -name '*.xls' \
             ! -name '*.db' \
@@ -48,7 +49,6 @@ jobs:
             ! -name '*.gz' \
             | sort | while read file; do
               echo "## \`$file\`" >> $OUTPUT
-              # detect extension for syntax highlighting
               ext="${file##*.}"
               echo "\`\`\`${ext}" >> $OUTPUT
               cat "$file" >> $OUTPUT
@@ -61,7 +61,6 @@ jobs:
       - name: Install rclone
         run: |
           curl -fsSL https://rclone.org/install.sh | sudo bash
-          rclone version
 
       - name: Configure rclone for Google Drive
         env:
@@ -81,8 +80,8 @@ jobs:
 
       - name: Upload to Google Drive
         run: |
-          rclone copy jackdaw_edw_repository.md gdrive: \
+          rclone copy jackdaw_edw_repository.md "gdrive:LLM/jackdaw_edw" \
             --transfers=4 \
             --checksum \
             --verbose
-          echo "✅ Uploaded to Google Drive"
+          echo "✅ Uploaded to gdrive:LLM/jackdaw_edw"
