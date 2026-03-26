@@ -305,7 +305,8 @@ def _report_duplicates(dup_by_file: dict[str, int], total_raw: int, total_loaded
         log.warning("    %-60s  %d dup(s)", src_file, count)
     log.warning("")
     log.warning("ACTION REQUIRED: Duplicates share same comment_id key:")
-    log.warning("  doc_number | group_comment | detail_sheet | tag_name")
+    log.warning("  doc_number | group_comment | detail_sheet | tag_name | comment | property_name")
+    log.warning("  (property_name included only when not null/Not Applicable)")
     log.warning("  Check for repeated rows in listed Excel files.")
     log.warning("=" * 60)
 
@@ -699,9 +700,14 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
         ).hexdigest()
 
         # comment_id — deterministic UUID5, no collisions
+        prop_key = (
+            property_name
+            if property_name and property_name.upper() != "NOT APPLICABLE"
+            else ""
+        )
         comment_id = str(uuid.uuid5(
             uuid.NAMESPACE_URL,
-            f"{doc_number}|{group_comment}|{detail_sheet or ''}|{tag_name or ''}",
+            f"{doc_number}|{group_comment}|{detail_sheet or ''}|{tag_name or ''}|{comment}|{prop_key}",
         ))
 
         # Deduplication within a single batch (protection against duplicates in Excel)
