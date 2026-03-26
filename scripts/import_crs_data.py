@@ -254,6 +254,9 @@ def _extract_tag_from_equipment(val: Any) -> str | None:
     m = _EQUIP_PREFIX_RE.match(s)
     return m.group(1) if m else s
 
+_TAG_COL_RE   = re.compile(r"\btag\b",       re.IGNORECASE)
+_EQUIP_COL_RE = re.compile(r"\bequipment\b.*(number|no\.?|num)\b", re.IGNORECASE)
+_EQUIP_EXCLUDE_RE = re.compile(r"\b(serial|manufacturer|model|part)\b", re.IGNORECASE)
 def _find_tag_col(columns: list[str]) -> tuple[str | None, bool]:
     """
     Returns (col_name, is_equipment_col).
@@ -261,14 +264,12 @@ def _find_tag_col(columns: list[str]) -> tuple[str | None, bool]:
     """
     # Priority 1: column with "tag" but without "property"
     for c in columns:
-        cl = c.lower()
-        if "tag" in cl and "property" not in cl:
+        if _TAG_COL_RE.search(c) and "property" not in c.lower():
             return c, False
 
     # Priority 2: column with "equipment" and ("number" or "no")
     for c in columns:
-        cl = c.lower()
-        if "equipment" in cl and ("number" in cl or "no" in cl):
+        if _EQUIP_COL_RE.search(c) and not _EQUIP_EXCLUDE_RE.search(c):
             return c, True
 
     return None, False
@@ -426,9 +427,11 @@ def process_key(
     key: str,
     main_path: Path,
     related_paths: tuple[Path, ...],
-) -> tuple[list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], int]:
     records:      list[dict] = []
     matched_keys: set[str]   = set()
+    seen_ids:     set[str]   = set()
+    dup_count:    int        = 0
 
     metadata, df_comments = parse_main_file(main_path)
     if metadata is None or df_comments is None:
@@ -493,7 +496,18 @@ def process_key(
                     "CRS_FILE_PATH":      metadata.get("CRS_FILE_PATH"),
                 })
 
-            break  # совпадение найдено — не проверять остальные detail-файлы
+                prop_key_chk = (
+                    prop_name
+                    if prop_name and prop_name.upper() != "NOT APPLICABLE"
+                    else ""
+                )
+                _cid = f"{metadata.get('DOC_NUMBER', '')}|{comment_text}|{sheet_key}|{tag_name or ''}|{row_comment or ''}|{prop_key_chk}"
+                if _cid in seen_ids:
+                    dup_count += 1
+                else:
+                    seen_ids.add(_cid)
+
+            break  # stop after first matching sheet
 
         if not found_detail:
             records.append({
@@ -534,7 +548,7 @@ def process_key(
                 "matched_sheets":   matched_for_file,
             })
 
-    return records, orphan_sheets
+    return records, orphan_sheets, dup_count
 
 
 # =============================================================================
@@ -624,10 +638,10 @@ def parse_all_files(
             for future in as_completed(futures):
                 key = futures[future]
                 try:
-                    records, file_orphans = future.result()
+                    records, file_orphans, dup_count = future.result()
                     all_records.extend(records)
                     orphan_sheets.extend(file_orphans)
-                    log.info("  ✓ %s — %d record(s), %d orphan(s)", key, len(records), len(file_orphans))
+                    log.info("  ✓ %s — %d record(s), %d orphan(s), %d duplicate(s)", key, len(records), len(file_orphans), dup_count)
                 except Exception as exc:
                     log.error("  ✗ %s failed: %s", key, exc)
 
