@@ -257,6 +257,57 @@ def find_matching_sheet(
 
     return None, None, None, None
 
+def _report_orphans(orphan_sheets: list[dict]) -> None:
+    if not orphan_sheets:
+        return
+
+    # Группировка по detail-файлу
+    by_file: dict[str, list[dict]] = {}
+    for o in orphan_sheets:
+        by_file.setdefault(o["detail_file"], []).append(o)
+
+    log.warning("=" * 60)
+    log.warning("ORPHAN SHEETS REPORT — %d sheet(s) in %d file(s) not loaded to DB",
+                len(orphan_sheets), len(by_file))
+    log.warning("=" * 60)
+
+    for detail_file, entries in sorted(by_file.items()):
+        # Показать все листы файла — какие совпали, какие нет
+        e0 = entries[0]
+        log.warning("")
+        log.warning("  Detail file : %s", detail_file)
+        log.warning("  Main file   : %s", e0["main_file"])
+        log.warning("  All sheets  : %s", ", ".join(e0["available_sheets"]))
+        log.warning("  Matched     : %s", ", ".join(e0["matched_sheets"]) or "— none —")
+        log.warning("  ORPHAN(S)   :")
+        for o in entries:
+            log.warning("    ✗ sheet='%s'  rows=%d", o["sheet_key"], o["rows"])
+            # Подсказка: найти похожие совпавшие комментарии в main-файле
+            log.warning("      → sheet normalized: '%s'", _alphanum(o["sheet_key"]))
+
+    log.warning("")
+    log.warning("ACTION REQUIRED: Check that GROUP_COMMENT text in main file")
+    log.warning("  contains sheet name (after stripping spaces/special chars).")
+    log.warning("=" * 60)
+
+def _report_duplicates(dup_by_file: dict[str, int], total_raw: int, total_loaded: int) -> None:
+    total_dups = sum(dup_by_file.values())
+    if not total_dups:
+        log.info("Prepared %d DB records — no duplicates.", total_loaded)
+        return
+
+    log.warning("=" * 60)
+    log.warning("DUPLICATE RECORDS REPORT — %d duplicate(s) skipped", total_dups)
+    log.warning("  Total raw: %d  →  loaded: %d  →  skipped: %d",
+                total_raw, total_loaded, total_dups)
+    log.warning("  By source file:")
+    for src_file, count in sorted(dup_by_file.items(), key=lambda x: -x[1]):
+        log.warning("    %-60s  %d dup(s)", src_file, count)
+    log.warning("")
+    log.warning("ACTION REQUIRED: Duplicates share same comment_id key:")
+    log.warning("  doc_number | group_comment | detail_sheet | tag_name")
+    log.warning("  Check for repeated rows in listed Excel files.")
+    log.warning("=" * 60)
 
 def parse_main_file(path: Path) -> tuple[dict | None, pd.DataFrame | None]:
     try:
@@ -422,12 +473,22 @@ def process_key(
                 "CRS_FILE_PATH":      metadata.get("CRS_FILE_PATH"),
             })
 
-    orphan_sheets: list[str] = []
+    orphan_sheets: list[dict] = []
     for detail_path, sheets in all_detail_sheets.items():
-        for sk in sheets:
-            composite = f"{detail_path.name}::{sk}"
-            if composite not in matched_keys:
-                orphan_sheets.append(composite)
+        available_sheets   = list(sheets.keys())
+        matched_for_file   = [mk.split("::")[1] for mk in matched_keys if mk.startswith(detail_path.name + "::")]
+        unmatched_for_file = [sk for sk in available_sheets if sk not in matched_for_file]
+
+        for sk in unmatched_for_file:
+            df_orphan, _, _ = sheets[sk]
+            orphan_sheets.append({
+                "detail_file":      detail_path.name,
+                "sheet_key":        sk,
+                "rows":             len(df_orphan),
+                "main_file":        main_path.name,
+                "available_sheets": available_sheets,
+                "matched_sheets":   matched_for_file,
+            })
 
     return records, orphan_sheets
 
@@ -496,7 +557,7 @@ def parse_all_files(
     revs_to_process = [debug_rev] if debug_rev else rev_order
 
     all_records:   list[dict] = []
-    orphan_sheets: list[str]  = []
+    orphan_sheets: list[dict] = []
 
     for rev in revs_to_process:
         keys = sorted(groups.get(rev, []))  # внутри ревизии — по имени
@@ -588,6 +649,7 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
     db_records: list[dict] = []
     tag_miss = doc_miss = 0
     seen_comment_ids: set[str] = set()
+    dup_by_file: dict[str, int] = {}
 
     for rec in raw_records:
         # clean_string is called once per field — result is reused
@@ -644,7 +706,8 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
 
         # Deduplication within a single batch (protection against duplicates in Excel)
         if comment_id in seen_comment_ids:
-            log.debug("Duplicate comment_id skipped: %s", comment_id)
+            src = clean_string(rec.get("SOURCE_FILE")) or "UNKNOWN"
+            dup_by_file[src] = dup_by_file.get(src, 0) + 1
             continue
         seen_comment_ids.add(comment_id)
 
@@ -676,11 +739,8 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
         log.warning("FK miss — tag_name unresolved: %d (tag_id=NULL)", tag_miss)
     if doc_miss:
         log.warning("FK miss — doc_number unresolved: %d (doc_id=NULL)", doc_miss)
-    log.info(
-        "Prepared %d DB records (%d duplicates skipped).",
-        len(db_records),
-        len(raw_records) - len(db_records),
-    )
+    _report_duplicates(dup_by_file, len(raw_records), len(db_records))
+
     return db_records
 
 
@@ -849,10 +909,7 @@ def run(debug_mode: bool = False, debug_rev: str | None = None) -> None:
 
     engine.dispose()
 
-    if orphan_sheets:
-        log.warning("%d orphan sheet(s) with no matching comment:", len(orphan_sheets))
-        for s in orphan_sheets[:20]:
-            log.warning("  %s", s)
+    _report_orphans(orphan_sheets)
 
     log.info(
         "=== DONE | parsed=%d loaded=%d errors=%d orphans=%d ===",
