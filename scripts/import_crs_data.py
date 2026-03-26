@@ -475,60 +475,140 @@ def parse_all_files(
 
 
 def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
-    with engine.connect() as conn:
-        tag_lookup: dict[str, str] = {
-            row.tag_name: str(row.id)
-            for row in conn.execute(
-                text("SELECT id, tag_name FROM project_core.tag WHERE object_status = 'Active'")
-            )
-        }
-        doc_lookup: dict[str, str] = {
-            row.doc_number: str(row.id)
-            for row in conn.execute(
-                text("SELECT id, doc_number FROM project_core.document WHERE object_status = 'Active'")
-            )
-        }
-    log.info("FK caches loaded: %d tags, %d documents.", len(tag_lookup), len(doc_lookup))
+    if not raw_records:
+        return []
 
+    # ── 1. Collect only needed values for FK lookup ──────────────────────
+    needed_tags = {
+        clean_string(r.get("TAG_NAME"))
+        for r in raw_records
+        if clean_string(r.get("TAG_NAME"))
+    }
+    needed_docs = {
+        clean_string(r.get("DOC_NUMBER")) or "UNKNOWN"
+        for r in raw_records
+    } - {"UNKNOWN"}
+
+    # ── 2. FK lookup — only for needed values (ANY instead of full scan) ─────
+    with engine.connect() as conn:
+        tag_lookup: dict[str, str] = {}
+        if needed_tags:
+            tag_lookup = {
+                row.tag_name: str(row.id)
+                for row in conn.execute(
+                    text("""
+                        SELECT id, tag_name
+                        FROM project_core.tag
+                        WHERE tag_name = ANY(:names)
+                          AND object_status = 'Active'
+                    """),
+                    {"names": list(needed_tags)},
+                )
+            }
+
+        doc_lookup: dict[str, str] = {}
+        if needed_docs:
+            doc_lookup = {
+                row.doc_number: str(row.id)
+                for row in conn.execute(
+                    text("""
+                        SELECT id, doc_number
+                        FROM project_core.document
+                        WHERE doc_number = ANY(:names)
+                          AND object_status = 'Active'
+                    """),
+                    {"names": list(needed_docs)},
+                )
+            }
+
+    log.info(
+        "FK lookup: %d/%d tags resolved, %d/%d docs resolved.",
+        len(tag_lookup), len(needed_tags),
+        len(doc_lookup), len(needed_docs),
+    )
+
+    # ── 3. Build records ─────────────────────────────────────────────────
     db_records: list[dict] = []
     tag_miss = doc_miss = 0
+    seen_comment_ids: set[str] = set()
 
     for rec in raw_records:
-        hash_dict = {
-            k: str(v) for k, v in rec.items()
-            if k.lower() not in HASH_EXCLUDE_FIELDS and v is not None
-        }
-        row_hash  = hashlib.md5(json.dumps(hash_dict, sort_keys=True).encode()).hexdigest()
-        doc_number = clean_string(rec.get("DOC_NUMBER")) or "UNKNOWN"
-        comment_id = f"{doc_number}#{row_hash[:8]}"
+        # clean_string is called once per field — result is reused
+        doc_number        = clean_string(rec.get("DOC_NUMBER")) or "UNKNOWN"
+        tag_name          = clean_string(rec.get("TAG_NAME"))
+        revision          = clean_string(rec.get("REVISION"))
+        return_code       = clean_string(rec.get("RETURN_CODE"))
+        transmittal_num   = clean_string(rec.get("TRANSMITTAL_NUMBER"))
+        transmittal_date  = to_dt(rec.get("TRANSMITTAL_DATE"))
+        group_comment     = clean_string(rec.get("GROUP_COMMENT")) or ""
+        comment           = clean_string(rec.get("COMMENT")) or ""
+        property_name     = clean_string(rec.get("PROPERTY_NAME"))
+        response_vendor   = clean_string(rec.get("RESPONSE"))
+        source_file       = clean_string(rec.get("SOURCE_FILE")) or ""
+        detail_file       = clean_string(rec.get("DETAIL_FILE"))
+        detail_sheet      = clean_string(rec.get("DETAIL_SHEET"))
+        crs_file_path     = clean_string(rec.get("CRS_FILE_PATH")) or ""
 
-        tag_name = clean_string(rec.get("TAG_NAME"))
-        tag_id   = tag_lookup.get(tag_name) if tag_name else None
+        # FK resolve
+        tag_id = tag_lookup.get(tag_name) if tag_name else None
+        doc_id = doc_lookup.get(doc_number)
+
         if tag_name and not tag_id:
             tag_miss += 1
-
-        doc_id = doc_lookup.get(doc_number)
-        if doc_number and doc_number != "UNKNOWN" and not doc_id:
+        if doc_number != "UNKNOWN" and not doc_id:
             doc_miss += 1
+
+        # row_hash — from already cleaned values, without calling clean_string again
+        hash_source = {
+            "doc_number":        doc_number,
+            "tag_name":          tag_name or "",
+            "revision":          revision or "",
+            "return_code":       return_code or "",
+            "transmittal_num":   transmittal_num or "",
+            "transmittal_date":  str(transmittal_date) if transmittal_date else "",
+            "group_comment":     group_comment,
+            "comment":           comment,
+            "property_name":     property_name or "",
+            "response_vendor":   response_vendor or "",
+            "source_file":       source_file,
+            "detail_file":       detail_file or "",
+            "detail_sheet":      detail_sheet or "",
+            "crs_file_path":     crs_file_path,
+        }
+        row_hash = hashlib.md5(
+            json.dumps(hash_source, sort_keys=True).encode()
+        ).hexdigest()
+
+        # comment_id — deterministic UUID5, no collisions
+        comment_id = str(uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"{doc_number}|{group_comment}|{detail_sheet or ''}|{tag_name or ''}",
+        ))
+
+        # Deduplication within a single batch (protection against duplicates in Excel)
+        if comment_id in seen_comment_ids:
+            log.debug("Duplicate comment_id skipped: %s", comment_id)
+            continue
+        seen_comment_ids.add(comment_id)
 
         db_records.append({
             "comment_id":         comment_id,
             "doc_number":         doc_number,
             "doc_id":             doc_id,
-            "revision":           clean_string(rec.get("REVISION")),
-            "return_code":        clean_string(rec.get("RETURN_CODE")),
-            "transmittal_number": clean_string(rec.get("TRANSMITTAL_NUMBER")),
-            "transmittal_date":   to_dt(rec.get("TRANSMITTAL_DATE")),
-            "group_comment":      clean_string(rec.get("GROUP_COMMENT")) or "",
-            "comment":            clean_string(rec.get("COMMENT")) or "",
+            "revision":           revision,
+            "return_code":        return_code,
+            "transmittal_number": transmittal_num,
+            "transmittal_date":   transmittal_date,
+            "group_comment":      group_comment,
+            "comment":            comment,
             "tag_name":           tag_name,
             "tag_id":             tag_id,
-            "property_name":      clean_string(rec.get("PROPERTY_NAME")),
-            "response_vendor":    clean_string(rec.get("RESPONSE")),
-            "source_file":        clean_string(rec.get("SOURCE_FILE")) or "",
-            "detail_file":        clean_string(rec.get("DETAIL_FILE")),
-            "detail_sheet":       clean_string(rec.get("DETAIL_SHEET")),
-            "crs_file_path":      clean_string(rec.get("CRS_FILE_PATH")) or "",
+            "property_name":      property_name,
+            "response_vendor":    response_vendor,
+            "source_file":        source_file,
+            "detail_file":        detail_file,
+            "detail_sheet":       detail_sheet,
+            "crs_file_path":      crs_file_path,
             "crs_file_timestamp": None,
             "status":             "RECEIVED",
             "object_status":      "Active",
@@ -539,7 +619,11 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
         log.warning("FK miss — tag_name unresolved: %d (tag_id=NULL)", tag_miss)
     if doc_miss:
         log.warning("FK miss — doc_number unresolved: %d (doc_id=NULL)", doc_miss)
-    log.info("Prepared %d DB records.", len(db_records))
+    log.info(
+        "Prepared %d DB records (%d duplicates skipped).",
+        len(db_records),
+        len(raw_records) - len(db_records),
+    )
     return db_records
 
 
