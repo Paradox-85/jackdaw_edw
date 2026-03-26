@@ -45,7 +45,6 @@ from etl.tasks.common import clean_string, load_config, get_db_engine_url, to_dt
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 log = logging.getLogger(__name__)
 
-
 # =============================================================================
 # Constants (from scripts/crs_excel_parser.py — tested values)
 # =============================================================================
@@ -56,8 +55,6 @@ MAIN_PATTERN = re.compile(
 DETAIL_PATTERN = re.compile(
     r"^(JDAW-KVE-E-JA-6944-00001-\d{3}_A\d{2})(?:_\d+|_Review_Comments)\.xlsx$"
 )
-
-_REV_RE = re.compile(r"_A(\d+)")
 
 COMMENT_COL_KEYWORDS  = ("remark", "adura", "issue", "comment")
 PROPERTY_COL_KEYWORDS = ("equipment property name", "tag property name", "property name")
@@ -97,6 +94,7 @@ def _revision_label(key: str) -> str:
     m = _REV_RE.search(key)
     return f"A{m.group(1)}" if m else "A00"
 
+_REV_RE = re.compile(r"_A(\d+)")
 def _revision_number(key: str) -> int:
     """Extract numeric revision from document key string like '...-019_A28'."""
     m = _REV_RE.search(key)
@@ -241,6 +239,39 @@ def _load_detail_file(path: Path) -> dict[str, SheetData]:
 def _alphanum(s: str) -> str:
     """Strip all non-alphanumeric chars and lowercase. 'Master Doc' == 'MasterDoc'."""
     return re.sub(r"[^a-z0-9]", "", s.lower())
+
+_EQUIP_PREFIX_RE = re.compile(r"^Equip_(.+)$", re.IGNORECASE)
+def _extract_tag_from_equipment(val: Any) -> str | None:
+    """
+    Extract tag name from equipment number field.
+    'Equip_ESB1_BUSCABLE1_0101' → 'ESB1_BUSCABLE1_0101'
+    'Equip_JDA-01MV-0047'       → 'JDA-01MV-0047'
+    Plain value without prefix  → returned as-is (fallback)
+    """
+    s = clean_string(val)
+    if not s:
+        return None
+    m = _EQUIP_PREFIX_RE.match(s)
+    return m.group(1) if m else s
+
+def _find_tag_col(columns: list[str]) -> tuple[str | None, bool]:
+    """
+    Returns (col_name, is_equipment_col).
+    Priority: tag_name col first, equipment_number col second.
+    """
+    # Priority 1: column with "tag" but without "property"
+    for c in columns:
+        cl = c.lower()
+        if "tag" in cl and "property" not in cl:
+            return c, False
+
+    # Priority 2: column with "equipment" and ("number" or "no")
+    for c in columns:
+        cl = c.lower()
+        if "equipment" in cl and ("number" in cl or "no" in cl):
+            return c, True
+
+    return None, False
 
 def find_matching_sheet(
     comment_text: str,
@@ -395,7 +426,7 @@ def process_key(
     key: str,
     main_path: Path,
     related_paths: tuple[Path, ...],
-) -> tuple[list[dict], list[str]]:
+) -> tuple[list[dict], list[dict]]:
     records:      list[dict] = []
     matched_keys: set[str]   = set()
 
@@ -420,15 +451,23 @@ def process_key(
             found_detail = True
             matched_keys.add(f"{detail_path.name}::{sheet_key}")
 
-            tag_col = next(
-                (c for c in df_sheet.columns if "tag" in c.lower() and "property" not in c.lower()), None
-            )
+            # Определить колонки один раз на лист — до цикла по строкам
+            tag_col, is_equip_col = _find_tag_col(list(df_sheet.columns))
             prop_col = next(
-                (c for c in df_sheet.columns if any(kw in c.lower() for kw in PROPERTY_COL_KEYWORDS)), None
+                (c for c in df_sheet.columns
+                 if any(kw in c.lower() for kw in PROPERTY_COL_KEYWORDS)),
+                None,
             )
 
             for _, d_row in df_sheet.iterrows():
-                tag_name  = _scalar(d_row[tag_col])  if tag_col  else None
+                # Tag: через Equip_ strip или напрямую — в зависимости от типа колонки
+                raw_tag  = _scalar(d_row[tag_col]) if tag_col else None
+                tag_name = (
+                    _extract_tag_from_equipment(raw_tag)
+                    if is_equip_col
+                    else clean_string(raw_tag)
+                )
+
                 prop_name = _scalar(d_row[prop_col]) if prop_col else None
                 if not prop_name or str(prop_name).strip() == "":
                     prop_name = "Not Applicable"
@@ -454,7 +493,7 @@ def process_key(
                     "CRS_FILE_PATH":      metadata.get("CRS_FILE_PATH"),
                 })
 
-            break
+            break  # совпадение найдено — не проверять остальные detail-файлы
 
         if not found_detail:
             records.append({
@@ -477,7 +516,11 @@ def process_key(
     orphan_sheets: list[dict] = []
     for detail_path, sheets in all_detail_sheets.items():
         available_sheets   = list(sheets.keys())
-        matched_for_file   = [mk.split("::")[1] for mk in matched_keys if mk.startswith(detail_path.name + "::")]
+        matched_for_file   = [
+            mk.split("::")[1]
+            for mk in matched_keys
+            if mk.startswith(detail_path.name + "::")
+        ]
         unmatched_for_file = [sk for sk in available_sheets if sk not in matched_for_file]
 
         for sk in unmatched_for_file:
