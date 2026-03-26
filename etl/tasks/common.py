@@ -5,11 +5,30 @@ import hashlib
 from pathlib import Path
 from sqlalchemy import text
 import re
+from datetime import date, datetime
+from typing import Optional
 
 # Default: <repo_root>/config/config.yaml — resolved relative to this file's location.
 # Override with EDW_CONFIG_PATH env var or by passing config_path explicitly.
 _DEFAULT_CONFIG = Path(__file__).parent.parent.parent / "config" / "config.yaml"
 
+# Order is important: more specific patterns first
+_DATE_FORMATS: list[tuple[re.Pattern, str]] = [
+    # ISO with time: 2024-11-15 08:30:00  or  2024-11-15T08:30:00
+    (re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}"), "%Y-%m-%d %H:%M:%S"),
+    # ISO only date: 2024-11-15
+    (re.compile(r"^\d{4}-\d{2}-\d{2}$"),                      "%Y-%m-%d"),
+    # ISO with / : 2024/11/15
+    (re.compile(r"^\d{4}/\d{2}/\d{2}$"),                      "%Y/%m/%d"),
+    # European: 15.11.2024  or  15-11-2024  or  15/11/2024
+    (re.compile(r"^\d{2}[.\-/]\d{2}[.\-/]\d{4}$"),            "%d.%m.%Y"),
+    # American: 11/15/2024  — only if day > 12 in the second position
+    # (ambiguity 01/02/2024 is resolved in favor of European)
+    (re.compile(r"^\d{2}/\d{2}/\d{4}$"),                      "%m/%d/%Y"),
+    # Excel serial number (number): pandas will handle separately
+]
+
+_SEPARATOR_NORM = re.compile(r"[.\-/]")
 
 def load_config(config_path: "str | Path | None" = None) -> dict:
     """Load configuration from YAML file.
@@ -103,12 +122,81 @@ def get_ref_id(conn, schema, table, value, logger, search_by='code', auto_create
     
     return None
 
-def to_dt(val):
-    if not val or pd.isna(val) or str(val).strip() == "" or str(val).strip().lower() == "nat":
+def _detect_and_parse(s: str) -> Optional[date]:
+    """Detect date format by pattern, parse with explicit strptime."""
+    s = s.strip()
+
+    # Excel serial number (openpyxl sometimes returns float as string)
+    if re.match(r"^\d{5}(\.\d+)?$", s):
+        try:
+            dt = pd.Timestamp("1899-12-30") + pd.Timedelta(days=float(s))
+            return dt.date()
+        except Exception:
+            return None
+
+    # Normalize T → space for ISO datetime
+    s_norm = s.replace("T", " ")
+
+    for pattern, fmt in _DATE_FORMATS:
+        if pattern.match(s_norm):
+            # For European format, normalize separator to dot
+            if fmt == "%d.%m.%Y":
+                s_norm = _SEPARATOR_NORM.sub(".", s_norm)
+            try:
+                return datetime.strptime(s_norm[:len(fmt.replace("%Y","0000").replace("%m","00").replace("%d","00").replace("%H","00").replace("%M","00").replace("%S","00"))], fmt).date()
+            except ValueError:
+                # Pattern matched, but date is invalid (e.g., 31/02/2024)
+                continue
+
+    return None
+
+def to_dt(val) -> Optional[date]:
+    """
+    Parse any date/datetime value to Python date.
+
+    Accepts:
+      - datetime / date objects     → returned as-is
+      - pandas Timestamp            → .date()
+      - Excel serial float/int      → converted via 1899-12-30 base
+      - str in formats:
+            YYYY-MM-DD, YYYY-MM-DD HH:MM:SS, YYYY/MM/DD
+            DD.MM.YYYY, DD-MM-YYYY, DD/MM/YYYY  (European, dayfirst)
+            MM/DD/YYYY                           (American fallback)
+
+    Returns:
+      datetime.date or None
+    """
+    if val is None:
         return None
-    try:
-        # Explicitly tell Pandas that the day comes first
-        dt = pd.to_datetime(clean_string(val), dayfirst=True)
-        return dt.date() if pd.notna(dt) else None
-    except Exception:
+
+    # Native Python/pandas date types — without extra parsing
+    if isinstance(val, date) and not isinstance(val, datetime):
+        return val
+    if isinstance(val, datetime):
+        return val.date()
+    if isinstance(val, pd.Timestamp):
+        return val.date() if pd.notna(val) else None
+
+    # Excel numeric serial (from openpyxl as int/float)
+    if isinstance(val, (int, float)):
+        try:
+            dt = pd.Timestamp("1899-12-30") + pd.Timedelta(days=float(val))
+            return dt.date()
+        except Exception:
+            return None
+
+    # String
+    s = clean_string(val)
+    if not s or s.lower() in ("nat", "none", "null", "nan"):
         return None
+
+    result = _detect_and_parse(s)
+    if result is None:
+        # Last fallback: pandas without dayfirst (no warnings)
+        try:
+            dt = pd.to_datetime(s, dayfirst=False)
+            return dt.date() if pd.notna(dt) else None
+        except Exception:
+            pass
+
+    return result

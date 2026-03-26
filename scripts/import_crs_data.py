@@ -69,7 +69,7 @@ HASH_EXCLUDE_FIELDS = {
     "llm_response",
 }
 
-MAX_WORKERS = 6
+MAX_WORKERS = 14
 BATCH_SIZE  = 500
 
 
@@ -581,28 +581,35 @@ def upsert_crs_records(engine, records: list[dict], run_id: str) -> dict[str, in
 
     audit_sql = text("""
         INSERT INTO audit_core.crs_comment_audit (comment_id, change_type, snapshot, run_id)
-        VALUES (:cid, :ct, :snap::jsonb, :rid)
+        VALUES (:cid, :ct, CAST(:snap AS jsonb), :rid)
     """)
 
     for batch_start in range(0, len(records), BATCH_SIZE):
         batch = records[batch_start : batch_start + BATCH_SIZE]
         try:
             with engine.begin() as conn:
+                audit_rows = []
                 for rec in batch:
                     result = conn.execute(upsert_sql, rec)
                     row = result.fetchone()
                     if row is None:
-                        continue  # hash unchanged — no-op
+                        continue
                     change_type = "INSERT" if row.xmax == 0 else "UPDATE"
                     if row.xmax == 0:
                         stats["inserted"] += 1
                     else:
                         stats["updated"] += 1
                     snap = {k: str(v) for k, v in rec.items() if v is not None}
-                    conn.execute(audit_sql, {
-                        "cid": str(row.id), "ct": change_type,
-                        "snap": json.dumps(snap), "rid": run_id,
+                    audit_rows.append({
+                        "cid": str(row.id),
+                        "ct": change_type,
+                        "snap": json.dumps(snap),
+                        "rid": run_id,
                     })
+
+                # One executemany instead of N execute:
+                if audit_rows:
+                    conn.execute(audit_sql, audit_rows)
         except Exception as exc:
             log.error("Batch %d–%d error: %s", batch_start, batch_start + len(batch), exc)
             stats["errors"] += len(batch)
@@ -633,7 +640,14 @@ def run(debug_mode: bool = False) -> None:
 
     log.info("=== CRS Import | run_id=%s | debug=%s ===", run_id, debug_mode)
 
-    engine = create_engine(db_url, poolclass=QueuePool, pool_size=5, max_overflow=10, pool_recycle=3600)
+    engine = create_engine(
+        db_url,
+        poolclass=QueuePool,
+        pool_size=14,        # = MAX_WORKERS
+        max_overflow=4,
+        pool_recycle=1800,   
+        pool_pre_ping=True,  
+    )
 
     # Fail-fast DB check
     try:
