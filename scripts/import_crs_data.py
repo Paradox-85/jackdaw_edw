@@ -817,8 +817,6 @@ def run(debug_mode: bool = False, debug_rev: str | None = None) -> None:
         main_files, detail_files, rev_order,
         debug_rev=active_rev,
     )
-    # Step 2: Parse
-    all_records, orphan_sheets = parse_all_files(main_files, detail_files)
 
     stats: dict[str, int] = {"inserted": 0, "updated": 0, "errors": 0}
 
