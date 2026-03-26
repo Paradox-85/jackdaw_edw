@@ -775,14 +775,14 @@ def upsert_crs_records(engine, records: list[dict], run_id: str) -> dict[str, in
 
     upsert_sql = text("""
         INSERT INTO audit_core.crs_comment (
-            comment_id, crs_doc_number, doc_id, revision, return_code,
+            comment_id, crs_doc_number, revision, return_code,
             transmittal_number, transmittal_date,
             group_comment, comment, tag_name, tag_id, property_name,
             response_vendor, source_file, detail_file, detail_sheet,
             crs_file_path, crs_file_timestamp,
             status, object_status, row_hash, sync_timestamp
         ) VALUES (
-            :comment_id, :crs_doc_number, :doc_id, :revision, :return_code,
+            :comment_id, :crs_doc_number, :revision, :return_code,
             :transmittal_number, :transmittal_date,
             :group_comment, :comment, :tag_name, :tag_id, :property_name,
             :response_vendor, :source_file, :detail_file, :detail_sheet,
@@ -794,7 +794,6 @@ def upsert_crs_records(engine, records: list[dict], run_id: str) -> dict[str, in
             comment            = EXCLUDED.comment,
             tag_name           = EXCLUDED.tag_name,
             tag_id             = EXCLUDED.tag_id,
-            doc_id             = EXCLUDED.doc_id,
             property_name      = EXCLUDED.property_name,
             response_vendor    = EXCLUDED.response_vendor,
             crs_file_timestamp = EXCLUDED.crs_file_timestamp,
