@@ -336,7 +336,7 @@ def _report_duplicates(dup_by_file: dict[str, int], total_raw: int, total_loaded
         log.warning("    %-60s  %d dup(s)", src_file, count)
     log.warning("")
     log.warning("ACTION REQUIRED: Duplicates share same comment_id key:")
-    log.warning("  doc_number | group_comment | detail_sheet | tag_name | comment | property_name")
+    log.warning("  crs_doc_number | group_comment | detail_sheet | tag_name | comment | property_name")
     log.warning("  (property_name included only when not null/Not Applicable)")
     log.warning("  Check for repeated rows in listed Excel files.")
     log.warning("=" * 60)
@@ -646,10 +646,6 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
         for r in raw_records
         if clean_string(r.get("TAG_NAME"))
     }
-    needed_docs = {
-        clean_string(r.get("DOC_NUMBER")) or "UNKNOWN"
-        for r in raw_records
-    } - {"UNKNOWN"}
 
     # ── 2. FK lookup — only for needed values (ANY instead of full scan) ─────
     with engine.connect() as conn:
@@ -668,36 +664,20 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
                 )
             }
 
-        doc_lookup: dict[str, str] = {}
-        if needed_docs:
-            doc_lookup = {
-                row.doc_number: str(row.id)
-                for row in conn.execute(
-                    text("""
-                        SELECT id, doc_number
-                        FROM project_core.document
-                        WHERE doc_number = ANY(:names)
-                          AND object_status = 'Active'
-                    """),
-                    {"names": list(needed_docs)},
-                )
-            }
-
     log.info(
-        "FK lookup: %d/%d tags resolved, %d/%d docs resolved.",
+        "FK lookup: %d/%d tags resolved.",
         len(tag_lookup), len(needed_tags),
-        len(doc_lookup), len(needed_docs),
     )
 
     # ── 3. Build records ─────────────────────────────────────────────────
     db_records: list[dict] = []
-    tag_miss = doc_miss = 0
+    tag_miss = 0
     seen_comment_ids: set[str] = set()
     dup_by_file: dict[str, int] = {}
 
     for rec in raw_records:
         # clean_string is called once per field — result is reused
-        doc_number        = clean_string(rec.get("DOC_NUMBER")) or "UNKNOWN"
+        crs_doc_number    = clean_string(rec.get("DOC_NUMBER")) or "UNKNOWN"
         tag_name          = clean_string(rec.get("TAG_NAME"))
         revision          = clean_string(rec.get("REVISION"))
         return_code       = clean_string(rec.get("RETURN_CODE"))
@@ -714,16 +694,13 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
 
         # FK resolve
         tag_id = tag_lookup.get(tag_name) if tag_name else None
-        doc_id = doc_lookup.get(doc_number)
 
         if tag_name and not tag_id:
             tag_miss += 1
-        if doc_number != "UNKNOWN" and not doc_id:
-            doc_miss += 1
 
         # row_hash — from already cleaned values, without calling clean_string again
         hash_source = {
-            "doc_number":        doc_number,
+            "crs_doc_number":    crs_doc_number,
             "tag_name":          tag_name or "",
             "revision":          revision or "",
             "return_code":       return_code or "",
@@ -750,7 +727,7 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
         )
         comment_id = str(uuid.uuid5(
             uuid.NAMESPACE_URL,
-            f"{doc_number}|{group_comment}|{detail_sheet or ''}|{tag_name or ''}|{comment}|{prop_key}",
+            f"{crs_doc_number}|{group_comment}|{detail_sheet or ''}|{tag_name or ''}|{comment}|{prop_key}",
         ))
 
         # Deduplication within a single batch (protection against duplicates in Excel)
@@ -762,8 +739,7 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
 
         db_records.append({
             "comment_id":         comment_id,
-            "doc_number":         doc_number,
-            "doc_id":             doc_id,
+            "crs_doc_number":     crs_doc_number,
             "revision":           revision,
             "return_code":        return_code,
             "transmittal_number": transmittal_num,
@@ -786,8 +762,7 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
 
     if tag_miss:
         log.warning("FK miss — tag_name unresolved: %d (tag_id=NULL)", tag_miss)
-    if doc_miss:
-        log.warning("FK miss — doc_number unresolved: %d (doc_id=NULL)", doc_miss)
+
     _report_duplicates(dup_by_file, len(raw_records), len(db_records))
 
     return db_records
@@ -800,14 +775,14 @@ def upsert_crs_records(engine, records: list[dict], run_id: str) -> dict[str, in
 
     upsert_sql = text("""
         INSERT INTO audit_core.crs_comment (
-            comment_id, doc_number, doc_id, revision, return_code,
+            comment_id, crs_doc_number, doc_id, revision, return_code,
             transmittal_number, transmittal_date,
             group_comment, comment, tag_name, tag_id, property_name,
             response_vendor, source_file, detail_file, detail_sheet,
             crs_file_path, crs_file_timestamp,
             status, object_status, row_hash, sync_timestamp
         ) VALUES (
-            :comment_id, :doc_number, :doc_id, :revision, :return_code,
+            :comment_id, :crs_doc_number, :doc_id, :revision, :return_code,
             :transmittal_number, :transmittal_date,
             :group_comment, :comment, :tag_name, :tag_id, :property_name,
             :response_vendor, :source_file, :detail_file, :detail_sheet,
