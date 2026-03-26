@@ -57,6 +57,8 @@ DETAIL_PATTERN = re.compile(
     r"^(JDAW-KVE-E-JA-6944-00001-\d{3}_A\d{2})(?:_\d+|_Review_Comments)\.xlsx$"
 )
 
+_REV_RE = re.compile(r"_A(\d+)")
+
 COMMENT_COL_KEYWORDS  = ("remark", "adura", "issue", "comment")
 PROPERTY_COL_KEYWORDS = ("equipment property name", "tag property name", "property name")
 SKIP_SHEETS = {"comment_sheet"}
@@ -87,10 +89,18 @@ def _scalar(val: Any) -> Any:
         pass
     return val
 
-
 def _norm_sheet(name: str) -> str:
     return name.strip().lower().replace(" ", "_")
 
+def _revision_label(key: str) -> str:
+    """'JDAW-...-019_A28' → 'A28'"""
+    m = _REV_RE.search(key)
+    return f"A{m.group(1)}" if m else "A00"
+
+def _revision_number(key: str) -> int:
+    """Extract numeric revision from document key string like '...-019_A28'."""
+    m = _REV_RE.search(key)
+    return int(m.group(1)) if m else 0
 
 def _expand_merged_cells(ws) -> dict[tuple[int, int], object]:
     cell_map: dict[tuple[int, int], object] = {}
@@ -228,15 +238,23 @@ def _load_detail_file(path: Path) -> dict[str, SheetData]:
             _detail_file_cache[path] = _load_detail_file_impl(path)
     return _detail_file_cache[path]
 
+def _alphanum(s: str) -> str:
+    """Strip all non-alphanumeric chars and lowercase. 'Master Doc' == 'MasterDoc'."""
+    return re.sub(r"[^a-z0-9]", "", s.lower())
 
 def find_matching_sheet(
     comment_text: str,
     sheets: dict[str, SheetData],
 ) -> tuple[str | None, pd.DataFrame | None, str | None, str | None]:
-    text_norm = comment_text.lower().replace(" ", "_")
-    for sheet_key, (df, comment_val, fallback_col) in sheets.items():
-        if sheet_key in text_norm:
+    comment_norm = _alphanum(comment_text)
+
+    # Try exact match first (after normalization)
+    for sheet_key, (df, comment_val, fallback_col) in sorted(
+        sheets.items(), key=lambda x: len(x[0]), reverse=True
+    ):
+        if _alphanum(sheet_key) in comment_norm:
             return sheet_key, df, comment_val, fallback_col
+
     return None, None, None, None
 
 
@@ -418,9 +436,17 @@ def process_key(
 # DB operations
 # =============================================================================
 
-def discover_crs_files(root: Path) -> tuple[dict[str, Path], dict[str, list[Path]]]:
-    main_files:   dict[str, Path]        = {}
-    detail_files: dict[str, list[Path]]  = {}
+def discover_crs_files(
+    root: Path,
+) -> tuple[dict[str, Path], dict[str, list[Path]], list[str]]:
+    """
+    Returns:
+        main_files   — {key: path}
+        detail_files — {key: [paths]}
+        rev_order    — revision keys sorted A01→A99 (e.g. ['A01','A14','A28'])
+    """
+    main_files:   dict[str, Path]       = {}
+    detail_files: dict[str, list[Path]] = {}
 
     for path in root.rglob("*.xlsx"):
         if "_templates" in path.parts:
@@ -438,36 +464,67 @@ def discover_crs_files(root: Path) -> tuple[dict[str, Path], dict[str, list[Path
         if d:
             detail_files.setdefault(d.group(1), []).append(path)
 
-    log.info("Found %d main file(s), %d detail key(s).", len(main_files), len(detail_files))
-    return main_files, detail_files
+    # Группировка по ревизии и сортировка A01→A99
+    rev_order = sorted(
+        {_revision_label(k) for k in main_files},
+        key=lambda r: int(r[1:]) if r[1:].isdigit() else 0,
+    )
+
+    log.info(
+        "Found %d main file(s) across %d revision(s): %s",
+        len(main_files), len(rev_order), ", ".join(rev_order),
+    )
+    return main_files, detail_files, rev_order
 
 
 def parse_all_files(
     main_files:   dict[str, Path],
     detail_files: dict[str, list[Path]],
+    rev_order:    list[str],
+    debug_rev:    str | None = None,     # None = все ревизии
 ) -> tuple[list[dict], list[str]]:
-    work_items = [
-        (key, path, tuple(detail_files.get(key, [])))
-        for key, path in main_files.items()
-    ]
+    """
+    Process files grouped by revision, A01 → A99.
+    debug_rev: if set, process only this revision group (e.g. 'A28').
+    """
+    # Сгруппировать ключи по ревизии
+    groups: dict[str, list[str]] = {}
+    for key in main_files:
+        rev = _revision_label(key)
+        groups.setdefault(rev, []).append(key)
+
+    revs_to_process = [debug_rev] if debug_rev else rev_order
 
     all_records:   list[dict] = []
     orphan_sheets: list[str]  = []
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {
-            executor.submit(process_key, key, main_path, related): key
-            for key, main_path, related in work_items
-        }
-        for future in as_completed(futures):
-            key = futures[future]
-            try:
-                records, file_orphans = future.result()
-                all_records.extend(records)
-                orphan_sheets.extend(file_orphans)
-                log.info("  ✓ %s — %d record(s), %d orphan sheet(s)", key, len(records), len(file_orphans))
-            except Exception as exc:
-                log.error("  ✗ %s failed: %s", key, exc)
+    for rev in revs_to_process:
+        keys = sorted(groups.get(rev, []))  # внутри ревизии — по имени
+        if not keys:
+            log.warning("Revision %s requested but no files found.", rev)
+            continue
+
+        log.info("── Revision %s: %d file(s) ──", rev, len(keys))
+
+        work_items = [
+            (key, main_files[key], tuple(detail_files.get(key, [])))
+            for key in keys
+        ]
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {
+                executor.submit(process_key, key, main_path, related): key
+                for key, main_path, related in work_items
+            }
+            for future in as_completed(futures):
+                key = futures[future]
+                try:
+                    records, file_orphans = future.result()
+                    all_records.extend(records)
+                    orphan_sheets.extend(file_orphans)
+                    log.info("  ✓ %s — %d record(s), %d orphan(s)", key, len(records), len(file_orphans))
+                except Exception as exc:
+                    log.error("  ✗ %s failed: %s", key, exc)
 
     _detail_file_cache.clear()
     log.info("Parsed %d total records, %d orphan sheets.", len(all_records), len(orphan_sheets))
@@ -707,7 +764,7 @@ def upsert_crs_records(engine, records: list[dict], run_id: str) -> dict[str, in
 # Main
 # =============================================================================
 
-def run(debug_mode: bool = False) -> None:
+def run(debug_mode: bool = False, debug_rev: str | None = None) -> None:
     run_id = str(uuid.uuid4())
     config  = load_config()
     db_url  = get_db_engine_url(config)
@@ -749,13 +806,17 @@ def run(debug_mode: bool = False) -> None:
         """), {"rid": run_id, "tbl": "audit_core.crs_comment", "st": datetime.now(), "sf": str(root)})
 
     # Step 1: Discover
-    main_files, detail_files = discover_crs_files(root)
+    main_files, detail_files, rev_order = discover_crs_files(root)
 
+    active_rev = None
     if debug_mode:
-        keys = list(main_files.keys())[:5]
-        main_files = {k: main_files[k] for k in keys}
-        log.info("DEBUG mode: processing %d file(s) only.", len(main_files))
+        active_rev = debug_rev or (rev_order[-1] if rev_order else None)
+        log.info("DEBUG mode: processing revision %s only.", active_rev)
 
+    all_records, orphan_sheets = parse_all_files(
+        main_files, detail_files, rev_order,
+        debug_rev=active_rev,
+    )
     # Step 2: Parse
     all_records, orphan_sheets = parse_all_files(main_files, detail_files)
 
@@ -804,6 +865,8 @@ def run(debug_mode: bool = False) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Import CRS comments into PostgreSQL")
-    parser.add_argument("--debug", action="store_true", help="Process first 5 files only")
+    parser.add_argument("--debug",     action="store_true")
+    parser.add_argument("--debug-rev", default=None,
+                        help="Process only this revision group, e.g. A28")
     args = parser.parse_args()
-    run(debug_mode=args.debug)
+    run(debug_mode=args.debug, debug_rev=args.debug_rev)
