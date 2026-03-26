@@ -57,7 +57,14 @@ DETAIL_PATTERN = re.compile(
 )
 
 COMMENT_COL_KEYWORDS  = ("remark", "adura", "issue", "comment")
-PROPERTY_COL_KEYWORDS = ("equipment property name", "tag property name", "property name")
+PROPERTY_COL_KEYWORDS = (
+    "equipment property name",
+    "equipment_property_name",
+    "tag property name",
+    "tag_property_name",
+    "property name",
+    "property_name",       # ← именно это не матчило PROPERTY_NAME
+)
 SKIP_SHEETS = {"comment_sheet"}
 
 HASH_EXCLUDE_FIELDS = {
@@ -458,7 +465,10 @@ def process_key(
             tag_col, is_equip_col = _find_tag_col(list(df_sheet.columns))
             prop_col = next(
                 (c for c in df_sheet.columns
-                 if any(kw in c.lower() for kw in PROPERTY_COL_KEYWORDS)),
+                if any(
+                    kw.replace(" ", "_") in c.lower().replace(" ", "_")
+                    for kw in PROPERTY_COL_KEYWORDS
+                )),
                 None,
             )
 
