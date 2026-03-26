@@ -4,3 +4,4 @@ psycopg2-binary
 openpyxl
 pyyaml
 prefect
+python-calamine
