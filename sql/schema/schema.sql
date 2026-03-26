@@ -541,3 +541,193 @@ CREATE TABLE IF NOT EXISTS "app_core"."ui_feedback" (
 
 CREATE INDEX IF NOT EXISTS "idx_ui_feedback_status"  ON "app_core"."ui_feedback" ("status");
 CREATE INDEX IF NOT EXISTS "idx_ui_feedback_created" ON "app_core"."ui_feedback" ("created_at" DESC);
+
+-- =============================================================================
+-- audit_core — CRS (Comment Review Sheet) module (migration_012)
+-- 4 tables for managing customer comment processing workflow.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS "audit_core"."crs_comment" (
+    "id"                           UUID      NOT NULL DEFAULT gen_random_uuid(),
+
+    -- Source document metadata (from CRS Excel header)
+    "doc_number"                   TEXT      NOT NULL,
+    "doc_id"                       UUID      NULL REFERENCES "project_core"."document"("id") ON DELETE SET NULL,
+    "revision"                     TEXT      NULL,
+    "return_code"                  TEXT      NULL,
+    "transmittal_number"           TEXT      NULL,
+    "transmittal_date"             DATE      NULL,
+
+    -- Comment identification & location
+    "comment_id"                   TEXT      NOT NULL,   -- Business key: {doc_number}#{row_hash[:8]}
+    "group_comment"                TEXT      NOT NULL,
+    "comment"                      TEXT      NOT NULL,
+
+    -- Related entity from detail sheet
+    "tag_name"                     TEXT      NULL,
+    "tag_id"                       UUID      NULL REFERENCES "project_core"."tag"("id") ON DELETE SET NULL,
+    "property_name"                TEXT      NULL,
+    "response_vendor"              TEXT      NULL,
+
+    -- Source file tracking
+    "source_file"                  TEXT      NOT NULL,
+    "detail_file"                  TEXT      NULL,
+    "detail_sheet"                 TEXT      NULL,
+    "crs_file_path"                TEXT      NOT NULL,
+    "crs_file_timestamp"           TIMESTAMP NULL,
+
+    -- AI/LLM Processing (Phase 2)
+    "llm_category"                 TEXT      NULL,
+    "llm_category_confidence"      REAL      NULL CHECK ("llm_category_confidence" >= 0.0 AND "llm_category_confidence" <= 1.0),
+    "llm_response"                 TEXT      NULL,
+    "llm_response_timestamp"       TIMESTAMP NULL,
+    "llm_model_used"               TEXT      NULL,
+
+    -- Response & Resolution
+    "status"                       TEXT      NOT NULL DEFAULT 'RECEIVED',
+    "formal_response"              TEXT      NULL,
+    "formal_response_rationale"    TEXT      NULL,
+    "response_author"              TEXT      NULL,
+    "response_approval_date"       DATE      NULL,
+    "response_review_notes"        TEXT      NULL,
+
+    -- SCD2 change tracking
+    "row_hash"                     TEXT      NULL,
+    "sync_timestamp"               TIMESTAMP NOT NULL DEFAULT now(),
+    "object_status"                TEXT      NOT NULL DEFAULT 'Active',
+
+    CONSTRAINT "crs_comment_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "crs_comment_comment_id_key" UNIQUE ("comment_id"),
+    CONSTRAINT "crs_comment_status_check"
+        CHECK ("status" IN ('RECEIVED','IN_REVIEW','RESPONDED','APPROVED','CLOSED','DEFERRED')),
+    CONSTRAINT "crs_comment_object_status_check"
+        CHECK ("object_status" IN ('Active','Inactive'))
+);
+
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_status"         ON "audit_core"."crs_comment"("status");
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_category"       ON "audit_core"."crs_comment"("llm_category");
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_tag_id"         ON "audit_core"."crs_comment"("tag_id");
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_doc_id"         ON "audit_core"."crs_comment"("doc_id");
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_doc_number"     ON "audit_core"."crs_comment"("doc_number");
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_source_file"    ON "audit_core"."crs_comment"("source_file");
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_transmittal"    ON "audit_core"."crs_comment"("transmittal_date");
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_sync_timestamp" ON "audit_core"."crs_comment"("sync_timestamp");
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_low_confidence"
+    ON "audit_core"."crs_comment"("llm_category_confidence")
+    WHERE "llm_category_confidence" < 0.7 AND "llm_category" IS NOT NULL;
+
+COMMENT ON TABLE "audit_core"."crs_comment" IS
+    'CRS comment master table. One row = one detail-level comment from CRS Excel files. '
+    'Validation relationships stored in crs_comment_validation (M2M). '
+    'Phase 2: LLM fields populated by classify_crs_comment task.';
+
+CREATE TABLE IF NOT EXISTS "audit_core"."crs_validation_query" (
+    "id"                   UUID      NOT NULL DEFAULT gen_random_uuid(),
+
+    "query_code"           TEXT      NOT NULL UNIQUE,
+    "query_name"           TEXT      NOT NULL,
+    "description"          TEXT      NULL,
+
+    -- Link to comment classification
+    "category"             TEXT      NOT NULL,
+    "category_description" TEXT      NULL,
+
+    -- SQL query to execute (supports :param placeholder syntax)
+    "sql_query"            TEXT      NOT NULL,
+    "expected_result"      TEXT      NULL,
+
+    -- Parameters
+    "has_parameters"       BOOLEAN   NOT NULL DEFAULT false,
+    "parameter_names"      TEXT[]    NULL,
+
+    -- Metadata
+    "is_active"            BOOLEAN   NOT NULL DEFAULT true,
+    "created_at"           TIMESTAMP NOT NULL DEFAULT now(),
+    "updated_at"           TIMESTAMP NOT NULL DEFAULT now(),
+    "created_by"           TEXT      NULL,
+    "notes"                TEXT      NULL,
+    "object_status"        TEXT      NOT NULL DEFAULT 'Active',
+
+    CONSTRAINT "crs_validation_query_pkey"     PRIMARY KEY ("id"),
+    CONSTRAINT "crs_validation_query_code_key" UNIQUE ("query_code"),
+    CONSTRAINT "crs_query_category_check"
+        CHECK ("category" IN (
+            'tag_missing','property_missing','property_defect',
+            'document_inactive','defect_pattern','design_clarification',
+            'vendor_response','other'
+        )),
+    CONSTRAINT "crs_query_object_status_check"
+        CHECK ("object_status" IN ('Active','Inactive'))
+);
+
+CREATE INDEX IF NOT EXISTS "idx_crs_query_category"  ON "audit_core"."crs_validation_query"("category");
+CREATE INDEX IF NOT EXISTS "idx_crs_query_is_active" ON "audit_core"."crs_validation_query"("is_active");
+
+DROP TRIGGER IF EXISTS "trg_crs_validation_query_updated_at" ON "audit_core"."crs_validation_query";
+
+CREATE OR REPLACE FUNCTION "audit_core"."set_crs_query_updated_at"()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER "trg_crs_validation_query_updated_at"
+    BEFORE UPDATE ON "audit_core"."crs_validation_query"
+    FOR EACH ROW EXECUTE FUNCTION "audit_core"."set_crs_query_updated_at"();
+
+COMMENT ON TABLE "audit_core"."crs_validation_query" IS
+    'Registry of SQL validation queries used in Phase 2 CRS comment processing. '
+    'Each query validates a specific aspect of the EDW data referenced in a CRS comment.';
+
+CREATE TABLE IF NOT EXISTS "audit_core"."crs_comment_validation" (
+    "id"                     UUID      NOT NULL DEFAULT gen_random_uuid(),
+    "comment_id"             UUID      NOT NULL REFERENCES "audit_core"."crs_comment"("id") ON DELETE CASCADE,
+    "validation_query_id"    UUID      NOT NULL REFERENCES "audit_core"."crs_validation_query"("id") ON DELETE RESTRICT,
+
+    "validation_status"      TEXT      NOT NULL DEFAULT 'PENDING',
+    "validation_result_json" JSONB     NULL,
+    "validation_timestamp"   TIMESTAMP NULL,
+    "validation_error"       TEXT      NULL,
+    "run_id"                 UUID      NULL,
+
+    CONSTRAINT "crs_comment_validation_pkey"   PRIMARY KEY ("id"),
+    CONSTRAINT "crs_comment_validation_unique" UNIQUE ("comment_id", "validation_query_id"),
+    CONSTRAINT "crs_validation_status_check"
+        CHECK ("validation_status" IN ('PENDING','PASSED','FAILED','INCONCLUSIVE','SKIPPED'))
+);
+
+CREATE INDEX IF NOT EXISTS "idx_crs_cv_comment"    ON "audit_core"."crs_comment_validation"("comment_id");
+CREATE INDEX IF NOT EXISTS "idx_crs_cv_query"      ON "audit_core"."crs_comment_validation"("validation_query_id");
+CREATE INDEX IF NOT EXISTS "idx_crs_cv_status"     ON "audit_core"."crs_comment_validation"("validation_status");
+CREATE INDEX IF NOT EXISTS "idx_crs_cv_timestamp"  ON "audit_core"."crs_comment_validation"("validation_timestamp");
+
+COMMENT ON TABLE "audit_core"."crs_comment_validation" IS
+    'M2M: one comment may have multiple validation queries. '
+    'Populated in Phase 2 by validate_crs_comment task. '
+    'Stores validation status + result JSONB for each query execution.';
+
+CREATE TABLE IF NOT EXISTS "audit_core"."crs_comment_audit" (
+    "id"             UUID      NOT NULL DEFAULT gen_random_uuid(),
+    "comment_id"     UUID      NOT NULL REFERENCES "audit_core"."crs_comment"("id") ON DELETE CASCADE,
+
+    "change_type"    TEXT      NOT NULL CHECK ("change_type" IN ('INSERT','UPDATE','DELETE')),
+    "snapshot"       JSONB     NOT NULL,   -- Full row copy at time of change
+    "changed_fields" TEXT[]    NULL,       -- Array of field names that changed (UPDATE only)
+    "changed_by"     TEXT      NULL,
+    "change_reason"  TEXT      NULL,
+
+    "changed_at"     TIMESTAMP NOT NULL DEFAULT now(),
+    "run_id"         UUID      NULL,
+
+    CONSTRAINT "crs_comment_audit_pkey" PRIMARY KEY ("id")
+);
+
+CREATE INDEX IF NOT EXISTS "idx_crs_audit_comment"     ON "audit_core"."crs_comment_audit"("comment_id");
+CREATE INDEX IF NOT EXISTS "idx_crs_audit_changed_at"  ON "audit_core"."crs_comment_audit"("changed_at");
+CREATE INDEX IF NOT EXISTS "idx_crs_audit_change_type" ON "audit_core"."crs_comment_audit"("change_type");
+
+COMMENT ON TABLE "audit_core"."crs_comment_audit" IS
+    'SCD Type 2 audit trail for crs_comment. Full JSONB snapshot + changed field list per change. '
+    'Enables temporal queries: "what was the status of comment X on date Y?"';

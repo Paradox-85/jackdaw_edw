@@ -21,3 +21,4 @@ storage:
   doc_dataset_file: "/mnt/shared-data/ram-user/Jackdaw/Master-Data/_master/data/MDR.xlsx"
   prop_dataset_file: "/mnt/shared-data/ram-user/Jackdaw/Master-Data/_master/data/TagProperties-rdl.xlsx"
   export_dir: "/mnt/shared-data/ram-user/Jackdaw/Export/EIS"
+  crs_data_dir: "/mnt/shared-data/ram-user/Jackdaw/EIS-Data"
