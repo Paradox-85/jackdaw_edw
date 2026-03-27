@@ -919,6 +919,9 @@ def discover_crs_files(
     for path in root.rglob("*.xlsx"):
         if "_templates" in path.parts:
             continue
+        if path.name.startswith("~$"):
+            continue
+        log.debug("SCAN: %s | parts=%s", path.name, path.parts)
         name = path.name
         m = MAIN_PATTERN.match(name)
         if m:
@@ -957,18 +960,20 @@ def discover_crs_files(
             )
             continue
 
-        master_dir = master_path.parent
+        master_dir = master_path.parent.resolve()
 
         # Rule 0: same-directory filter (hard — subdirectory files are legacy)
-        same_dir = [p for p in candidates if p.parent == master_dir]
-        sub_dir  = [p for p in candidates if p.parent != master_dir]
+        same_dir = [p for p in candidates if p.parent.resolve() == master_dir]
+        sub_dir  = [p for p in candidates if p.parent.resolve() != master_dir]
 
         if sub_dir:
-            log.info(
-                "Key %s: excluded %d subdirectory detail file(s): %s",
-                key, len(sub_dir),
-                ", ".join(p.name for p in sub_dir),
-            )
+            for p in sub_dir:
+                log.info(
+                    "Key %s: excluded detail (dir mismatch):\n"
+                    "  detail dir : %s\n"
+                    "  master dir : %s",
+                    key, p.parent.resolve(), master_dir,
+                )
 
         if not same_dir:
             log.warning(
