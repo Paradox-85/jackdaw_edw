@@ -19,6 +19,8 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from scripts.import_crs_data import (
+    DETAIL_PATTERN,
+    MAIN_PATTERN,
     _detail_version,
     _is_review_comments,
     _select_detail_files,
@@ -229,3 +231,27 @@ def test_sheet_name_collision_skips_duplicate(tmp_path: Path, caplog: pytest.Log
 
     assert isinstance(result, dict)
     assert any("collision" in msg.lower() for msg in caplog.messages)
+
+
+# ---------------------------------------------------------------------------
+# DETAIL_PATTERN / MAIN_PATTERN — case-insensitivity and revision flexibility
+# ---------------------------------------------------------------------------
+
+def test_detail_pattern_matches_review_comments_case_insensitive() -> None:
+    """DETAIL_PATTERN must match _Review_Comments regardless of case."""
+    assert DETAIL_PATTERN.match("JDAW-KVE-E-JA-6944-00001-007_A19_Review_Comments.xlsx")
+    assert DETAIL_PATTERN.match("JDAW-KVE-E-JA-6944-00001-007_A19_review_comments.xlsx")
+    assert DETAIL_PATTERN.match("JDAW-KVE-E-JA-6944-00001-007_A19_REVIEW_COMMENTS.xlsx")
+
+
+def test_detail_pattern_matches_high_revision_numbers() -> None:
+    """DETAIL_PATTERN must match revisions with 3+ digits (A100+)."""
+    assert DETAIL_PATTERN.match("JDAW-KVE-E-JA-6944-00001-007_A100_Review_Comments.xlsx")
+    assert DETAIL_PATTERN.match("JDAW-KVE-E-JA-6944-00001-007_A100_5.xlsx")
+
+
+def test_main_pattern_case_insensitive() -> None:
+    """MAIN_PATTERN must match file names regardless of case."""
+    assert MAIN_PATTERN.match("DOC_COMMENT_JDAW-KVE-E-JA-6944-00001-007_A19_KVE.xlsx")
+    assert MAIN_PATTERN.match("doc_comment_JDAW-KVE-E-JA-6944-00001-007_A19_kve.xlsx")
+    assert MAIN_PATTERN.match("DOC_COMMENT_JDAW-KVE-E-JA-6944-00001-007_A100_KVE.xlsx")

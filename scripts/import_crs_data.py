@@ -52,12 +52,16 @@ log = logging.getLogger(__name__)
 # =============================================================================
 
 MAIN_PATTERN = re.compile(
-    r"^DOC_COMMENT_(JDAW-KVE-E-JA-6944-00001-\d{3}_A\d{2})_[A-Z]{3}\.xlsx$"
+    r"^DOC_COMMENT_(JDAW-KVE-E-JA-6944-00001-\d{3}_A\d+)_[A-Za-z]{3}\.xlsx$",
+    re.IGNORECASE,
 )
 # Matches both versioned detail files (_A34_7) and Review_Comments (_A21_Review_Comments).
+# re.IGNORECASE: tolerates review_comments / REVIEW_COMMENTS variants from vendors.
+# \d+ instead of \d{2}: supports hypothetical revisions A100+ without pattern change.
 # Version selection logic is in _select_detail_files(), not in this pattern.
 DETAIL_PATTERN = re.compile(
-    r"^(JDAW-KVE-E-JA-6944-00001-\d{3}_A\d{2})(?:_\d+|_Review_Comments)\.xlsx$"
+    r"^(JDAW-KVE-E-JA-6944-00001-\d{3}_A\d+)(?:_\d+|_Review_Comments)\.xlsx$",
+    re.IGNORECASE,
 )
 
 COMMENT_COL_KEYWORDS: tuple[str, ...] = ("remark", "adura", "issue", "comment")
@@ -927,6 +931,8 @@ def discover_crs_files(
         d = DETAIL_PATTERN.match(name)
         if d:
             _all_detail.setdefault(d.group(1), []).append(path)
+            continue
+        log.debug("Unmatched xlsx (not CRS): %s", path.relative_to(root))
 
     detail_files: dict[str, list[Path]] = {}
 
