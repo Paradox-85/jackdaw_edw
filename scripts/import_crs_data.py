@@ -6,10 +6,12 @@ audit_core.crs_comment (PostgreSQL).
 
 Run manually:
     python scripts/import_crs_data.py
-    python scripts/import_crs_data.py --debug   # first 5 files only
+    python scripts/import_crs_data.py --debug            # latest revision only
+    python scripts/import_crs_data.py --debug-rev A28    # specific revision
 
-Parsing logic from scripts/crs_excel_parser.py (tested).
-Schema: sql/schema/migration_012_crs_module.sql must be applied first.
+Parsing logic ported from scripts/crs_excel_parser.py (tested two-phase loader).
+Schema: migration_012_crs_module.sql + migration_014_crs_add_document_number.sql
+must be applied before running.
 
 Requirements:
     pip install pandas openpyxl python-calamine sqlalchemy pyyaml
@@ -56,16 +58,30 @@ DETAIL_PATTERN = re.compile(
     r"^(JDAW-KVE-E-JA-6944-00001-\d{3}_A\d{2})(?:_\d+|_Review_Comments)\.xlsx$"
 )
 
-COMMENT_COL_KEYWORDS  = ("remark", "adura", "issue", "comment")
-PROPERTY_COL_KEYWORDS = (
+COMMENT_COL_KEYWORDS: tuple[str, ...] = ("remark", "adura", "issue", "comment")
+
+PROPERTY_COL_KEYWORDS: tuple[str, ...] = (
     "equipment property name",
     "equipment_property_name",
     "tag property name",
     "tag_property_name",
     "property name",
-    "property_name",       # ← именно это не матчило PROPERTY_NAME
+    "property_name",
 )
-SKIP_SHEETS = {"comment_sheet"}
+
+# Keyword variants for the detail-sheet DOCUMENT_NUMBER column.
+# This column references a project document containing the tag — distinct from
+# the CRS file header number stored in crs_doc_number.
+DOCUMENT_NUMBER_KEYWORDS: tuple[str, ...] = (
+    "document number",
+    "document_number",
+    "doc number",
+    "doc_number",
+    "doc no",
+    "doc_no",
+)
+
+SKIP_SHEETS: set[str] = {"comment_sheet"}
 
 HASH_EXCLUDE_FIELDS = {
     "sync_timestamp",
@@ -84,6 +100,14 @@ BATCH_SIZE  = 500
 # =============================================================================
 
 def _scalar(val: Any) -> Any:
+    """Return scalar value from a pandas Series or raw cell value.
+
+    Args:
+        val: A cell value or pandas Series from df.iterrows().
+
+    Returns:
+        Scalar value, or None if empty / NaN.
+    """
     if isinstance(val, pd.Series):
         return val.iloc[0] if not val.empty else None
     try:
@@ -94,20 +118,51 @@ def _scalar(val: Any) -> Any:
     return val
 
 def _norm_sheet(name: str) -> str:
+    """Normalise sheet name: strip, lowercase, spaces to underscores."""
     return name.strip().lower().replace(" ", "_")
 
+
+_REV_RE = re.compile(r"_A(\d+)")
+
+
 def _revision_label(key: str) -> str:
-    """'JDAW-...-019_A28' → 'A28'"""
+    """Extract revision label from a document key string.
+
+    Args:
+        key: Document key, e.g. 'JDAW-...-019_A28'.
+
+    Returns:
+        Revision label like 'A28', or 'A00' if not found.
+    """
     m = _REV_RE.search(key)
     return f"A{m.group(1)}" if m else "A00"
 
-_REV_RE = re.compile(r"_A(\d+)")
+
 def _revision_number(key: str) -> int:
-    """Extract numeric revision from document key string like '...-019_A28'."""
+    """Extract numeric revision from a document key string.
+
+    Args:
+        key: Document key, e.g. 'JDAW-...-019_A28'.
+
+    Returns:
+        Integer revision number, or 0 if not found.
+    """
     m = _REV_RE.search(key)
     return int(m.group(1)) if m else 0
 
 def _expand_merged_cells(ws) -> dict[tuple[int, int], object]:
+    """Build a flat (row, col) -> value map with merged cells expanded.
+
+    Openpyxl only exposes the top-left value for merged ranges. This function
+    propagates that value to every cell in each merged region so callers can
+    index any (row, col) directly.
+
+    Args:
+        ws: An openpyxl Worksheet object.
+
+    Returns:
+        Dict mapping (row, col) 1-based tuples to cell values.
+    """
     cell_map: dict[tuple[int, int], object] = {}
     for row in ws.iter_rows():
         for cell in row:
@@ -121,7 +176,26 @@ def _expand_merged_cells(ws) -> dict[tuple[int, int], object]:
     return cell_map
 
 
-def _build_two_row_header(cell_map: dict, row1: int, row2: int, max_col: int) -> list[str]:
+def _build_two_row_header(
+    cell_map: dict[tuple[int, int], object],
+    row1: int,
+    row2: int,
+    max_col: int,
+) -> list[str]:
+    """Combine two header rows into a single deduplicated column name list.
+
+    CRS main files use rows 6 and 7 as a split header. Values from both rows
+    are joined with '_'. Duplicate names are disambiguated with a numeric suffix.
+
+    Args:
+        cell_map: Expanded cell map from _expand_merged_cells().
+        row1: First header row index (1-based).
+        row2: Second header row index (1-based).
+        max_col: Number of columns to process.
+
+    Returns:
+        List of column name strings, upper-cased and sanitised.
+    """
     headers = []
     for col in range(1, max_col + 1):
         v1 = str(cell_map.get((row1, col), "") or "").strip()
@@ -149,6 +223,19 @@ def _build_two_row_header(cell_map: dict, row1: int, row2: int, max_col: int) ->
 
 
 def _find_comment_column(ws, data_start_row: int) -> int | None:
+    """Detect the vertically-merged comment column in a detail sheet.
+
+    The group comment in CRS detail files is stored as a tall merged cell
+    spanning multiple data rows in a single column. This function finds the
+    column with the largest vertical span starting at data_start_row.
+
+    Args:
+        ws: An openpyxl Worksheet object.
+        data_start_row: Row index where data starts (usually 2).
+
+    Returns:
+        0-based column index of the merged comment column, or None if not found.
+    """
     best_span: int = 1
     best_col:  int | None = None
     for merged_range in ws.merged_cells.ranges:
@@ -168,6 +255,19 @@ SheetData = tuple[pd.DataFrame, str | None, str | None]
 
 
 def _load_detail_file_impl(path: Path) -> dict[str, SheetData]:
+    """Load all sheets from a CRS detail Excel file (two-phase: openpyxl + calamine).
+
+    Phase 1 (openpyxl): detect merged comment column and extract its value per sheet.
+    Phase 2 (calamine): read data rows efficiently; drop the merged column, filter
+    empty rows, and detect fallback comment column if no merged cell was found.
+
+    Args:
+        path: Path to the detail Excel file.
+
+    Returns:
+        Dict mapping normalised sheet name to (DataFrame, comment_value, fallback_col).
+        Empty dict if the file cannot be opened.
+    """
     result: dict[str, SheetData] = {}
     DATA_START_ROW = 2
 
@@ -261,33 +361,54 @@ def _extract_tag_from_equipment(val: Any) -> str | None:
     m = _EQUIP_PREFIX_RE.match(s)
     return m.group(1) if m else s
 
-_TAG_COL_RE   = re.compile(r"(^|[\s_])tag([\s_]|$)",       re.IGNORECASE)
-_EQUIP_COL_RE = re.compile(r"equipment[\s_]*(number|no\.?|num)", re.IGNORECASE)
-_EQUIP_EXCLUDE_RE = re.compile(r"(serial|manufacturer|model|part)", re.IGNORECASE)
+_TAG_COL_RE       = re.compile(r"(^|[\s_])tag([\s_]|$)",            re.IGNORECASE)
+_EQUIP_COL_RE     = re.compile(r"equipment[\s_]*(number|no\.?|num)", re.IGNORECASE)
+_EQUIP_EXCLUDE_RE = re.compile(r"(serial|manufacturer|model|part)",   re.IGNORECASE)
+
+
 def _find_tag_col(columns: list[str]) -> tuple[str | None, bool]:
+    """Identify the tag or equipment number column in a detail sheet.
+
+    Args:
+        columns: List of column names from the detail sheet DataFrame.
+
+    Returns:
+        Tuple of (column_name, is_equipment_col). column_name is None if not found.
+        is_equipment_col is True when the column holds equipment numbers (Equip_ prefix).
     """
-    Returns (col_name, is_equipment_col).
-    Priority: tag_name col first, equipment_number col second.
-    """
-    # Priority 1: column with "tag" but without "property"
+    # Priority 1: explicit tag column (excludes property columns)
     for c in columns:
         if _TAG_COL_RE.search(c) and "property" not in c.lower():
             return c, False
 
-    # Priority 2: column with "equipment" and ("number" or "no")
+    # Priority 2: equipment number column as fallback
     for c in columns:
         if _EQUIP_COL_RE.search(c) and not _EQUIP_EXCLUDE_RE.search(c):
             return c, True
 
     return None, False
 
+
 def find_matching_sheet(
     comment_text: str,
     sheets: dict[str, SheetData],
 ) -> tuple[str | None, pd.DataFrame | None, str | None, str | None]:
+    """Match a group comment text to the best-fitting detail sheet.
+
+    Uses normalised alphanumeric comparison. Longer sheet names are tried first
+    to prefer more specific matches.
+
+    Args:
+        comment_text: GROUP_COMMENT value from the main CRS file.
+        sheets: Dict mapping normalised sheet name to SheetData tuple.
+
+    Returns:
+        4-tuple (sheet_key, df, comment_value, fallback_col), or
+        (None, None, None, None) if no match found.
+    """
     comment_norm = _alphanum(comment_text)
 
-    # Try exact match first (after normalization)
+    # Try longest sheet name first to prefer more specific matches
     for sheet_key, (df, comment_val, fallback_col) in sorted(
         sheets.items(), key=lambda x: len(x[0]), reverse=True
     ):
@@ -296,11 +417,17 @@ def find_matching_sheet(
 
     return None, None, None, None
 
+
 def _report_orphans(orphan_sheets: list[dict]) -> None:
+    """Log a summary of detail sheets that had no matching group comment.
+
+    Args:
+        orphan_sheets: List of orphan dicts from process_key().
+    """
     if not orphan_sheets:
         return
 
-    # Группировка по detail-файлу
+    # Group by detail file for a compact report
     by_file: dict[str, list[dict]] = {}
     for o in orphan_sheets:
         by_file.setdefault(o["detail_file"], []).append(o)
@@ -311,7 +438,7 @@ def _report_orphans(orphan_sheets: list[dict]) -> None:
     log.warning("=" * 60)
 
     for detail_file, entries in sorted(by_file.items()):
-        # Показать все листы файла — какие совпали, какие нет
+        # Show all sheets per file — matched and unmatched
         e0 = entries[0]
         log.warning("")
         log.warning("  Detail file : %s", detail_file)
@@ -321,8 +448,8 @@ def _report_orphans(orphan_sheets: list[dict]) -> None:
         log.warning("  ORPHAN(S)   :")
         for o in entries:
             log.warning("    ✗ sheet='%s'  rows=%d", o["sheet_key"], o["rows"])
-            # Подсказка: найти похожие совпавшие комментарии в main-файле
-            log.warning("      → sheet normalized: '%s'", _alphanum(o["sheet_key"]))
+            # Hint: compare this normalised form against GROUP_COMMENT values
+            log.warning("      -> sheet normalized: '%s'", _alphanum(o["sheet_key"]))
 
     log.warning("")
     log.warning("ACTION REQUIRED: Check that GROUP_COMMENT text in main file")
@@ -330,6 +457,13 @@ def _report_orphans(orphan_sheets: list[dict]) -> None:
     log.warning("=" * 60)
 
 def _report_duplicates(dup_by_file: dict[str, int], total_raw: int, total_loaded: int) -> None:
+    """Log a summary of duplicate records skipped during prepare_crs_records.
+
+    Args:
+        dup_by_file: Dict mapping source_file name to duplicate count.
+        total_raw: Total raw records before deduplication.
+        total_loaded: Records remaining after deduplication.
+    """
     total_dups = sum(dup_by_file.values())
     if not total_dups:
         log.info("Prepared %d DB records — no duplicates.", total_loaded)
@@ -337,19 +471,34 @@ def _report_duplicates(dup_by_file: dict[str, int], total_raw: int, total_loaded
 
     log.warning("=" * 60)
     log.warning("DUPLICATE RECORDS REPORT — %d duplicate(s) skipped", total_dups)
-    log.warning("  Total raw: %d  →  loaded: %d  →  skipped: %d",
+    log.warning("  Total raw: %d -> loaded: %d -> skipped: %d",
                 total_raw, total_loaded, total_dups)
     log.warning("  By source file:")
     for src_file, count in sorted(dup_by_file.items(), key=lambda x: -x[1]):
         log.warning("    %-60s  %d dup(s)", src_file, count)
     log.warning("")
     log.warning("ACTION REQUIRED: Duplicates share same comment_id key:")
-    log.warning("  crs_doc_number | group_comment | detail_sheet | tag_name | comment | property_name")
-    log.warning("  (property_name included only when not null/Not Applicable)")
+    log.warning("  crs_doc_number | group_comment | detail_sheet | tag_name | comment")
+    log.warning("  | property_name | document_number_ref")
+    log.warning("  (fields included only when not empty/Not Applicable)")
     log.warning("  Check for repeated rows in listed Excel files.")
     log.warning("=" * 60)
 
 def parse_main_file(path: Path) -> tuple[dict | None, pd.DataFrame | None]:
+    """Parse a CRS main file and extract metadata + group comments DataFrame.
+
+    Uses openpyxl for merged-cell-aware header reading, then calamine for fast
+    data row loading. Skips files with RETURN_CODE == '1' (already responded).
+
+    Args:
+        path: Path to the DOC_COMMENT_* main Excel file.
+
+    Returns:
+        Tuple of (metadata_dict, df_comments), or (None, None) on error or skip.
+        df_comments has columns GROUP_COMMENT and RESPONSE.
+        metadata_dict contains DOC_NUMBER, REVISION, RETURN_CODE,
+        TRANSMITTAL_NUMBER, TRANSMITTAL_DATE, SOURCE_FILE, CRS_FILE_PATH.
+    """
     try:
         wb = load_workbook(path, read_only=False, data_only=True)
         ws = wb.active
@@ -435,6 +584,20 @@ def process_key(
     main_path: Path,
     related_paths: tuple[Path, ...],
 ) -> tuple[list[dict], list[dict], int]:
+    """Parse one main CRS file and all its related detail files into raw records.
+
+    For each group comment in the main file, finds the matching detail sheet,
+    then emits one record per data row in that sheet. Tracks orphan sheets
+    (detail sheets with no matching group comment) and duplicate comment IDs.
+
+    Args:
+        key: Document key identifying this CRS set (e.g. 'JDAW-...-019_A28').
+        main_path: Path to the DOC_COMMENT_* main Excel file.
+        related_paths: Tuple of paths to related detail Excel files.
+
+    Returns:
+        3-tuple of (records, orphan_sheets, dup_count).
+    """
     records:      list[dict] = []
     matched_keys: set[str]   = set()
     seen_ids:     set[str]   = set()
@@ -461,19 +624,28 @@ def process_key(
             found_detail = True
             matched_keys.add(f"{detail_path.name}::{sheet_key}")
 
-            # Определить колонки один раз на лист — до цикла по строкам
+            # Resolve columns once per sheet before row loop
             tag_col, is_equip_col = _find_tag_col(list(df_sheet.columns))
             prop_col = next(
                 (c for c in df_sheet.columns
-                if any(
-                    kw.replace(" ", "_") in c.lower().replace(" ", "_")
-                    for kw in PROPERTY_COL_KEYWORDS
-                )),
+                 if any(
+                     kw.replace(" ", "_") in c.lower().replace(" ", "_")
+                     for kw in PROPERTY_COL_KEYWORDS
+                 )),
+                None,
+            )
+            # DOCUMENT_NUMBER column is present only in some detail sheets
+            doc_num_col = next(
+                (c for c in df_sheet.columns
+                 if any(
+                     kw.replace(" ", "_") in c.lower().replace(" ", "_")
+                     for kw in DOCUMENT_NUMBER_KEYWORDS
+                 )),
                 None,
             )
 
             for _, d_row in df_sheet.iterrows():
-                # Tag: через Equip_ strip или напрямую — в зависимости от типа колонки
+                # Extract tag name — strip Equip_ prefix when column holds equipment numbers
                 raw_tag  = _scalar(d_row[tag_col]) if tag_col else None
                 tag_name = (
                     _extract_tag_from_equipment(raw_tag)
@@ -485,25 +657,31 @@ def process_key(
                 if not prop_name or str(prop_name).strip() == "":
                     prop_name = "Not Applicable"
 
+                # document_number references the project document, not the CRS file
+                doc_number_ref = _scalar(d_row[doc_num_col]) if doc_num_col else None
+                if not doc_number_ref or str(doc_number_ref).strip() == "":
+                    doc_number_ref = "Not Applicable"
+
                 row_comment = comment_val
                 if row_comment is None and fallback_col and fallback_col in d_row.index:
                     row_comment = _scalar(d_row[fallback_col]) or None
 
                 records.append({
-                    "DOC_NUMBER":         metadata.get("DOC_NUMBER"),
-                    "REVISION":           metadata.get("REVISION"),
-                    "RETURN_CODE":        metadata.get("RETURN_CODE"),
-                    "TRANSMITTAL_NUMBER": metadata.get("TRANSMITTAL_NUMBER"),
-                    "TRANSMITTAL_DATE":   metadata.get("TRANSMITTAL_DATE"),
-                    "TAG_NAME":           tag_name,
-                    "PROPERTY_NAME":      prop_name,
-                    "GROUP_COMMENT":      comment_text,
-                    "RESPONSE":           response_text,
-                    "SOURCE_FILE":        metadata.get("SOURCE_FILE"),
-                    "DETAIL_FILE":        detail_path.name,
-                    "DETAIL_SHEET":       sheet_key,
-                    "COMMENT":            row_comment,
-                    "CRS_FILE_PATH":      metadata.get("CRS_FILE_PATH"),
+                    "DOC_NUMBER":          metadata.get("DOC_NUMBER"),
+                    "REVISION":            metadata.get("REVISION"),
+                    "RETURN_CODE":         metadata.get("RETURN_CODE"),
+                    "TRANSMITTAL_NUMBER":  metadata.get("TRANSMITTAL_NUMBER"),
+                    "TRANSMITTAL_DATE":    metadata.get("TRANSMITTAL_DATE"),
+                    "TAG_NAME":            tag_name,
+                    "PROPERTY_NAME":       prop_name,
+                    "DOCUMENT_NUMBER_REF": doc_number_ref,
+                    "GROUP_COMMENT":       comment_text,
+                    "RESPONSE":            response_text,
+                    "SOURCE_FILE":         metadata.get("SOURCE_FILE"),
+                    "DETAIL_FILE":         detail_path.name,
+                    "DETAIL_SHEET":        sheet_key,
+                    "COMMENT":             row_comment,
+                    "CRS_FILE_PATH":       metadata.get("CRS_FILE_PATH"),
                 })
 
                 prop_key_chk = (
@@ -511,30 +689,39 @@ def process_key(
                     if prop_name and prop_name.upper() != "NOT APPLICABLE"
                     else ""
                 )
-                _cid = f"{metadata.get('DOC_NUMBER', '')}|{comment_text}|{sheet_key}|{tag_name or ''}|{row_comment or ''}|{prop_key_chk}"
+                doc_num_chk = (
+                    doc_number_ref
+                    if doc_number_ref and doc_number_ref.upper() != "NOT APPLICABLE"
+                    else ""
+                )
+                _cid = (
+                    f"{metadata.get('DOC_NUMBER', '')}|{comment_text}|{sheet_key}"
+                    f"|{tag_name or ''}|{row_comment or ''}|{prop_key_chk}|{doc_num_chk}"
+                )
                 if _cid in seen_ids:
                     dup_count += 1
                 else:
                     seen_ids.add(_cid)
 
-            break  # stop after first matching sheet
+            break  # stop after first matching sheet per group comment
 
         if not found_detail:
             records.append({
-                "DOC_NUMBER":         metadata.get("DOC_NUMBER"),
-                "REVISION":           metadata.get("REVISION"),
-                "RETURN_CODE":        metadata.get("RETURN_CODE"),
-                "TRANSMITTAL_NUMBER": metadata.get("TRANSMITTAL_NUMBER"),
-                "TRANSMITTAL_DATE":   metadata.get("TRANSMITTAL_DATE"),
-                "TAG_NAME":           None,
-                "PROPERTY_NAME":      "Not Applicable",
-                "GROUP_COMMENT":      comment_text,
-                "RESPONSE":           response_text,
-                "SOURCE_FILE":        metadata.get("SOURCE_FILE"),
-                "DETAIL_FILE":        None,
-                "DETAIL_SHEET":       None,
-                "COMMENT":            "No matching detail sheet found",
-                "CRS_FILE_PATH":      metadata.get("CRS_FILE_PATH"),
+                "DOC_NUMBER":          metadata.get("DOC_NUMBER"),
+                "REVISION":            metadata.get("REVISION"),
+                "RETURN_CODE":         metadata.get("RETURN_CODE"),
+                "TRANSMITTAL_NUMBER":  metadata.get("TRANSMITTAL_NUMBER"),
+                "TRANSMITTAL_DATE":    metadata.get("TRANSMITTAL_DATE"),
+                "TAG_NAME":            None,
+                "PROPERTY_NAME":       "Not Applicable",
+                "DOCUMENT_NUMBER_REF": "Not Applicable",
+                "GROUP_COMMENT":       comment_text,
+                "RESPONSE":            response_text,
+                "SOURCE_FILE":         metadata.get("SOURCE_FILE"),
+                "DETAIL_FILE":         None,
+                "DETAIL_SHEET":        None,
+                "COMMENT":             "No matching detail sheet found",
+                "CRS_FILE_PATH":       metadata.get("CRS_FILE_PATH"),
             })
 
     orphan_sheets: list[dict] = []
@@ -568,11 +755,16 @@ def process_key(
 def discover_crs_files(
     root: Path,
 ) -> tuple[dict[str, Path], dict[str, list[Path]], list[str]]:
-    """
+    """Scan the CRS data directory and classify files into main and detail sets.
+
+    Args:
+        root: Root directory to scan recursively for .xlsx files.
+
     Returns:
-        main_files   — {key: path}
-        detail_files — {key: [paths]}
-        rev_order    — revision keys sorted A01→A99 (e.g. ['A01','A14','A28'])
+        3-tuple of:
+          - main_files: {document_key: path} for DOC_COMMENT_* files
+          - detail_files: {document_key: [paths]} for related detail files
+          - rev_order: revision labels sorted A01 -> A99 (e.g. ['A01', 'A28'])
     """
     main_files:   dict[str, Path]       = {}
     detail_files: dict[str, list[Path]] = {}
@@ -593,7 +785,7 @@ def discover_crs_files(
         if d:
             detail_files.setdefault(d.group(1), []).append(path)
 
-    # Группировка по ревизии и сортировка A01→A99
+    # Group by revision and sort A01 -> A99
     rev_order = sorted(
         {_revision_label(k) for k in main_files},
         key=lambda r: int(r[1:]) if r[1:].isdigit() else 0,
@@ -610,13 +802,23 @@ def parse_all_files(
     main_files:   dict[str, Path],
     detail_files: dict[str, list[Path]],
     rev_order:    list[str],
-    debug_rev:    str | None = None,     # None = все ревизии
+    debug_rev:    str | None = None,
 ) -> tuple[list[dict], list[str]]:
+    """Parse all CRS file sets in revision order using a thread pool.
+
+    Files are processed A01 -> A99. Within each revision group, all document
+    keys are processed in parallel via ThreadPoolExecutor.
+
+    Args:
+        main_files: {key: path} mapping from discover_crs_files().
+        detail_files: {key: [paths]} mapping from discover_crs_files().
+        rev_order: Sorted revision label list from discover_crs_files().
+        debug_rev: If set, process only this revision (e.g. 'A28'). None = all.
+
+    Returns:
+        Tuple of (all_records, orphan_sheets).
     """
-    Process files grouped by revision, A01 → A99.
-    debug_rev: if set, process only this revision group (e.g. 'A28').
-    """
-    # Сгруппировать ключи по ревизии
+    # Group keys by revision for ordered processing
     groups: dict[str, list[str]] = {}
     for key in main_files:
         rev = _revision_label(key)
@@ -628,7 +830,7 @@ def parse_all_files(
     orphan_sheets: list[dict] = []
 
     for rev in revs_to_process:
-        keys = sorted(groups.get(rev, []))  # внутри ревизии — по имени
+        keys = sorted(groups.get(rev, []))  # sort within revision by document key
         if not keys:
             log.warning("Revision %s requested but no files found.", rev)
             continue
@@ -661,17 +863,30 @@ def parse_all_files(
 
 
 def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
+    """Enrich raw parsed records with FK resolution, row_hash and comment_id.
+
+    Performs a single batched FK lookup for all unique tag names, then builds
+    DB-ready dicts with deterministic comment_id (UUID5) and MD5 row_hash.
+    Deduplicates records sharing the same comment_id within the batch.
+
+    Args:
+        raw_records: List of raw record dicts from parse_all_files().
+        engine: SQLAlchemy engine for FK lookup queries.
+
+    Returns:
+        List of DB-ready dicts suitable for upsert_crs_records().
+    """
     if not raw_records:
         return []
 
-    # ── 1. Collect only needed values for FK lookup ──────────────────────
+    # 1. Collect unique tag names needed for FK lookup
     needed_tags = {
         clean_string(r.get("TAG_NAME"))
         for r in raw_records
         if clean_string(r.get("TAG_NAME"))
     }
 
-    # ── 2. FK lookup — only for needed values (ANY instead of full scan) ─────
+    # 2. Single batched FK lookup using ANY() — avoids N+1 queries
     with engine.connect() as conn:
         tag_lookup: dict[str, str] = {}
         if needed_tags:
@@ -688,73 +903,77 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
                 )
             }
 
-    log.info(
-        "FK lookup: %d/%d tags resolved.",
-        len(tag_lookup), len(needed_tags),
-    )
+    log.info("FK lookup: %d/%d tags resolved.", len(tag_lookup), len(needed_tags))
 
-    # ── 3. Build records ─────────────────────────────────────────────────
+    # 3. Build DB records
     db_records: list[dict] = []
     tag_miss = 0
     seen_comment_ids: set[str] = set()
     dup_by_file: dict[str, int] = {}
 
     for rec in raw_records:
-        # clean_string is called once per field — result is reused
-        crs_doc_number    = clean_string(rec.get("DOC_NUMBER")) or "UNKNOWN"
-        tag_name          = clean_string(rec.get("TAG_NAME"))
-        revision          = clean_string(rec.get("REVISION"))
-        return_code       = clean_string(rec.get("RETURN_CODE"))
-        transmittal_num   = clean_string(rec.get("TRANSMITTAL_NUMBER"))
-        transmittal_date  = to_dt(rec.get("TRANSMITTAL_DATE"))
-        group_comment     = clean_string(rec.get("GROUP_COMMENT")) or ""
-        comment           = clean_string(rec.get("COMMENT")) or ""
-        property_name     = clean_string(rec.get("PROPERTY_NAME"))
-        response_vendor   = clean_string(rec.get("RESPONSE"))
-        source_file       = clean_string(rec.get("SOURCE_FILE")) or ""
-        detail_file       = clean_string(rec.get("DETAIL_FILE"))
-        detail_sheet      = clean_string(rec.get("DETAIL_SHEET"))
-        crs_file_path     = clean_string(rec.get("CRS_FILE_PATH")) or ""
+        # Call clean_string once per field and reuse — avoids repeated calls
+        crs_doc_number      = clean_string(rec.get("DOC_NUMBER")) or "UNKNOWN"
+        tag_name            = clean_string(rec.get("TAG_NAME"))
+        revision            = clean_string(rec.get("REVISION"))
+        return_code         = clean_string(rec.get("RETURN_CODE"))
+        transmittal_num     = clean_string(rec.get("TRANSMITTAL_NUMBER"))
+        transmittal_date    = to_dt(rec.get("TRANSMITTAL_DATE"))
+        group_comment       = clean_string(rec.get("GROUP_COMMENT")) or ""
+        comment             = clean_string(rec.get("COMMENT")) or ""
+        property_name       = clean_string(rec.get("PROPERTY_NAME"))
+        document_number_ref = clean_string(rec.get("DOCUMENT_NUMBER_REF")) or "Not Applicable"
+        response_vendor     = clean_string(rec.get("RESPONSE"))
+        source_file         = clean_string(rec.get("SOURCE_FILE")) or ""
+        detail_file         = clean_string(rec.get("DETAIL_FILE"))
+        detail_sheet        = clean_string(rec.get("DETAIL_SHEET"))
+        crs_file_path       = clean_string(rec.get("CRS_FILE_PATH")) or ""
 
-        # FK resolve
+        # FK resolve — None when tag not found (logged as warning at end)
         tag_id = tag_lookup.get(tag_name) if tag_name else None
-
         if tag_name and not tag_id:
             tag_miss += 1
 
-        # row_hash — from already cleaned values, without calling clean_string again
+        # row_hash: MD5 over stable content fields (excludes timestamps)
         hash_source = {
-            "crs_doc_number":    crs_doc_number,
-            "tag_name":          tag_name or "",
-            "revision":          revision or "",
-            "return_code":       return_code or "",
-            "transmittal_num":   transmittal_num or "",
-            "transmittal_date":  str(transmittal_date) if transmittal_date else "",
-            "group_comment":     group_comment,
-            "comment":           comment,
-            "property_name":     property_name or "",
-            "response_vendor":   response_vendor or "",
-            "source_file":       source_file,
-            "detail_file":       detail_file or "",
-            "detail_sheet":      detail_sheet or "",
-            "crs_file_path":     crs_file_path,
+            "crs_doc_number":     crs_doc_number,
+            "tag_name":           tag_name or "",
+            "revision":           revision or "",
+            "return_code":        return_code or "",
+            "transmittal_num":    transmittal_num or "",
+            "transmittal_date":   str(transmittal_date) if transmittal_date else "",
+            "group_comment":      group_comment,
+            "comment":            comment,
+            "property_name":      property_name or "",
+            "document_number_ref": document_number_ref,
+            "response_vendor":    response_vendor or "",
+            "source_file":        source_file,
+            "detail_file":        detail_file or "",
+            "detail_sheet":       detail_sheet or "",
+            "crs_file_path":      crs_file_path,
         }
         row_hash = hashlib.md5(
             json.dumps(hash_source, sort_keys=True).encode()
         ).hexdigest()
 
-        # comment_id — deterministic UUID5, no collisions
+        # comment_id: deterministic UUID5 — stable across re-runs
         prop_key = (
             property_name
             if property_name and property_name.upper() != "NOT APPLICABLE"
             else ""
         )
+        doc_num_key = (
+            document_number_ref
+            if document_number_ref and document_number_ref.upper() != "NOT APPLICABLE"
+            else ""
+        )
         comment_id = str(uuid.uuid5(
             uuid.NAMESPACE_URL,
-            f"{crs_doc_number}|{group_comment}|{detail_sheet or ''}|{tag_name or ''}|{comment}|{prop_key}",
+            f"{crs_doc_number}|{group_comment}|{detail_sheet or ''}"
+            f"|{tag_name or ''}|{comment}|{prop_key}|{doc_num_key}",
         ))
 
-        # Deduplication within a single batch (protection against duplicates in Excel)
+        # Deduplicate within batch — guards against repeated rows in Excel source
         if comment_id in seen_comment_ids:
             src = clean_string(rec.get("SOURCE_FILE")) or "UNKNOWN"
             dup_by_file[src] = dup_by_file.get(src, 0) + 1
@@ -773,6 +992,7 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
             "tag_name":           tag_name,
             "tag_id":             tag_id,
             "property_name":      property_name,
+            "document_number":    document_number_ref,
             "response_vendor":    response_vendor,
             "source_file":        source_file,
             "detail_file":        detail_file,
@@ -793,6 +1013,20 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
 
 
 def upsert_crs_records(engine, records: list[dict], run_id: str) -> dict[str, int]:
+    """Upsert CRS comment records into audit_core.crs_comment in batches.
+
+    Uses ON CONFLICT (comment_id) DO UPDATE with a row_hash guard to skip
+    unchanged rows. Writes an audit entry to crs_comment_audit for every
+    INSERT or UPDATE.
+
+    Args:
+        engine: SQLAlchemy engine.
+        records: DB-ready dicts from prepare_crs_records().
+        run_id: UUID string for the current run (written to audit table).
+
+    Returns:
+        Dict with keys 'inserted', 'updated', 'errors'.
+    """
     stats = {"inserted": 0, "updated": 0, "errors": 0}
     if not records:
         return stats
@@ -802,6 +1036,7 @@ def upsert_crs_records(engine, records: list[dict], run_id: str) -> dict[str, in
             comment_id, crs_doc_number, revision, return_code,
             transmittal_number, transmittal_date,
             group_comment, comment, tag_name, tag_id, property_name,
+            document_number,
             response_vendor, source_file, detail_file, detail_sheet,
             crs_file_path, crs_file_timestamp,
             status, object_status, row_hash, sync_timestamp
@@ -809,6 +1044,7 @@ def upsert_crs_records(engine, records: list[dict], run_id: str) -> dict[str, in
             :comment_id, :crs_doc_number, :revision, :return_code,
             :transmittal_number, :transmittal_date,
             :group_comment, :comment, :tag_name, :tag_id, :property_name,
+            :document_number,
             :response_vendor, :source_file, :detail_file, :detail_sheet,
             :crs_file_path, :crs_file_timestamp,
             :status, :object_status, :row_hash, now()
@@ -819,6 +1055,7 @@ def upsert_crs_records(engine, records: list[dict], run_id: str) -> dict[str, in
             tag_name           = EXCLUDED.tag_name,
             tag_id             = EXCLUDED.tag_id,
             property_name      = EXCLUDED.property_name,
+            document_number    = EXCLUDED.document_number,
             response_vendor    = EXCLUDED.response_vendor,
             crs_file_timestamp = EXCLUDED.crs_file_timestamp,
             row_hash           = EXCLUDED.row_hash,
