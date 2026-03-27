@@ -16,33 +16,50 @@ if str(_REPO_ROOT) not in sys.path:
 from etl.flows.import_tag_data_deploy import sync_tags_task, build_hierarchy
 from etl.tasks.common import load_config
 
-# Historical data path — from config.yaml (storage.history_dir)
 _config = load_config()
+
+# Historical snapshots — directory with dated MTR files
 HISTORY_DIR = _config.get("storage", {}).get(
     "history_dir",
     "/mnt/shared-data/ram-user/Jackdaw/Master-Data/_master/data/_history",
 )
 FILE_MASK = r"MTR-dataset-(\d{4}-\d{2}-\d{2})_\d{2}\.xlsx"
 
-def get_sorted_history():
-    """ Scans directory and returns sorted list of historical file info """
+# Production master file — same path used by import_tag_data_deploy flow
+MASTER_FILE = _config.get("storage", {}).get("tag_dataset_file")
+
+
+def get_sorted_history(target_date: str | None = None) -> list[dict]:
+    """Scan HISTORY_DIR and return sorted file info dicts.
+
+    Args:
+        target_date: Optional ISO date string "YYYY-MM-DD". When provided,
+            returns only files whose embedded date matches exactly.
+
+    Returns:
+        List of dicts with keys: path, date, name — sorted by date ascending.
+    """
     if not os.path.exists(HISTORY_DIR):
         return []
 
     history = []
     for fname in os.listdir(HISTORY_DIR):
         match = re.match(FILE_MASK, fname)
-        if match:
-            fdate = datetime.strptime(match.group(1), "%Y-%m-%d")
-            history.append({
-                "path": os.path.join(HISTORY_DIR, fname),
-                "date": fdate,
-                "name": fname
-            })
-    return sorted(history, key=lambda x: x['date'])
+        if not match:
+            continue
+        file_date_str = match.group(1)
+        if target_date and file_date_str != target_date:
+            continue
+        fdate = datetime.strptime(file_date_str, "%Y-%m-%d")
+        history.append({
+            "path": os.path.join(HISTORY_DIR, fname),
+            "date": fdate,
+            "name": fname,
+        })
+    return sorted(history, key=lambda x: x["date"])
 
 
-def get_quarterly_sample(all_files):
+def get_quarterly_sample(all_files: list[dict]) -> list[dict]:
     """Select representative files: always first & last, plus first file of each quarter in between.
 
     Quarter mapping: Q1=Jan-Mar, Q2=Apr-Jun, Q3=Jul-Sep, Q4=Oct-Dec.
@@ -53,74 +70,146 @@ def get_quarterly_sample(all_files):
     first = all_files[0]
     last = all_files[-1]
 
-    seen_quarters = set()
+    seen_quarters: set = set()
     quarterly_firsts = []
     for f in all_files[1:-1]:
-        q = (f['date'].month - 1) // 3 + 1  # 1..4
-        key = (f['date'].year, q)
+        q = (f["date"].month - 1) // 3 + 1  # 1..4
+        key = (f["date"].year, q)
         if key not in seen_quarters:
             seen_quarters.add(key)
             quarterly_firsts.append(f)
 
-    seen_paths = set()
+    seen_paths: set = set()
     result = []
     for f in [first] + quarterly_firsts + [last]:
-        if f['path'] not in seen_paths:
-            seen_paths.add(f['path'])
+        if f["path"] not in seen_paths:
+            seen_paths.add(f["path"])
             result.append(f)
     return result
 
+
 @flow(name="Tag History Replay (Backfill)", log_prints=True)
-def tag_backfill_flow(debug_mode: bool = True):
+def tag_backfill_flow(
+    mode: str = "history",
+    debug_mode: bool = True,
+    target_date: str | None = None,
+):
+    """Replay tag sync for historical snapshots or run once against the production master file.
+
+    Args:
+        mode: "history" — scan HISTORY_DIR and replay dated snapshots;
+              "master"  — single run against the production master file (FILE_PATH from config).
+        debug_mode: History mode only. When True and target_date is None,
+            processes only the first and last available files.
+            Ignored when target_date is set or mode="master".
+        target_date: History mode only. ISO date string "YYYY-MM-DD".
+            When provided, only files whose filename date matches are processed.
+            Overrides debug_mode selection logic.
+    """
     logger = get_run_logger()
-    all_files = get_sorted_history()
-    
-    if not all_files:
-        logger.error(f"No historical MTR files found in {HISTORY_DIR}!")
+    NAMESPACE_BACKFILL = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+
+    # ── MASTER MODE ──────────────────────────────────────────────────────────
+    if mode == "master":
+        if not MASTER_FILE:
+            logger.error("storage.tag_dataset_file is not set in config.yaml — cannot run master mode.")
+            return
+
+        master_name = Path(MASTER_FILE).name
+        run_id = str(uuid.uuid5(NAMESPACE_BACKFILL, master_name))
+
+        logger.info("STARTING SYNC: mode=MASTER")
+        logger.info(f"File: {master_name}")
+
+        start_ts = time.time()
+        try:
+            # override_file/override_date omitted — task uses FILE_PATH and datetime.now()
+            sync_tags_task(run_id=run_id)
+            logger.info(f"Sync completed in {time.time() - start_ts:.2f}s")
+        except Exception as e:
+            logger.error(f"SYNC FAILED: {e}")
+            raise
+
+        logger.info("Resolving Parent-Child Hierarchy...")
+        build_hierarchy()
+
+        logger.info("==============================")
+        logger.info("MASTER SYNC COMPLETED")
+        logger.info("==============================")
         return
 
-    # Determine files to process
-    targets = [all_files[0], all_files[-1]] if debug_mode and len(all_files) > 1 else get_quarterly_sample(all_files)
+    # ── HISTORY MODE ─────────────────────────────────────────────────────────
+    all_files = get_sorted_history(target_date=target_date)
+
+    if not all_files:
+        if target_date:
+            logger.error(f"No MTR files found for date {target_date!r} in {HISTORY_DIR}")
+        else:
+            logger.error(f"No historical MTR files found in {HISTORY_DIR}")
+        return
+
+    # Determine target subset
+    if target_date:
+        targets = all_files  # already filtered — use all matching files
+        mode_label = f"DATE={target_date}"
+    elif debug_mode and len(all_files) > 1:
+        targets = [all_files[0], all_files[-1]]
+        mode_label = "DEBUG (first + last)"
+    else:
+        targets = get_quarterly_sample(all_files)
+        mode_label = "FULL (quarterly sample)"
+
     total = len(targets)
+    logger.info(f"STARTING BACKFILL: mode=HISTORY/{mode_label}")
+    logger.info(f"Snapshots to replay: {total} (from {len(all_files)} available)")
 
-    logger.info(f"STARTING BACKFILL: Mode={'DEBUG' if debug_mode else 'FULL'}")
-    logger.info(f"Total snapshots to replay: {total} (quarterly sample from {len(all_files)} available files)")
-
-    # PHASE 1: Sequential Data Sync (UPSERT only)
+    # PHASE 1: Sequential tag sync (UPSERT only, no hierarchy)
     for index, f_info in enumerate(targets, 1):
         start_ts = time.time()
-        
-        # Generate stable UUID based on filename
-        NAMESPACE_BACKFILL = uuid.UUID('6ba7b810-9dad-11d1-80b4-00c04fd430c8')
-        run_id = str(uuid.uuid5(NAMESPACE_BACKFILL, f_info['name']))
-        
-        logger.info(f"[{index}/{total}] Replaying data from: {f_info['name']}")
-        
+        run_id = str(uuid.uuid5(NAMESPACE_BACKFILL, f_info["name"]))
+        logger.info(f"[{index}/{total}] {f_info['name']}")
         try:
-            # Sync core tags and mappings without building hierarchy yet
             sync_tags_task(
-                run_id=run_id, 
-                override_file=f_info['path'], 
-                override_date=f_info['date']
+                run_id=run_id,
+                override_file=f_info["path"],
+                override_date=f_info["date"],
             )
-            
-            duration = time.time() - start_ts
-            logger.info(f"Step {index} OK: Sync completed in {duration:.2f}s")
-            
+            logger.info(f"  OK — {time.time() - start_ts:.2f}s")
         except Exception as e:
-            logger.error(f"STEP FAILED: {f_info['name']} Error: {e}")
-            if debug_mode: raise e
+            logger.error(f"  FAILED: {e}")
+            if debug_mode or target_date:
+                raise
 
-    # PHASE 2: Final Hierarchy Resolution
-    # We only run this once for the MOST RECENT file processed to set current parent-child links
-    logger.info("PHASE 2: Resolving Final Parent-Child Hierarchy...")
-    final_file = targets[-1]['path']
-    build_hierarchy(override_file=final_file)
+    # PHASE 2: Hierarchy resolution — run once against the most recent processed file
+    logger.info("Resolving Final Parent-Child Hierarchy...")
+    build_hierarchy(override_file=targets[-1]["path"])
 
     logger.info("========================================")
     logger.info("BACKFILL PROCESS COMPLETED SUCCESSFULLY")
     logger.info("========================================")
 
+
 if __name__ == "__main__":
-    # Start with debug_mode=True to test the first and last files
-    tag_backfill_flow(debug_mode=False)
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Tag backfill / master sync runner")
+    parser.add_argument(
+        "--mode", choices=["history", "master"], default="history",
+        help="'history' — replay dated snapshots; 'master' — run against production file",
+    )
+    parser.add_argument(
+        "--date", default=None, metavar="YYYY-MM-DD",
+        help="History mode: process only files matching this date",
+    )
+    parser.add_argument(
+        "--no-debug", dest="debug_mode", action="store_false",
+        help="History mode: run full quarterly sample instead of first+last only",
+    )
+    parser.set_defaults(debug_mode=True)
+    args = parser.parse_args()
+
+    tag_backfill_flow(
+        mode=args.mode,
+        debug_mode=args.debug_mode,
+        target_date=args.date,
+    )
