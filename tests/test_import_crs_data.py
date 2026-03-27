@@ -161,3 +161,71 @@ def test_hash_stable_across_file_paths():
     hash2 = hashlib.md5(json.dumps(base_hash_source, sort_keys=True).encode()).hexdigest()
 
     assert hash1 == hash2, "Hash changed between identical hash_source dicts"
+
+
+# ---------------------------------------------------------------------------
+# _load_detail_file_impl — hidden sheet filtering and collision detection
+# ---------------------------------------------------------------------------
+
+import logging
+from unittest.mock import MagicMock, patch
+
+
+def _make_mock_wb(sheet_specs: list[tuple[str, str]]) -> MagicMock:
+    """Return a mock openpyxl Workbook with controlled sheet_state values."""
+    state_map = dict(sheet_specs)
+    wb = MagicMock()
+    wb.sheetnames = [name for name, _ in sheet_specs]
+
+    def _get_sheet(name: str) -> MagicMock:
+        ws = MagicMock()
+        ws.sheet_state = state_map[name]
+        ws.merged_cells.ranges = []
+        ws.iter_rows.return_value = iter([])
+        ws.cell.return_value = MagicMock(value=None)
+        return ws
+
+    wb.__getitem__ = lambda self, name: _get_sheet(name)
+    return wb
+
+
+def test_hidden_sheets_excluded(tmp_path: Path) -> None:
+    """sheet_state='hidden' sheets must be excluded from processing."""
+    from scripts.import_crs_data import _load_detail_file_impl
+
+    mock_wb = _make_mock_wb([("Tag_List", "visible"), ("HiddenData", "hidden")])
+
+    with patch("scripts.import_crs_data.load_workbook", return_value=mock_wb), \
+         patch("pandas.ExcelFile", side_effect=Exception("no calamine")):
+        result = _load_detail_file_impl(tmp_path / "fake.xlsx")
+
+    assert isinstance(result, dict)
+
+
+def test_very_hidden_sheets_excluded(tmp_path: Path) -> None:
+    """sheet_state='veryHidden' sheets must also be excluded."""
+    from scripts.import_crs_data import _load_detail_file_impl
+
+    mock_wb = _make_mock_wb([("Visible", "visible"), ("VeryHidden", "veryHidden")])
+
+    with patch("scripts.import_crs_data.load_workbook", return_value=mock_wb), \
+         patch("pandas.ExcelFile", side_effect=Exception("no calamine")):
+        result = _load_detail_file_impl(tmp_path / "fake.xlsx")
+
+    assert isinstance(result, dict)
+
+
+def test_sheet_name_collision_skips_duplicate(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Normalised sheet name collision must log WARNING and skip the duplicate."""
+    from scripts.import_crs_data import _load_detail_file_impl
+
+    # "Tag List" and "Tag_List" both normalise to "tag_list"
+    mock_wb = _make_mock_wb([("Tag List", "visible"), ("Tag_List", "visible")])
+
+    with patch("scripts.import_crs_data.load_workbook", return_value=mock_wb), \
+         patch("pandas.ExcelFile", side_effect=Exception("no calamine")), \
+         caplog.at_level(logging.WARNING):
+        result = _load_detail_file_impl(tmp_path / "fake.xlsx")
+
+    assert isinstance(result, dict)
+    assert any("collision" in msg.lower() for msg in caplog.messages)

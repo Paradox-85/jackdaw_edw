@@ -356,7 +356,8 @@ SheetData = tuple[pd.DataFrame, str | None, str | None]
 def _load_detail_file_impl(path: Path) -> dict[str, SheetData]:
     """Load all sheets from a CRS detail Excel file (two-phase: openpyxl + calamine).
 
-    Phase 1 (openpyxl): detect merged comment column and extract its value per sheet.
+    Phase 1 (openpyxl): filter hidden sheets, detect merged comment column
+    and extract its value per visible sheet.
     Phase 2 (calamine): read data rows efficiently; drop the merged column, filter
     empty rows, and detect fallback comment column if no merged cell was found.
 
@@ -377,11 +378,32 @@ def _load_detail_file_impl(path: Path) -> dict[str, SheetData]:
         return result
 
     sheet_names = list(wb.sheetnames)
+
+    # Filter hidden/veryHidden sheets — they contain service data, not CRS rows
+    visible_sheet_names = [
+        s for s in sheet_names
+        if wb[s].sheet_state == "visible"
+    ]
+    if len(visible_sheet_names) < len(sheet_names):
+        hidden = [s for s in sheet_names if s not in visible_sheet_names]
+        log.debug(
+            "Detail file %s: skipping %d hidden sheet(s): %s",
+            path.name, len(hidden), ", ".join(hidden),
+        )
+    sheet_names = visible_sheet_names
+
     sheet_meta: dict[str, tuple[int | None, str | None]] = {}
 
     for sheet in sheet_names:
         sheet_key = _norm_sheet(sheet)
         if sheet_key in SKIP_SHEETS:
+            continue
+        if sheet_key in sheet_meta:
+            log.warning(
+                "Detail file %s: normalised sheet name collision '%s' "
+                "(original: '%s') — skipping duplicate.",
+                path.name, sheet_key, sheet,
+            )
             continue
         ws = wb[sheet]
         comment_col_idx = _find_comment_column(ws, data_start_row=DATA_START_ROW)
@@ -435,8 +457,10 @@ _cache_lock = threading.Lock()
 
 
 def _load_detail_file(path: Path) -> dict[str, SheetData]:
+    # Fast path: dict lookup is atomic in CPython under GIL
     if path in _detail_file_cache:
         return _detail_file_cache[path]
+    # Slow path: acquire lock to prevent duplicate parsing in thread pool
     with _cache_lock:
         if path not in _detail_file_cache:
             _detail_file_cache[path] = _load_detail_file_impl(path)
@@ -565,9 +589,12 @@ def _report_duplicates(dup_by_file: dict[str, int], total_raw: int, total_loaded
     """
     total_dups = sum(dup_by_file.values())
     log.info(
-        "Prepared %d DB records — %d duplicate(s) skipped.",
-        total_loaded, total_dups,
+        "Prepared %d/%d DB records — %d duplicate(s) skipped.",
+        total_loaded, total_raw, total_dups,
     )
+    if dup_by_file:
+        for src, cnt in sorted(dup_by_file.items(), key=lambda x: -x[1]):
+            log.debug("  Duplicates in %s: %d", src, cnt)
 
 def parse_main_file(path: Path) -> tuple[dict | None, pd.DataFrame | None]:
     """Parse a CRS main file and extract metadata + group comments DataFrame.
@@ -1181,7 +1208,11 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
     if tag_miss:
         log.warning("FK miss — tag_name unresolved: %d (tag_id=NULL)", tag_miss)
 
-    _report_duplicates(dup_by_file, len(raw_records), len(db_records))
+    _report_duplicates(
+        dup_by_file,
+        total_raw=len(raw_records),
+        total_loaded=len(db_records),
+    )
 
     return db_records
 
