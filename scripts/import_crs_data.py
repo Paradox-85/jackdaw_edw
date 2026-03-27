@@ -261,9 +261,9 @@ def _extract_tag_from_equipment(val: Any) -> str | None:
     m = _EQUIP_PREFIX_RE.match(s)
     return m.group(1) if m else s
 
-_TAG_COL_RE   = re.compile(r"\btag\b",       re.IGNORECASE)
-_EQUIP_COL_RE = re.compile(r"\bequipment\b.*(number|no\.?|num)\b", re.IGNORECASE)
-_EQUIP_EXCLUDE_RE = re.compile(r"\b(serial|manufacturer|model|part)\b", re.IGNORECASE)
+_TAG_COL_RE   = re.compile(r"(^|[\s_])tag([\s_]|$)",       re.IGNORECASE)
+_EQUIP_COL_RE = re.compile(r"equipment[\s_]*(number|no\.?|num)", re.IGNORECASE)
+_EQUIP_EXCLUDE_RE = re.compile(r"(serial|manufacturer|model|part)", re.IGNORECASE)
 def _find_tag_col(columns: list[str]) -> tuple[str | None, bool]:
     """
     Returns (col_name, is_equipment_col).
