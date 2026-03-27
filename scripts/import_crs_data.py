@@ -361,7 +361,7 @@ def _extract_tag_from_equipment(val: Any) -> str | None:
     m = _EQUIP_PREFIX_RE.match(s)
     return m.group(1) if m else s
 
-_TAG_COL_RE       = re.compile(r"(^|[\s_])tag([\s_]|$)",            re.IGNORECASE)
+_TAG_COL_EXACT_RE = re.compile(r"^tag[_\s]*(name|number|no\.?|num|id)?$", re.IGNORECASE)
 _EQUIP_COL_RE     = re.compile(r"equipment[\s_]*(number|no\.?|num)", re.IGNORECASE)
 _EQUIP_EXCLUDE_RE = re.compile(r"(serial|manufacturer|model|part)",   re.IGNORECASE)
 
@@ -378,7 +378,7 @@ def _find_tag_col(columns: list[str]) -> tuple[str | None, bool]:
     """
     # Priority 1: explicit tag column (excludes property columns)
     for c in columns:
-        if _TAG_COL_RE.search(c) and "property" not in c.lower():
+        if _TAG_COL_EXACT_RE.search(c) and "property" not in c.lower():
             return c, False
 
     # Priority 2: equipment number column as fallback
@@ -465,24 +465,10 @@ def _report_duplicates(dup_by_file: dict[str, int], total_raw: int, total_loaded
         total_loaded: Records remaining after deduplication.
     """
     total_dups = sum(dup_by_file.values())
-    if not total_dups:
-        log.info("Prepared %d DB records — no duplicates.", total_loaded)
-        return
-
-    log.warning("=" * 60)
-    log.warning("DUPLICATE RECORDS REPORT — %d duplicate(s) skipped", total_dups)
-    log.warning("  Total raw: %d -> loaded: %d -> skipped: %d",
-                total_raw, total_loaded, total_dups)
-    log.warning("  By source file:")
-    for src_file, count in sorted(dup_by_file.items(), key=lambda x: -x[1]):
-        log.warning("    %-60s  %d dup(s)", src_file, count)
-    log.warning("")
-    log.warning("ACTION REQUIRED: Duplicates share same comment_id key:")
-    log.warning("  crs_doc_number | group_comment | detail_sheet | tag_name | comment")
-    log.warning("  | property_name | document_number_ref")
-    log.warning("  (fields included only when not empty/Not Applicable)")
-    log.warning("  Check for repeated rows in listed Excel files.")
-    log.warning("=" * 60)
+    log.info(
+        "Prepared %d DB records — %d duplicate(s) skipped.",
+        total_loaded, total_dups,
+    )
 
 def parse_main_file(path: Path) -> tuple[dict | None, pd.DataFrame | None]:
     """Parse a CRS main file and extract metadata + group comments DataFrame.
@@ -605,7 +591,7 @@ def process_key(
 
     metadata, df_comments = parse_main_file(main_path)
     if metadata is None or df_comments is None:
-        return records, []
+        return records, [], 0
 
     all_detail_sheets: dict[Path, dict[str, SheetData]] = {
         p: _load_detail_file(p) for p in related_paths
@@ -828,6 +814,7 @@ def parse_all_files(
 
     all_records:   list[dict] = []
     orphan_sheets: list[dict] = []
+    total_dups:    int        = 0
 
     for rev in revs_to_process:
         keys = sorted(groups.get(rev, []))  # sort within revision by document key
@@ -853,12 +840,16 @@ def parse_all_files(
                     records, file_orphans, dup_count = future.result()
                     all_records.extend(records)
                     orphan_sheets.extend(file_orphans)
+                    total_dups += dup_count
                     log.info("  ✓ %s — %d record(s), %d orphan(s), %d duplicate(s)", key, len(records), len(file_orphans), dup_count)
                 except Exception as exc:
                     log.error("  ✗ %s failed: %s", key, exc)
 
     _detail_file_cache.clear()
-    log.info("Parsed %d total records, %d orphan sheets.", len(all_records), len(orphan_sheets))
+    log.info(
+        "Parsed %d total records, %d duplicate(s), %d orphan sheet(s).",
+        len(all_records), total_dups, len(orphan_sheets),
+    )
     return all_records, orphan_sheets
 
 
