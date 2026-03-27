@@ -54,6 +54,8 @@ log = logging.getLogger(__name__)
 MAIN_PATTERN = re.compile(
     r"^DOC_COMMENT_(JDAW-KVE-E-JA-6944-00001-\d{3}_A\d{2})_[A-Z]{3}\.xlsx$"
 )
+# Matches both versioned detail files (_A34_7) and Review_Comments (_A21_Review_Comments).
+# Version selection logic is in _select_detail_files(), not in this pattern.
 DETAIL_PATTERN = re.compile(
     r"^(JDAW-KVE-E-JA-6944-00001-\d{3}_A\d{2})(?:_\d+|_Review_Comments)\.xlsx$"
 )
@@ -103,6 +105,10 @@ HASH_EXCLUDE_FIELDS = {
     "llm_response_timestamp",
     "response_approval_date",
     "llm_response",
+    # Excluded: change independently of comment content (filesystem paths, vendor responses)
+    "response_vendor",
+    "detail_file",
+    "crs_file_path",
 }
 
 MAX_WORKERS = 14
@@ -163,6 +169,85 @@ def _revision_number(key: str) -> int:
     """
     m = _REV_RE.search(key)
     return int(m.group(1)) if m else 0
+
+
+_DETAIL_VERSION_RE = re.compile(r"_A\d+_(\d+)\.xlsx$", re.IGNORECASE)
+_REVIEW_COMMENTS_RE = re.compile(r"_A\d+_Review_Comments\.xlsx$", re.IGNORECASE)
+
+
+def _detail_version(filename: str) -> int:
+    """Extract trailing integer version from a detail filename.
+
+    Args:
+        filename: Detail Excel filename, e.g. 'JDAW-...-003_A34_10.xlsx'.
+
+    Returns:
+        Integer version suffix (e.g. 10), or 0 if not a versioned file.
+
+    Examples:
+        >>> _detail_version("JDAW-...-003_A34_10.xlsx")
+        10
+        >>> _detail_version("JDAW-...-003_A21_Review_Comments.xlsx")
+        0
+    """
+    m = _DETAIL_VERSION_RE.search(filename)
+    return int(m.group(1)) if m else 0
+
+
+def _is_review_comments(filename: str) -> bool:
+    """Return True if filename matches the _Review_Comments convention.
+
+    Args:
+        filename: Detail Excel filename.
+
+    Returns:
+        True for '_A##_Review_Comments.xlsx' filenames, False otherwise.
+
+    Examples:
+        >>> _is_review_comments("JDAW-...-003_A21_Review_Comments.xlsx")
+        True
+        >>> _is_review_comments("JDAW-...-003_A34_10.xlsx")
+        False
+    """
+    return bool(_REVIEW_COMMENTS_RE.search(filename))
+
+
+def _select_detail_files(candidates: list[Path]) -> tuple[list[Path], str]:
+    """Apply priority rules to select relevant detail files from candidates.
+
+    All candidates are assumed to already be in the correct directory
+    (Rule 0 applied by caller).
+
+    Priority:
+      1. _Review_Comments file → return it exclusively
+      2. Versioned files (_A##_N) → return only max-version file(s)
+      3. Fallback → return all candidates
+
+    Args:
+        candidates: List of eligible detail file paths (same dir as master).
+
+    Returns:
+        Tuple of (selected_paths, reason_string) for logging.
+    """
+    if not candidates:
+        return [], "no candidates"
+
+    # Priority 1: Review_Comments wins unconditionally
+    review_files = [p for p in candidates if _is_review_comments(p.name)]
+    if review_files:
+        return review_files, "review_comments"
+
+    # Priority 2: versioned files → keep only max-version
+    versioned = [(p, _detail_version(p.name)) for p in candidates
+                 if _detail_version(p.name) > 0]
+    if versioned:
+        max_ver = max(v for _, v in versioned)
+        selected = [p for p, v in versioned if v == max_ver]
+        return selected, f"max_version={max_ver}"
+
+    # Priority 3: fallback (unusual naming — include all)
+    return candidates, "fallback_all"
+
 
 def _expand_merged_cells(ws) -> dict[tuple[int, int], object]:
     """Build a flat (row, col) -> value map with merged cells expanded.
@@ -780,19 +865,25 @@ def process_key(
 def discover_crs_files(
     root: Path,
 ) -> tuple[dict[str, Path], dict[str, list[Path]], list[str]]:
-    """Scan the CRS data directory and classify files into main and detail sets.
+    """Scan CRS directory and classify files into main and detail sets.
+
+    Detail file selection rules (per document key):
+      0. Only files in the SAME directory as master are eligible (hard rule)
+      1. _Review_Comments file wins if present
+      2. Otherwise: max-version integer-suffixed file wins
+      3. Fallback: keep all eligible
 
     Args:
         root: Root directory to scan recursively for .xlsx files.
 
     Returns:
         3-tuple of:
-          - main_files: {document_key: path} for DOC_COMMENT_* files
-          - detail_files: {document_key: [paths]} for related detail files
-          - rev_order: revision labels sorted A01 -> A99 (e.g. ['A01', 'A28'])
+          - main_files: {document_key: path}
+          - detail_files: {document_key: [selected_paths]}
+          - rev_order: revision labels sorted A01 -> A99
     """
-    main_files:   dict[str, Path]       = {}
-    detail_files: dict[str, list[Path]] = {}
+    main_files:  dict[str, Path]       = {}
+    _all_detail: dict[str, list[Path]] = {}
 
     for path in root.rglob("*.xlsx"):
         if "_templates" in path.parts:
@@ -808,9 +899,58 @@ def discover_crs_files(
             continue
         d = DETAIL_PATTERN.match(name)
         if d:
-            detail_files.setdefault(d.group(1), []).append(path)
+            _all_detail.setdefault(d.group(1), []).append(path)
 
-    # Group by revision and sort A01 -> A99
+    detail_files: dict[str, list[Path]] = {}
+
+    for key, candidates in _all_detail.items():
+        master_path = main_files.get(key)
+
+        if master_path is None:
+            log.warning(
+                "Key %s: %d detail file(s) found but no master file — skipped.",
+                key, len(candidates),
+            )
+            continue
+
+        master_dir = master_path.parent
+
+        # Rule 0: same-directory filter (hard — subdirectory files are legacy)
+        same_dir = [p for p in candidates if p.parent == master_dir]
+        sub_dir  = [p for p in candidates if p.parent != master_dir]
+
+        if sub_dir:
+            log.info(
+                "Key %s: excluded %d subdirectory detail file(s): %s",
+                key, len(sub_dir),
+                ", ".join(p.name for p in sub_dir),
+            )
+
+        if not same_dir:
+            log.warning(
+                "Key %s: all %d detail file(s) are in subdirectories — none eligible.",
+                key, len(candidates),
+            )
+            continue
+
+        # Rules 1–3: priority selection within same directory
+        selected, reason = _select_detail_files(same_dir)
+        excluded_local = [p for p in same_dir if p not in selected]
+
+        if excluded_local:
+            log.info(
+                "Key %s: selected %d file(s) [%s], excluded %d older: %s",
+                key, len(selected), reason,
+                len(excluded_local),
+                ", ".join(p.name for p in excluded_local),
+            )
+        else:
+            log.debug("Key %s: selected %d file(s) [%s]: %s",
+                      key, len(selected), reason,
+                      ", ".join(p.name for p in selected))
+
+        detail_files[key] = selected
+
     rev_order = sorted(
         {_revision_label(k) for k in main_files},
         key=lambda r: int(r[1:]) if r[1:].isdigit() else 0,
@@ -966,25 +1106,22 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
         if tag_name and not tag_id:
             tag_miss += 1
 
-        # row_hash: MD5 over stable content fields (excludes timestamps)
+        # row_hash: MD5 over stable content fields (excludes timestamps and
+        # filesystem-dependent paths that change independently of comment content)
         hash_source = {
-            "crs_doc_number":     crs_doc_number,
-            "tag_name":           tag_name or "",
-            "revision":           revision or "",
-            "return_code":        return_code or "",
-            "transmittal_num":    transmittal_num or "",
-            "transmittal_date":   str(transmittal_date) if transmittal_date else "",
-            "group_comment":      group_comment,
-            "comment":            comment,
-            "property_name":      property_name or "",
+            "crs_doc_number":      crs_doc_number,
+            "tag_name":            tag_name or "",
+            "revision":            revision or "",
+            "return_code":         return_code or "",
+            "transmittal_num":     transmittal_num or "",
+            "transmittal_date":    str(transmittal_date) if transmittal_date else "",
+            "group_comment":       group_comment,
+            "comment":             comment,
+            "property_name":       property_name or "",
             "document_number_ref": document_number_ref,
-            "from_tag":           from_tag or "",
-            "to_tag":             to_tag or "",
-            "response_vendor":    response_vendor or "",
-            "source_file":        source_file,
-            "detail_file":        detail_file or "",
-            "detail_sheet":       detail_sheet or "",
-            "crs_file_path":      crs_file_path,
+            "from_tag":            from_tag or "",
+            "to_tag":              to_tag or "",
+            "detail_sheet":        detail_sheet or "",
         }
         row_hash = hashlib.md5(
             json.dumps(hash_source, sort_keys=True).encode()
