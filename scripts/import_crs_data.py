@@ -174,6 +174,14 @@ def _revision_number(key: str) -> int:
     m = _REV_RE.search(key)
     return int(m.group(1)) if m else 0
 
+def _dir_revision(path: Path) -> str | None:
+    """Extract revision label from parent directory name.
+
+    Returns uppercase revision label like 'A19', or None if parent dir
+    does not contain a revision suffix (validation skipped).
+    """
+    m = _REV_RE.search(path.parent.name)
+    return f"A{m.group(1).upper()}" if m else None
 
 _DETAIL_VERSION_RE = re.compile(r"_A\d+_(\d+)\.xlsx$", re.IGNORECASE)
 _REVIEW_COMMENTS_RE = re.compile(r"_A\d+_Review_Comments\.xlsx$", re.IGNORECASE)
@@ -921,16 +929,25 @@ def discover_crs_files(
             continue
         if path.name.startswith("~$"):
             continue
+        if "Surplus" in path.parts:
+            log.debug("SKIP (Surplus): %s", path)
+            continue
         log.debug("SCAN: %s | parts=%s", path.name, path.parts)
         name = path.name
         m = MAIN_PATTERN.match(name)
         if m:
             key = m.group(1).upper()
-            if key != m.group(1):
-                log.debug(
-                    "Main file key normalised to upper: '%s' → '%s' (%s)",
-                    m.group(1), key, name,
+            file_rev = _revision_label(key)
+            dir_rev  = _dir_revision(path)
+            if dir_rev is not None and file_rev != dir_rev:
+                log.warning(
+                    "SKIP (rev mismatch) main file: %s\n"
+                    "  file revision : %s\n"
+                    "  dir  revision : %s\n"
+                    "  path          : %s",
+                    name, file_rev, dir_rev, path,
                 )
+                continue
             if key not in main_files:
                 main_files[key] = path
             else:
@@ -939,11 +956,17 @@ def discover_crs_files(
         d = DETAIL_PATTERN.match(name)
         if d:
             key = d.group(1).upper()
-            if key != d.group(1):
-                log.debug(
-                    "Detail file key normalised to upper: '%s' → '%s' (%s)",
-                    d.group(1), key, name,
+            file_rev = _revision_label(key)
+            dir_rev  = _dir_revision(path)
+            if dir_rev is not None and file_rev != dir_rev:
+                log.warning(
+                    "SKIP (rev mismatch) detail file: %s\n"
+                    "  file revision : %s\n"
+                    "  dir  revision : %s\n"
+                    "  path          : %s",
+                    name, file_rev, dir_rev, path,
                 )
+                continue
             _all_detail.setdefault(key, []).append(path)
             continue
         log.debug("Unmatched xlsx (not CRS): %s", path.relative_to(root))
