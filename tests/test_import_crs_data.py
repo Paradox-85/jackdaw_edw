@@ -23,6 +23,8 @@ from scripts.import_crs_data import (
     MAIN_PATTERN,
     _detail_version,
     _is_review_comments,
+    _revision_label,
+    _revision_number,
     _select_detail_files,
     discover_crs_files,
 )
@@ -255,3 +257,33 @@ def test_main_pattern_case_insensitive() -> None:
     assert MAIN_PATTERN.match("DOC_COMMENT_JDAW-KVE-E-JA-6944-00001-007_A19_KVE.xlsx")
     assert MAIN_PATTERN.match("doc_comment_JDAW-KVE-E-JA-6944-00001-007_A19_kve.xlsx")
     assert MAIN_PATTERN.match("DOC_COMMENT_JDAW-KVE-E-JA-6944-00001-007_A100_KVE.xlsx")
+
+
+# ---------------------------------------------------------------------------
+# Key normalisation and _revision_label / _revision_number with lowercase keys
+# ---------------------------------------------------------------------------
+
+def test_key_normalisation_case_insensitive(tmp_path: Path) -> None:
+    """detail key from lowercase filename must match upper-case main key."""
+    key_upper = "JDAW-KVE-E-JA-6944-00001-007_A19"
+
+    # Master file with upper-case name
+    main_path = tmp_path / f"DOC_COMMENT_{key_upper}_KVE.xlsx"
+    main_path.touch()
+
+    # Detail file with lower-case revision in name
+    detail_lower = tmp_path / "JDAW-KVE-E-JA-6944-00001-007_a19_Review_Comments.xlsx"
+    detail_lower.touch()
+
+    main_files, detail_files, _ = discover_crs_files(tmp_path)
+
+    # Both keys must resolve to the same upper-case key
+    assert key_upper in main_files
+    assert key_upper in detail_files
+    assert len(detail_files[key_upper]) == 1
+
+
+def test_revision_label_lowercase_key() -> None:
+    """_revision_label and _revision_number must work on lower-case keys."""
+    assert _revision_label("JDAW-KVE-E-JA-6944-00001-007_a19") == "A19"
+    assert _revision_number("JDAW-KVE-E-JA-6944-00001-007_a19") == 19

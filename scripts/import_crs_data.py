@@ -146,7 +146,7 @@ def _norm_sheet(name: str) -> str:
     return name.strip().lower().replace(" ", "_")
 
 
-_REV_RE = re.compile(r"_A(\d+)")
+_REV_RE = re.compile(r"_A(\d+)", re.IGNORECASE)
 
 
 def _revision_label(key: str) -> str:
@@ -922,7 +922,12 @@ def discover_crs_files(
         name = path.name
         m = MAIN_PATTERN.match(name)
         if m:
-            key = m.group(1)
+            key = m.group(1).upper()
+            if key != m.group(1):
+                log.debug(
+                    "Main file key normalised to upper: '%s' → '%s' (%s)",
+                    m.group(1), key, name,
+                )
             if key not in main_files:
                 main_files[key] = path
             else:
@@ -930,7 +935,13 @@ def discover_crs_files(
             continue
         d = DETAIL_PATTERN.match(name)
         if d:
-            _all_detail.setdefault(d.group(1), []).append(path)
+            key = d.group(1).upper()
+            if key != d.group(1):
+                log.debug(
+                    "Detail file key normalised to upper: '%s' → '%s' (%s)",
+                    d.group(1), key, name,
+                )
+            _all_detail.setdefault(key, []).append(path)
             continue
         log.debug("Unmatched xlsx (not CRS): %s", path.relative_to(root))
 
