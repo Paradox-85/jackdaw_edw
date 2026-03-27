@@ -373,7 +373,25 @@ CREATE TABLE "project_core"."document" (
   CONSTRAINT "document_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "document_doc_number_key" UNIQUE ("doc_number")
 );
-CREATE TABLE "audit_core"."crs_comment" ( 
+CREATE TABLE "audit_core"."crs_comment_template" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "template_text" TEXT NOT NULL,
+  "template_hash" TEXT NOT NULL,
+  "category" TEXT NOT NULL,
+  "check_type" TEXT NULL,
+  "response_template" TEXT NULL,
+  "source" TEXT NOT NULL DEFAULT 'llm'::text,
+  "confidence" REAL NOT NULL DEFAULT 1.0,
+  "usage_count" INTEGER NOT NULL DEFAULT 0,
+  "last_used_at" TIMESTAMP NOT NULL DEFAULT now(),
+  "created_at" TIMESTAMP NOT NULL DEFAULT now(),
+  "object_status" TEXT NOT NULL DEFAULT 'Active'::text,
+  CONSTRAINT "crs_comment_template_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "crs_comment_template_hash_key" UNIQUE ("template_hash"),
+  CONSTRAINT "chk_crs_template_source" CHECK (source IN ('llm', 'manual', 'rule')),
+  CONSTRAINT "chk_crs_template_object_status" CHECK (object_status IN ('Active', 'Inactive'))
+);
+CREATE TABLE "audit_core"."crs_comment" (
   "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
   "crs_doc_number" TEXT NOT NULL,
   "revision" TEXT NULL,
@@ -407,8 +425,14 @@ CREATE TABLE "audit_core"."crs_comment" (
   "row_hash" TEXT NULL,
   "sync_timestamp" TIMESTAMP NOT NULL DEFAULT now() ,
   "object_status" TEXT NOT NULL DEFAULT 'Active'::text ,
+  "document_number" TEXT NULL,
+  "from_tag" TEXT NULL,
+  "to_tag" TEXT NULL,
+  "classification_tier" SMALLINT NULL,
+  "template_id" UUID NULL,
   CONSTRAINT "crs_comment_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "crs_comment_comment_id_key" UNIQUE ("comment_id")
+  CONSTRAINT "crs_comment_comment_id_key" UNIQUE ("comment_id"),
+  CONSTRAINT "crs_comment_template_id_fkey" FOREIGN KEY ("template_id") REFERENCES "audit_core"."crs_comment_template"("id") ON DELETE SET NULL
 );
 CREATE TABLE "app_core"."ui_user" ( 
   "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
@@ -719,3 +743,22 @@ ALTER TABLE "mapping"."tag_document" ADD CONSTRAINT "tag_document_tag_id_fkey" F
 ALTER TABLE "mapping"."tag_document" ADD CONSTRAINT "tag_document_document_id_fkey" FOREIGN KEY ("document_id") REFERENCES "project_core"."document" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
 ALTER TABLE "audit_core"."tag_status_history" ADD CONSTRAINT "tag_status_history_tag_id_fkey" FOREIGN KEY ("tag_id") REFERENCES "project_core"."tag" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
 ALTER TABLE "audit_core"."crs_comment_audit" ADD CONSTRAINT "crs_comment_audit_comment_id_fkey" FOREIGN KEY ("comment_id") REFERENCES "audit_core"."crs_comment" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
+
+-- Phase 2 CRS views (migration_016_crs_phase2.sql)
+-- Separate views prevent Cartesian product when joining tags to both docs and properties.
+CREATE OR REPLACE VIEW "project_core"."v_tag_with_docs" AS
+SELECT t.id, t.tag_name, t.tag_status, t.object_status,
+       d.id AS document_id, d.doc_number
+FROM project_core.tag t
+LEFT JOIN mapping.tag_document td ON td.tag_id = t.id AND td.mapping_status = 'Active'
+LEFT JOIN project_core.document d ON d.id = td.document_id AND d.object_status = 'Active'
+WHERE t.object_status = 'Active';
+
+CREATE OR REPLACE VIEW "project_core"."v_tag_properties" AS
+SELECT t.id, t.tag_name, t.tag_status, t.object_status,
+       p.code AS property_code, p.name AS property_name,
+       pv.property_value, pv.property_uom_raw
+FROM project_core.tag t
+LEFT JOIN project_core.property_value pv ON pv.tag_id = t.id AND pv.object_status = 'Active'
+LEFT JOIN ontology_core.property p ON p.id = pv.property_id
+WHERE t.object_status = 'Active';
