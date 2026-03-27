@@ -81,6 +81,20 @@ DOCUMENT_NUMBER_KEYWORDS: tuple[str, ...] = (
     "doc_no",
 )
 
+FROM_TAG_KEYWORDS: tuple[str, ...] = (
+    "from tag",
+    "from_tag",
+    "from tag name",
+    "from_tag_name",
+)
+
+TO_TAG_KEYWORDS: tuple[str, ...] = (
+    "to tag",
+    "to_tag",
+    "to tag name",
+    "to_tag_name",
+)
+
 SKIP_SHEETS: set[str] = {"comment_sheet"}
 
 HASH_EXCLUDE_FIELDS = {
@@ -629,6 +643,23 @@ def process_key(
                  )),
                 None,
             )
+            # FROM_TAG / TO_TAG — present only in directional detail sheets
+            from_tag_col = next(
+                (c for c in df_sheet.columns
+                 if any(
+                     kw.replace(" ", "_") in c.lower().replace(" ", "_")
+                     for kw in FROM_TAG_KEYWORDS
+                 )),
+                None,
+            )
+            to_tag_col = next(
+                (c for c in df_sheet.columns
+                 if any(
+                     kw.replace(" ", "_") in c.lower().replace(" ", "_")
+                     for kw in TO_TAG_KEYWORDS
+                 )),
+                None,
+            )
 
             for _, d_row in df_sheet.iterrows():
                 # Extract tag name — strip Equip_ prefix when column holds equipment numbers
@@ -648,6 +679,9 @@ def process_key(
                 if not doc_number_ref or str(doc_number_ref).strip() == "":
                     doc_number_ref = "Not Applicable"
 
+                from_tag = clean_string(_scalar(d_row[from_tag_col])) if from_tag_col else None
+                to_tag   = clean_string(_scalar(d_row[to_tag_col]))   if to_tag_col   else None
+
                 row_comment = comment_val
                 if row_comment is None and fallback_col and fallback_col in d_row.index:
                     row_comment = _scalar(d_row[fallback_col]) or None
@@ -661,6 +695,8 @@ def process_key(
                     "TAG_NAME":            tag_name,
                     "PROPERTY_NAME":       prop_name,
                     "DOCUMENT_NUMBER_REF": doc_number_ref,
+                    "FROM_TAG":            from_tag,
+                    "TO_TAG":              to_tag,
                     "GROUP_COMMENT":       comment_text,
                     "RESPONSE":            response_text,
                     "SOURCE_FILE":         metadata.get("SOURCE_FILE"),
@@ -683,6 +719,7 @@ def process_key(
                 _cid = (
                     f"{metadata.get('DOC_NUMBER', '')}|{comment_text}|{sheet_key}"
                     f"|{tag_name or ''}|{row_comment or ''}|{prop_key_chk}|{doc_num_chk}"
+                    f"|{from_tag or ''}|{to_tag or ''}"
                 )
                 if _cid in seen_ids:
                     dup_count += 1
@@ -701,6 +738,8 @@ def process_key(
                 "TAG_NAME":            None,
                 "PROPERTY_NAME":       "Not Applicable",
                 "DOCUMENT_NUMBER_REF": "Not Applicable",
+                "FROM_TAG":            None,
+                "TO_TAG":              None,
                 "GROUP_COMMENT":       comment_text,
                 "RESPONSE":            response_text,
                 "SOURCE_FILE":         metadata.get("SOURCE_FILE"),
@@ -914,6 +953,8 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
         comment             = clean_string(rec.get("COMMENT")) or ""
         property_name       = clean_string(rec.get("PROPERTY_NAME"))
         document_number_ref = clean_string(rec.get("DOCUMENT_NUMBER_REF")) or "Not Applicable"
+        from_tag            = clean_string(rec.get("FROM_TAG"))
+        to_tag              = clean_string(rec.get("TO_TAG"))
         response_vendor     = clean_string(rec.get("RESPONSE"))
         source_file         = clean_string(rec.get("SOURCE_FILE")) or ""
         detail_file         = clean_string(rec.get("DETAIL_FILE"))
@@ -937,6 +978,8 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
             "comment":            comment,
             "property_name":      property_name or "",
             "document_number_ref": document_number_ref,
+            "from_tag":           from_tag or "",
+            "to_tag":             to_tag or "",
             "response_vendor":    response_vendor or "",
             "source_file":        source_file,
             "detail_file":        detail_file or "",
@@ -961,7 +1004,8 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
         comment_id = str(uuid.uuid5(
             uuid.NAMESPACE_URL,
             f"{crs_doc_number}|{group_comment}|{detail_sheet or ''}"
-            f"|{tag_name or ''}|{comment}|{prop_key}|{doc_num_key}",
+            f"|{tag_name or ''}|{comment}|{prop_key}|{doc_num_key}"
+            f"|{from_tag or ''}|{to_tag or ''}",
         ))
 
         # Deduplicate within batch — guards against repeated rows in Excel source
@@ -984,6 +1028,8 @@ def prepare_crs_records(raw_records: list[dict], engine) -> list[dict]:
             "tag_id":             tag_id,
             "property_name":      property_name,
             "document_number":    document_number_ref,
+            "from_tag":           from_tag,
+            "to_tag":             to_tag,
             "response_vendor":    response_vendor,
             "source_file":        source_file,
             "detail_file":        detail_file,
@@ -1027,7 +1073,7 @@ def upsert_crs_records(engine, records: list[dict], run_id: str) -> dict[str, in
             comment_id, crs_doc_number, revision, return_code,
             transmittal_number, transmittal_date,
             group_comment, comment, tag_name, tag_id, property_name,
-            document_number,
+            document_number, from_tag, to_tag,
             response_vendor, source_file, detail_file, detail_sheet,
             crs_file_path, crs_file_timestamp,
             status, object_status, row_hash, sync_timestamp
@@ -1035,7 +1081,7 @@ def upsert_crs_records(engine, records: list[dict], run_id: str) -> dict[str, in
             :comment_id, :crs_doc_number, :revision, :return_code,
             :transmittal_number, :transmittal_date,
             :group_comment, :comment, :tag_name, :tag_id, :property_name,
-            :document_number,
+            :document_number, :from_tag, :to_tag,
             :response_vendor, :source_file, :detail_file, :detail_sheet,
             :crs_file_path, :crs_file_timestamp,
             :status, :object_status, :row_hash, now()
@@ -1047,6 +1093,8 @@ def upsert_crs_records(engine, records: list[dict], run_id: str) -> dict[str, in
             tag_id             = EXCLUDED.tag_id,
             property_name      = EXCLUDED.property_name,
             document_number    = EXCLUDED.document_number,
+            from_tag           = EXCLUDED.from_tag,
+            to_tag             = EXCLUDED.to_tag,
             response_vendor    = EXCLUDED.response_vendor,
             crs_file_timestamp = EXCLUDED.crs_file_timestamp,
             row_hash           = EXCLUDED.row_hash,
