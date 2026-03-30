@@ -14,6 +14,12 @@ Usage:
     # Smoke test — 100 comments
     python etl/flows/classify_crs_comments.py --limit 100
 
+    # Debug run scoped to a single revision
+    python etl/flows/classify_crs_comments.py --revision A36
+
+    # Debug run: first 50 comments of revision A36
+    python etl/flows/classify_crs_comments.py --revision A36 --limit 50 --batch-size 50
+
     # Integration test — 5000 comments
     python etl/flows/classify_crs_comments.py --limit 5000
 
@@ -50,12 +56,16 @@ from etl.tasks.crs_template_manager import update_template_db
 def classify_crs_comments_cascade(
     limit: int = 0,
     batch_size: int = 500,
+    revision_filter: str | None = None,
 ) -> dict[str, int]:
     """4-tier cascade classifier for CRS comments.
 
     Args:
         limit: Max comments to process. 0 = all RECEIVED comments.
         batch_size: Comments per processing batch (default 500).
+        revision_filter: Optional revision code to restrict scope (e.g. 'A36').
+                         When provided, only comments from that revision are loaded.
+                         When None (default), all RECEIVED comments are loaded.
 
     Returns:
         Stats dict: {tier0, tier1, tier2, tier3, saved, total}.
@@ -66,18 +76,32 @@ def classify_crs_comments_cascade(
 
     fetch_limit = limit if limit > 0 else 9_999_999
     logger.info(
-        "CRS Cascade Classifier starting — run_id=%s, limit=%s, batch_size=%d",
-        run_id, limit if limit > 0 else "ALL", batch_size,
+        "CRS Cascade Classifier starting — run_id=%s, revision=%s, limit=%s, batch_size=%d",
+        run_id,
+        revision_filter or "ALL",
+        limit if limit > 0 else "ALL",
+        batch_size,
     )
 
-    comments = load_received_comments(limit=fetch_limit, engine=engine)
+    comments = load_received_comments(
+        limit=fetch_limit,
+        engine=engine,
+        revision_filter=revision_filter,
+    )
     total = len(comments)
 
     if total == 0:
-        logger.info("No RECEIVED comments found — nothing to classify.")
+        logger.info(
+            "No RECEIVED comments found (revision=%s) — nothing to classify.",
+            revision_filter or "ALL",
+        )
         return {"tier0": 0, "tier1": 0, "tier2": 0, "tier3": 0, "saved": 0, "total": 0}
 
-    logger.info("Loaded %d RECEIVED comments for classification.", total)
+    logger.info(
+        "Loaded %d RECEIVED comments for classification (revision=%s).",
+        total,
+        revision_filter or "ALL",
+    )
 
     stats: dict[str, int] = {"tier0": 0, "tier1": 0, "tier2": 0, "tier3": 0, "saved": 0, "total": total}
     all_results: list = []
@@ -136,6 +160,7 @@ def classify_crs_comments_cascade(
 
     logger.info("=" * 60)
     logger.info("CRS CASCADE CLASSIFICATION COMPLETE")
+    logger.info("  Revision scope:       %s", revision_filter or "ALL")
     logger.info("  Total comments:       %d", total)
     logger.info("  Tier 0 (skipped):     %d (%s)", stats["tier0"], pct(stats["tier0"]))
     logger.info("  Tier 1 (KB match):    %d (%s)", stats["tier1"], pct(stats["tier1"]))
@@ -166,6 +191,10 @@ if __name__ == "__main__":
         help="Comments per processing batch (default 500).",
     )
     parser.add_argument(
+        "--revision", type=str, default=None,
+        help="Restrict to a single revision code, e.g. A36. Default: all RECEIVED.",
+    )
+    parser.add_argument(
         "--deploy", action="store_true",
         help="Register as a Prefect deployment instead of running immediately.",
     )
@@ -179,11 +208,12 @@ if __name__ == "__main__":
         ).deploy(
             name="9_classify-crs-comments-cascade",
             work_pool_name="default-agent-pool",
-            parameters={"limit": 0, "batch_size": 500},
+            parameters={"limit": 0, "batch_size": 500, "revision_filter": None},
         )
     else:
         result = classify_crs_comments_cascade(
             limit=args.limit,
             batch_size=args.batch_size,
+            revision_filter=args.revision,
         )
         print(result)
