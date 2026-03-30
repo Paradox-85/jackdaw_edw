@@ -12,5 +12,11 @@
   "hooks": {
     "PostToolUse": [{"matcher": "Edit|Write","hooks": [{"type": "command","command": "ruff check --fix","timeout": 10,"statusMessage": "Linting with ruff..."}]}],
     "SessionStart": [{"hooks": [{"type": "command","command": "scripts/pre-hook.sh","statusMessage": "Initializing EDW environment..."}]}]
+  },
+  "env": {
+    "ENABLE_TOOL_SEARCH": "auto:5",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80",
+    "MAX_MCP_OUTPUT_TOKENS": "30000",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-4-20250514"
   }
 }
