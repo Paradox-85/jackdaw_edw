@@ -152,6 +152,9 @@ def save_classification_results(
     crs_comment rows are created in Phase 1 (import). This function only
     updates the classification columns — it never inserts new rows.
 
+    Valid values for status column (crs_comment_status_check constraint):
+      RECEIVED, IN_REVIEW, RESPONDED, APPROVED, CLOSED, DEFERRED
+
     Args:
         results: List of dicts, each must contain 'id' (UUID str) plus
                  classification fields (may be partial — missing keys = NULL).
@@ -179,21 +182,30 @@ def save_classification_results(
         WHERE id = :id
     """)
 
-    params = [
-        {
+    # Valid statuses per crs_comment_status_check:
+    #   RECEIVED | IN_REVIEW | RESPONDED | APPROVED | CLOSED | DEFERRED
+    # Fallback is IN_REVIEW (comment was processed and needs engineer review).
+    _VALID_STATUSES = frozenset({
+        "RECEIVED", "IN_REVIEW", "RESPONDED", "APPROVED", "CLOSED", "DEFERRED"
+    })
+
+    params = []
+    for r in results:
+        raw_status = r.get("status", "IN_REVIEW")
+        # Guard: if a tier somehow produced an invalid status, coerce to IN_REVIEW
+        safe_status = raw_status if raw_status in _VALID_STATUSES else "IN_REVIEW"
+        params.append({
             "id":           str(r["id"]),
             "llm_category": r.get("llm_category"),
             "confidence":   r.get("llm_category_confidence"),
             "llm_response": r.get("llm_response"),
             "llm_model":    r.get("llm_model_used"),
-            "status":       r.get("status", "CLASSIFIED"),
+            "status":       safe_status,
             "tier":         r.get("classification_tier"),
             "template_id":  r.get("template_id"),
-            "category_code":        r.get("category_code"),
-            "category_confidence":  r.get("category_confidence"),
-        }
-        for r in results
-    ]
+            "category_code":       r.get("category_code"),
+            "category_confidence": r.get("category_confidence"),
+        })
 
     with engine.begin() as conn:
         conn.execute(sql, params)
