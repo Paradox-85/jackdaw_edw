@@ -282,7 +282,8 @@ def run_tier2(
                 "llm_category_confidence": conf,
                 "check_type":              chk,
                 "classification_tier":     2,
-                "status":                  "CLASSIFIED",
+                # IN_REVIEW: valid status in crs_comment_status_check constraint
+                "status":                  "IN_REVIEW",
                 "category_code":           crs,
                 "category_confidence":     conf,
             })
