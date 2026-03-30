@@ -15,6 +15,10 @@ Batch inference (32 items) reduces Ollama overhead by ~85% vs one-by-one calls.
 OLLAMA_BASE_URL environment variable must be set to the LXC endpoint.
 
 Only 100-200k comments reach this tier in steady state (5-10% of 2M total).
+
+Status mapping (must satisfy crs_comment_status_check constraint):
+  confidence >= 0.7 → IN_REVIEW   (was: CLASSIFIED   — not in constraint)
+  confidence <  0.7 → DEFERRED    (was: PENDING_REVIEW — not in constraint)
 """
 from __future__ import annotations
 
@@ -24,6 +28,7 @@ import re
 from typing import Any
 
 from prefect import task, get_run_logger
+from prefect.cache_policies import NO_CACHE
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
@@ -185,7 +190,7 @@ def _call_llm_batch(
     """Call Ollama LLM for a batch of prompts.
 
     Uses langchain_openai.ChatOpenAI pointed at local Ollama endpoint.
-    Falls back to PENDING_REVIEW on any error.
+    Falls back gracefully on any error.
 
     Args:
         prompts: List of prompt strings (max 32 recommended).
@@ -199,6 +204,7 @@ def _call_llm_batch(
         from langchain_openai import ChatOpenAI  # type: ignore[import]
         from langchain_core.messages import HumanMessage  # type: ignore[import]
     except ImportError:
+        # langchain_openai not installed — fall back to DEFERRED (valid constraint value)
         return [{"category": "OTHER", "confidence": 0.5, "response": "LLM unavailable (langchain_openai not installed)"}] * len(prompts)
 
     llm = ChatOpenAI(
@@ -237,7 +243,7 @@ def _call_llm_batch(
 # Prefect task
 # ---------------------------------------------------------------------------
 
-@task(name="tier3-llm-classifier", retries=2)
+@task(name="tier3-llm-classifier", retries=2, cache_policy=NO_CACHE)
 def run_tier3_llm(
     comments: list[dict[str, Any]],
     engine: Engine,
@@ -247,12 +253,16 @@ def run_tier3_llm(
     Only 5-10% of original comments should reach this tier in steady state.
     Results are fed back into the template KB via update_template_db().
 
+    Status mapping:
+      confidence >= 0.7 → IN_REVIEW  (valid in crs_comment_status_check)
+      confidence <  0.7 → DEFERRED   (valid in crs_comment_status_check)
+
     Args:
         comments: Batch of unclassified comment dicts (passed from Tier 2).
         engine: SQLAlchemy engine for validation SQL execution.
 
     Returns:
-        List of classified comment dicts with status='CLASSIFIED' or 'PENDING_REVIEW'.
+        List of classified comment dicts.
     """
     logger = get_run_logger()
 
@@ -301,7 +311,10 @@ def run_tier3_llm(
 
         for comment, params, llm_out in zip(batch, batch_params, llm_outputs):
             confidence = llm_out.get("confidence", 0.7)
-            status = "CLASSIFIED" if confidence >= 0.7 else "PENDING_REVIEW"
+            # Map to valid crs_comment_status_check values:
+            #   high confidence → IN_REVIEW (ready for engineer review)
+            #   low confidence  → DEFERRED  (needs manual triage)
+            status = "IN_REVIEW" if confidence >= 0.7 else "DEFERRED"
             results.append({
                 **comment,
                 "llm_category":            llm_out["category"],
@@ -315,10 +328,10 @@ def run_tier3_llm(
                 "category_confidence":     confidence,
             })
 
-    classified = sum(1 for r in results if r["status"] == "CLASSIFIED")
-    pending = sum(1 for r in results if r["status"] == "PENDING_REVIEW")
+    in_review = sum(1 for r in results if r["status"] == "IN_REVIEW")
+    deferred = sum(1 for r in results if r["status"] == "DEFERRED")
     logger.info(
-        "Tier 3: %d processed — %d classified, %d pending_review (model=%s).",
-        len(results), classified, pending, ollama_model,
+        "Tier 3: %d processed — %d in_review, %d deferred (model=%s).",
+        len(results), in_review, deferred, ollama_model,
     )
     return results
