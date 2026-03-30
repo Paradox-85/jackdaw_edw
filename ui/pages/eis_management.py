@@ -79,6 +79,20 @@ def _scan_crs_revisions(crs_data_dir: str) -> list[str]:
     return sorted(keys, key=lambda r: int(r[1:]))
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _sql_crs_revisions() -> list[str]:
+    """Return sorted list of CRS revisions present in audit_core.crs_comment."""
+    df = db_read(
+        "SELECT DISTINCT revision FROM audit_core.crs_comment "
+        "WHERE revision IS NOT NULL ORDER BY revision",
+        admin=True,
+    )
+    if df.empty:
+        return []
+    revs = df["revision"].dropna().tolist()
+    return sorted(revs, key=lambda r: int(r[1:]) if len(r) > 1 and r[1:].isdigit() else 0)
+
+
 def _run_crs_import(rev: str, log_key: str) -> None:
     """Run import_crs_data.py in subprocess, stream stdout into session state log list."""
     cmd = ["python", "scripts/import_crs_data.py", "--debug", "--debug-rev", rev]
@@ -201,6 +215,9 @@ def render() -> None:
     for _k, _v in [
         ("crs_log", []), ("crs_import_running", False),
         ("crs_log_done", False), ("crs_log_rc", None),
+        ("crs_classify_running", False),
+        ("crs_classify_done", False),
+        ("crs_classify_run_id", None),
     ]:
         if _k not in st.session_state:
             st.session_state[_k] = _v
@@ -486,6 +503,107 @@ def render() -> None:
         st.session_state["crs_log_done"] = False
         st.session_state["crs_log_rc"] = None
         st.rerun()
+
+    # ── Section D: Classify CRS Comments ─────────────────────────────────────
+    section("Classify CRS Comments")
+
+    sql_revs    = _sql_crs_revisions()
+    no_sql_revs = not sql_revs
+
+    col_cls_sel, col_cls_refresh, col_cls_btn = st.columns([5, 1, 2])
+
+    with col_cls_sel:
+        classify_rev = st.selectbox(
+            "Revision (from DB)",
+            options=sql_revs if sql_revs else ["—"],
+            disabled=no_sql_revs,
+            key="crs_classify_rev_sel",
+            help="Revisions available in audit_core.crs_comment",
+        )
+
+    with col_cls_refresh:
+        st.markdown("&nbsp;", unsafe_allow_html=True)
+        if st.button("🔄", key="crs_classify_rev_refresh", help="Refresh revision list from DB"):
+            st.cache_data.clear()
+            st.rerun()
+
+    with col_cls_btn:
+        st.markdown("&nbsp;", unsafe_allow_html=True)
+        classify_btn = st.button(
+            "▶ Classify",
+            type="primary",
+            disabled=(no_sql_revs or st.session_state["crs_classify_running"]),
+            key="btn_crs_classify",
+            use_container_width=True,
+        )
+
+    if no_sql_revs:
+        st.info(
+            "No imported CRS revisions found in DB. "
+            "Run **Import CRS Comments** first."
+        )
+    else:
+        try:
+            df_cls_summary = db_read(
+                """
+                SELECT
+                    status                                                      AS "Status",
+                    COUNT(*)                                                    AS "Total",
+                    COUNT(*) FILTER (WHERE classification_tier IS NOT NULL)     AS "Classified",
+                    COUNT(*) FILTER (WHERE classification_tier IS NULL)         AS "Pending"
+                FROM audit_core.crs_comment
+                WHERE revision = :rev
+                GROUP BY status
+                ORDER BY status
+                """,
+                {"rev": classify_rev},
+                admin=True,
+            )
+            if not df_cls_summary.empty:
+                total_rev  = int(df_cls_summary["Total"].sum())
+                total_pend = int(df_cls_summary["Pending"].sum())
+                st.caption(
+                    f"Revision **{classify_rev}**: "
+                    f"**{total_rev}** comments total · "
+                    f"**{total_pend}** pending classification"
+                )
+                st.dataframe(df_cls_summary, hide_index=True, use_container_width=True)
+        except Exception:
+            st.warning(
+                "classification_tier column not found — run migration_012+ to enable this view."
+            )
+
+    if classify_btn and not st.session_state["crs_classify_running"]:
+        st.session_state["crs_classify_running"] = True
+        st.session_state["crs_classify_done"]    = False
+        st.session_state["crs_classify_run_id"]  = None
+        log("info", f"Triggering classification for revision {classify_rev}", "crs_log")
+        result = trigger_deployment(
+            "classify-crs-comments-deployment",
+            {"revision": classify_rev},
+        )
+        if result and "id" in result:
+            run_id = result["id"]
+            st.session_state["crs_classify_run_id"]  = run_id
+            st.session_state["crs_classify_running"] = False
+            st.session_state["crs_classify_done"]    = True
+            log("ok",
+                f"Classification scheduled — deployment ID: {run_id[:8]} rev={classify_rev}",
+                "crs_log")
+            st.success(
+                f"✅ Classification flow scheduled for revision **{classify_rev}**. "
+                f"Run ID: `{run_id[:8]}`"
+            )
+        else:
+            st.session_state["crs_classify_running"] = False
+            err = (result.get("error", str(result))
+                   if isinstance(result, dict) else str(result))
+            log("err", f"Classification trigger failed: {err}", "crs_log")
+            st.error(
+                f"❌ Could not schedule classification flow. "
+                f"Check that `classify-crs-comments-deployment` is registered in Prefect. "
+                f"Error: `{err}`"
+            )
 
     # ── Section B: Validate (stub) ─────────────────────────────────────────────
     section("Validate CRS Comments")

@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # ui/ is the Python package; ui/app.py is the Streamlit entrypoint
 COPY ui/ ./ui/
+COPY etl/ ./etl/
 
 # Streamlit config (theme, server settings)
 COPY .streamlit/ ./.streamlit/
