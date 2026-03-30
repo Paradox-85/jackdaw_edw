@@ -5,6 +5,7 @@ Read-only queries only. No write operations except admin sync trigger.
 from __future__ import annotations
 
 import pandas as pd
+import requests
 import streamlit as st
 from ui.common import (
     ADMIN_LINKS, badge, db_read, is_admin,
@@ -65,6 +66,58 @@ def _kpi_prev_tags() -> int | None:
     return int(df["n"].iloc[0]) if not df.empty else None
 
 
+# ─── AI Infrastructure metrics (ttl=10s — live data) ─────────────────────────
+@st.cache_data(ttl=10, show_spinner=False)
+def _llm_metrics() -> dict:
+    """Fetch llama-server /metrics and parse key values."""
+    try:
+        r = requests.get("http://localhost:8081/metrics", timeout=3)
+        lines = r.text.splitlines()
+        result = {}
+        for line in lines:
+            if line.startswith("#"):
+                continue
+            for key in [
+                "llamacpp:tokens_predicted_total",
+                "llamacpp:tokens_predicted_seconds_total",
+                "llamacpp:kv_cache_usage_ratio",
+                "llamacpp:requests_processing",
+                "llamacpp:slots_idle",
+                "llamacpp:prompt_tokens_total",
+            ]:
+                if line.startswith(key + " "):
+                    try:
+                        result[key] = float(line.split(" ")[-1])
+                    except ValueError:
+                        pass
+        return result
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=10, show_spinner=False)
+def _gpu_metrics() -> dict:
+    """Fetch DCGM exporter metrics for RTX 3090."""
+    try:
+        r = requests.get("http://localhost:9400/metrics", timeout=3)
+        lines = r.text.splitlines()
+        result = {}
+        for line in lines:
+            if line.startswith("#"):
+                continue
+            for key in ["DCGM_FI_DEV_GPU_UTIL", "DCGM_FI_DEV_GPU_TEMP",
+                        "DCGM_FI_DEV_FB_USED", "DCGM_FI_DEV_FB_FREE",
+                        "DCGM_FI_DEV_POWER_USAGE"]:
+                if line.startswith(key + "{"):
+                    try:
+                        result[key] = float(line.split("} ")[-1])
+                    except ValueError:
+                        pass
+        return result
+    except Exception:
+        return {}
+
+
 def render() -> None:
     st.markdown("### 🐦 Jackdaw EDW — Control Center")
     st.caption(f"Plant **JDA** · engineering_core · `{version_string()}`")
@@ -106,10 +159,50 @@ def render() -> None:
     ollama_ok  = bool(ollama_models())
     db_ok      = not db_read("SELECT 1").empty
 
-    h1, h2, h3 = st.columns(3)
+    h1, h2, h3, h4 = st.columns(4)
     h1.markdown(f"{'🟢' if db_ok else '🔴'} **PostgreSQL** `engineering_core`")
     h2.markdown(f"{'🟢' if prefect_ok else '🔴'} **Prefect API**")
     h3.markdown(f"{'🟢' if ollama_ok else '🔴'} **Ollama**")
+    h4.markdown(f"{'🟢' if bool(_llm_metrics()) else '🔴'} **llama-server** Qwen3.5-27B")
+
+    # ── AI Infrastructure ─────────────────────────────────────────────────────
+    section("AI Infrastructure — RTX 3090 + Qwen3.5-27B")
+
+    llm = _llm_metrics()
+    gpu = _gpu_metrics()
+    llm_ok = bool(llm)
+    gpu_ok = bool(gpu)
+
+    ai1, ai2 = st.columns(2)
+    ai1.markdown(f"{'🟢' if llm_ok else '🔴'} **llama-server** `qwen35-27b` — port 8081")
+    ai2.markdown(f"{'🟢' if gpu_ok else '🔴'} **RTX 3090** DCGM — port 9400")
+
+    g1, g2, g3, g4 = st.columns(4)
+    g1.metric("GPU Utilization",
+              f"{gpu.get('DCGM_FI_DEV_GPU_UTIL', 0):.0f}%" if gpu_ok else "—")
+    g2.metric("GPU Temp",
+              f"{gpu.get('DCGM_FI_DEV_GPU_TEMP', 0):.0f}°C" if gpu_ok else "—")
+    vram_used = gpu.get("DCGM_FI_DEV_FB_USED", 0) / 1024
+    g3.metric("VRAM Used",
+              f"{vram_used:.1f} GB" if gpu_ok else "—",
+              help="of 24 GB total")
+    g4.metric("GPU Power",
+              f"{gpu.get('DCGM_FI_DEV_POWER_USAGE', 0):.0f} W" if gpu_ok else "—")
+
+    l1, l2, l3, l4 = st.columns(4)
+    tokens_total = llm.get("llamacpp:tokens_predicted_total", 0)
+    tokens_sec   = llm.get("llamacpp:tokens_predicted_seconds_total", 1)
+    tok_per_sec  = (tokens_total / tokens_sec) if tokens_sec > 0 else 0
+    slots_idle   = int(llm.get("llamacpp:slots_idle", 0))
+    slots_busy   = 4 - slots_idle
+
+    l1.metric("Tokens Generated", f"{int(tokens_total):,}" if llm_ok else "—")
+    l2.metric("Avg Speed",        f"{tok_per_sec:.1f} tok/s" if llm_ok else "—")
+    l3.metric("KV Cache Usage",
+              f"{llm.get('llamacpp:kv_cache_usage_ratio', 0)*100:.1f}%" if llm_ok else "—")
+    l4.metric("Active Slots",
+              f"{slots_busy}/4" if llm_ok else "—",
+              help="Parallel inference slots in use")
 
     # ── Admin quick links ─────────────────────────────────────────────────────
     if is_admin():
