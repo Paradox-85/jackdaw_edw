@@ -174,6 +174,8 @@ def run_tier1(
                 **comment,
                 "llm_category":            template["category"],
                 "llm_category_confidence": score,
+                "category_code":           template["category"],
+                "category_confidence":     score,
                 "classification_tier":     1,
                 "template_id":             str(template["id"]),
                 "status":                  "CLASSIFIED",

@@ -120,6 +120,12 @@ def classify_crs_comments_cascade(
         # Auto-populate KB from Tier 3 — makes next batches faster
         update_template_db(t3_results, engine)
 
+    # Normalisation: ensure category_code is set when llm_category starts with CRS-C
+    for r in all_results:
+        if not r.get("category_code") and r.get("llm_category", "").startswith("CRS-C"):
+            r["category_code"] = r["llm_category"]
+            r["category_confidence"] = r.get("llm_category_confidence")
+
     # Save all results to DB (batch UPDATE)
     saved = save_classification_results(all_results, engine, run_id)
     stats["saved"] = saved

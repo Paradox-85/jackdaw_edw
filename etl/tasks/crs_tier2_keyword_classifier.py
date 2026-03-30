@@ -31,44 +31,45 @@ class SheetRule:
     category: str
     check_type: str
     confidence: float = 0.95
+    crs_code: str | None = None
 
 
 SHEET_RULES: list[SheetRule] = [
-    SheetRule("No Doc Reference",    "MISSING_DOCUMENT_LINK",   "TAG_HAS_DOCUMENT"),
-    SheetRule("No Doc Ref",          "MISSING_DOCUMENT_LINK",   "TAG_HAS_DOCUMENT"),
-    SheetRule("Missing Doc",         "MISSING_DOCUMENT_LINK",   "TAG_HAS_DOCUMENT"),
-    SheetRule("Tag Description",     "TAG_DESCRIPTION_ISSUE",   "TAG_EXISTS"),
-    SheetRule("Spell Check",         "SPELLING_ERROR",          "TAG_EXISTS"),
-    SheetRule("Spelling",            "SPELLING_ERROR",          "TAG_EXISTS"),
-    SheetRule("Safety Critical",     "SAFETY_CRITICAL_MISSING", "TAG_EXISTS"),
-    SheetRule("Safety_Critical",     "SAFETY_CRITICAL_MISSING", "TAG_EXISTS"),
-    SheetRule("Plant Code",          "WRONG_LOCATION",          "TAG_EXISTS"),
-    SheetRule("Area Code",           "WRONG_LOCATION",          "TAG_EXISTS"),
-    SheetRule("From To Tag",         "MISSING_FROM_TO_LINK",    "TAG_FROM_TO_LINK"),
-    SheetRule("From_To",             "MISSING_FROM_TO_LINK",    "TAG_FROM_TO_LINK"),
-    SheetRule("Connection",          "MISSING_FROM_TO_LINK",    "TAG_FROM_TO_LINK"),
-    SheetRule("Tag Class",           "WRONG_TAG_CLASS",         "TAG_EXISTS"),
-    SheetRule("Wrong Class",         "WRONG_TAG_CLASS",         "TAG_EXISTS"),
-    SheetRule("Duplicate",           "DUPLICATE_TAG",           "TAG_EXISTS"),
-    SheetRule("Not Found",           "TAG_NOT_FOUND",           "TAG_EXISTS"),
-    SheetRule("Missing Property",    "MISSING_PROPERTY",        "TAG_HAS_PROPERTY"),
-    SheetRule("Property Missing",    "MISSING_PROPERTY",        "TAG_HAS_PROPERTY"),
+    SheetRule("No Doc Reference",    "MISSING_DOCUMENT_LINK",   "TAG_HAS_DOCUMENT",  crs_code="CRS-C31"),
+    SheetRule("No Doc Ref",          "MISSING_DOCUMENT_LINK",   "TAG_HAS_DOCUMENT",  crs_code="CRS-C31"),
+    SheetRule("Missing Doc",         "MISSING_DOCUMENT_LINK",   "TAG_HAS_DOCUMENT",  crs_code="CRS-C31"),
+    SheetRule("Tag Description",     "TAG_DESCRIPTION_ISSUE",   "TAG_EXISTS",        crs_code="CRS-C02"),
+    SheetRule("Spell Check",         "SPELLING_ERROR",          "TAG_EXISTS",        crs_code=None),
+    SheetRule("Spelling",            "SPELLING_ERROR",          "TAG_EXISTS",        crs_code=None),
+    SheetRule("Safety Critical",     "SAFETY_CRITICAL_MISSING", "TAG_EXISTS",        crs_code="CRS-C13"),
+    SheetRule("Safety_Critical",     "SAFETY_CRITICAL_MISSING", "TAG_EXISTS",        crs_code="CRS-C13"),
+    SheetRule("Plant Code",          "WRONG_LOCATION",          "TAG_EXISTS",        crs_code="CRS-C29"),
+    SheetRule("Area Code",           "WRONG_LOCATION",          "TAG_EXISTS",        crs_code="CRS-C07"),
+    SheetRule("From To Tag",         "MISSING_FROM_TO_LINK",    "TAG_FROM_TO_LINK",  crs_code="CRS-C45"),
+    SheetRule("From_To",             "MISSING_FROM_TO_LINK",    "TAG_FROM_TO_LINK",  crs_code="CRS-C45"),
+    SheetRule("Connection",          "MISSING_FROM_TO_LINK",    "TAG_FROM_TO_LINK",  crs_code="CRS-C45"),
+    SheetRule("Tag Class",           "WRONG_TAG_CLASS",         "TAG_EXISTS",        crs_code="CRS-C04"),
+    SheetRule("Wrong Class",         "WRONG_TAG_CLASS",         "TAG_EXISTS",        crs_code="CRS-C04"),
+    SheetRule("Duplicate",           "DUPLICATE_TAG",           "TAG_EXISTS",        crs_code="CRS-C16"),
+    SheetRule("Not Found",           "TAG_NOT_FOUND",           "TAG_EXISTS",        crs_code="CRS-C11"),
+    SheetRule("Missing Property",    "MISSING_PROPERTY",        "TAG_HAS_PROPERTY",  crs_code="CRS-C22"),
+    SheetRule("Property Missing",    "MISSING_PROPERTY",        "TAG_HAS_PROPERTY",  crs_code="CRS-C22"),
 ]
 
 
-def _classify_by_sheet(detail_sheet: str | None) -> tuple[str | None, str | None, float]:
+def _classify_by_sheet(detail_sheet: str | None) -> tuple[str | None, str | None, float, str | None]:
     """Try to classify by detail_sheet name substring match.
 
     Returns:
-        (category, check_type, confidence) or (None, None, 0.0) if no match.
+        (category, check_type, confidence, crs_code) or (None, None, 0.0, None) if no match.
     """
     if not detail_sheet:
-        return None, None, 0.0
+        return None, None, 0.0, None
     sheet_lower = detail_sheet.lower()
     for rule in SHEET_RULES:
         if rule.sheet_name.lower() in sheet_lower:
-            return rule.category, rule.check_type, rule.confidence
-    return None, None, 0.0
+            return rule.category, rule.check_type, rule.confidence, rule.crs_code
+    return None, None, 0.0, None
 
 
 # ---------------------------------------------------------------------------
@@ -82,10 +83,11 @@ class KeywordRule:
     category: str
     check_type: str
     confidence: float = 0.85
+    crs_code: str | None = None
 
 
 KEYWORD_RULES: list[KeywordRule] = [
-    # MISSING_DOCUMENT_LINK
+    # MISSING_DOCUMENT_LINK — CRS-C31
     KeywordRule(
         re.compile(
             r"no\s+document\s+(ref(erence)?|link)"
@@ -94,9 +96,9 @@ KEYWORD_RULES: list[KeywordRule] = [
             r"|document\s+(not\s+)?(linked|found|attached|present)",
             re.I,
         ),
-        "MISSING_DOCUMENT_LINK", "TAG_HAS_DOCUMENT",
+        "MISSING_DOCUMENT_LINK", "TAG_HAS_DOCUMENT", crs_code="CRS-C31",
     ),
-    # TAG_NOT_FOUND
+    # TAG_NOT_FOUND — CRS-C11
     KeywordRule(
         re.compile(
             r"not\s+(found|present|exist(s)?|in\s+edw|in\s+(the\s+)?database)"
@@ -104,9 +106,9 @@ KEYWORD_RULES: list[KeywordRule] = [
             r"|cannot\s+find\s+(tag|this)",
             re.I,
         ),
-        "TAG_NOT_FOUND", "TAG_EXISTS",
+        "TAG_NOT_FOUND", "TAG_EXISTS", crs_code="CRS-C11",
     ),
-    # MISSING_PROPERTY
+    # MISSING_PROPERTY — CRS-C22
     KeywordRule(
         re.compile(
             r"(property|attribute|field)\s+(not\s+)?(provided|missing|empty|blank|incorrect|absent)"
@@ -114,9 +116,9 @@ KEYWORD_RULES: list[KeywordRule] = [
             r"|property\s+value\s+(is\s+)?(empty|blank|null|missing)",
             re.I,
         ),
-        "MISSING_PROPERTY", "TAG_HAS_PROPERTY",
+        "MISSING_PROPERTY", "TAG_HAS_PROPERTY", crs_code="CRS-C22",
     ),
-    # WRONG_TAG_CLASS
+    # WRONG_TAG_CLASS — CRS-C04
     KeywordRule(
         re.compile(
             r"(wrong|incorrect|invalid)\s+(tag\s+)?class"
@@ -124,9 +126,9 @@ KEYWORD_RULES: list[KeywordRule] = [
             r"|wrong\s+equipment\s+class",
             re.I,
         ),
-        "WRONG_TAG_CLASS", "TAG_EXISTS",
+        "WRONG_TAG_CLASS", "TAG_EXISTS", crs_code="CRS-C04",
     ),
-    # TAG_DESCRIPTION_ISSUE
+    # TAG_DESCRIPTION_ISSUE — CRS-C02
     KeywordRule(
         re.compile(
             r"(tag\s+)?description\s+(is\s+)?(missing|blank|empty|incorrect|wrong)"
@@ -134,18 +136,18 @@ KEYWORD_RULES: list[KeywordRule] = [
             r"|missing\s+(tag\s+)?description",
             re.I,
         ),
-        "TAG_DESCRIPTION_ISSUE", "TAG_EXISTS",
+        "TAG_DESCRIPTION_ISSUE", "TAG_EXISTS", crs_code="CRS-C02",
     ),
-    # SPELLING_ERROR
+    # SPELLING_ERROR — no direct CRS-Cxx code
     KeywordRule(
         re.compile(
             r"spell(ing)?\s+(error|mistake|check|issue)"
             r"|typo\b|mis-?spell",
             re.I,
         ),
-        "SPELLING_ERROR", "TAG_EXISTS",
+        "SPELLING_ERROR", "TAG_EXISTS", crs_code=None,
     ),
-    # MISSING_FROM_TO_LINK
+    # MISSING_FROM_TO_LINK — CRS-C45
     KeywordRule(
         re.compile(
             r"(from|to)\s+tag\s+(is\s+)?(missing|blank|empty|not\s+(found|linked))"
@@ -153,9 +155,9 @@ KEYWORD_RULES: list[KeywordRule] = [
             r"|from[_\s]to\s+(link|tag|connection)\s+(is\s+)?(missing|not\s+set)",
             re.I,
         ),
-        "MISSING_FROM_TO_LINK", "TAG_FROM_TO_LINK",
+        "MISSING_FROM_TO_LINK", "TAG_FROM_TO_LINK", crs_code="CRS-C45",
     ),
-    # SAFETY_CRITICAL_MISSING
+    # SAFETY_CRITICAL_MISSING — CRS-C13
     KeywordRule(
         re.compile(
             r"safety\s+critical\s+(item\s+)?(reason|group|value|flag)?\s*(is\s+)?(missing|blank|empty)"
@@ -163,18 +165,18 @@ KEYWORD_RULES: list[KeywordRule] = [
             r"|sece\s+(group\s+)?(is\s+)?(missing|blank|empty|not\s+set)",
             re.I,
         ),
-        "SAFETY_CRITICAL_MISSING", "TAG_EXISTS",
+        "SAFETY_CRITICAL_MISSING", "TAG_EXISTS", crs_code="CRS-C13",
     ),
-    # WRONG_LOCATION (area/plant/process unit mismatch)
+    # WRONG_LOCATION — CRS-C07 (area default; plant-specific matched by SheetRule)
     KeywordRule(
         re.compile(
             r"(wrong|incorrect|invalid)\s+(plant|area|process\s+unit|location)"
             r"|(plant|area|process\s+unit)\s+(code\s+)?(is\s+)?(wrong|incorrect|should\s+be)",
             re.I,
         ),
-        "WRONG_LOCATION", "TAG_EXISTS",
+        "WRONG_LOCATION", "TAG_EXISTS", crs_code="CRS-C07",
     ),
-    # DUPLICATE_TAG
+    # DUPLICATE_TAG — CRS-C16
     KeywordRule(
         re.compile(
             r"duplicate\s+(tag|entry|record)"
@@ -182,9 +184,9 @@ KEYWORD_RULES: list[KeywordRule] = [
             r"|this\s+tag\s+already\s+exists?",
             re.I,
         ),
-        "DUPLICATE_TAG", "TAG_EXISTS",
+        "DUPLICATE_TAG", "TAG_EXISTS", crs_code="CRS-C16",
     ),
-    # WRONG_TAG_STATUS
+    # WRONG_TAG_STATUS — CRS-C46
     KeywordRule(
         re.compile(
             r"(wrong|incorrect|invalid)\s+(tag\s+)?status"
@@ -192,45 +194,45 @@ KEYWORD_RULES: list[KeywordRule] = [
             r"|tag\s+status\s+(should|must)\s+be",
             re.I,
         ),
-        "WRONG_TAG_STATUS", "TAG_EXISTS",
+        "WRONG_TAG_STATUS", "TAG_EXISTS", crs_code="CRS-C46",
     ),
 ]
 
 
 def classify_by_keywords(
     text: str,
-) -> tuple[str | None, str | None, float]:
+) -> tuple[str | None, str | None, float, str | None]:
     """Try to classify comment text with keyword regex rules.
 
     Args:
         text: Raw comment text.
 
     Returns:
-        (category, check_type, confidence) or (None, None, 0.0) if no match.
+        (category, check_type, confidence, crs_code) or (None, None, 0.0, None) if no match.
     """
     if not text:
-        return None, None, 0.0
+        return None, None, 0.0, None
     for rule in KEYWORD_RULES:
         if rule.pattern.search(text):
-            return rule.category, rule.check_type, rule.confidence
-    return None, None, 0.0
+            return rule.category, rule.check_type, rule.confidence, rule.crs_code
+    return None, None, 0.0, None
 
 
 def classify_comment(
     comment: dict[str, Any],
-) -> tuple[str | None, str | None, float]:
+) -> tuple[str | None, str | None, float, str | None]:
     """Classify a single comment using sheet rule first, then keywords.
 
     Args:
         comment: crs_comment dict with 'detail_sheet', 'comment', 'group_comment'.
 
     Returns:
-        (category, check_type, confidence) or (None, None, 0.0) if unmatched.
+        (category, check_type, confidence, crs_code) or (None, None, 0.0, None) if unmatched.
     """
     # Amendment #3: sheet rule has priority (0.95 confidence vs 0.85 for keywords)
-    cat, chk, conf = _classify_by_sheet(comment.get("detail_sheet"))
+    cat, chk, conf, crs = _classify_by_sheet(comment.get("detail_sheet"))
     if cat:
-        return cat, chk, conf
+        return cat, chk, conf, crs
 
     text = comment.get("comment") or comment.get("group_comment") or ""
     return classify_by_keywords(text)
@@ -280,6 +282,8 @@ def run_tier2(
                 "check_type":              chk,
                 "classification_tier":     2,
                 "status":                  "CLASSIFIED",
+                "category_code":           crs,
+                "category_confidence":     conf,
             })
         else:
             unmatched.append(comment)

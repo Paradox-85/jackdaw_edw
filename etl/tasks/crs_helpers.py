@@ -158,6 +158,8 @@ def save_classification_results(
             status                   = :status,
             classification_tier      = :tier,
             template_id              = :template_id,
+            category_code            = :category_code,
+            category_confidence      = :category_confidence,
             sync_timestamp           = now()
         WHERE id = :id
     """)
@@ -172,6 +174,8 @@ def save_classification_results(
             "status":       r.get("status", "CLASSIFIED"),
             "tier":         r.get("classification_tier"),
             "template_id":  r.get("template_id"),
+            "category_code":        r.get("category_code"),
+            "category_confidence":  r.get("category_confidence"),
         }
         for r in results
     ]

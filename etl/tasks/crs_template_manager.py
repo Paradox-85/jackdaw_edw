@@ -27,6 +27,49 @@ def _hash(normalised: str) -> str:
     return hashlib.md5(normalised.lower().strip().encode()).hexdigest()
 
 
+def get_or_create_template(
+    engine: Engine,
+    category_code: str,
+    template_text: str,
+    check_type: str | None = None,
+    source: str = "llm",
+    confidence: float = 0.85,
+) -> str:
+    """Upsert template, return template id (UUID as str).
+
+    Args:
+        engine: SQLAlchemy engine.
+        category_code: CRS-Cxx category code.
+        template_text: Normalised template text.
+        check_type: Type check (tag_data, property, equipment, etc.).
+        source: Template source (default 'llm').
+        confidence: Template confidence (default 0.85).
+
+    Returns:
+        Template ID as string (UUID).
+    """
+    template_hash = _hash(template_text)
+    with engine.begin() as conn:
+        row = conn.execute(text("""
+            INSERT INTO audit_core.crs_comment_template
+              (template_text, template_hash, category, check_type, source, confidence, object_status)
+            VALUES (:txt, :hash, :cat, :ct, :src, :conf, 'Active')
+            ON CONFLICT (template_hash) DO UPDATE SET
+              usage_count = audit_core.crs_comment_template.usage_count + 1,
+              last_used_at = now(),
+              confidence = GREATEST(audit_core.crs_comment_template.confidence, EXCLUDED.confidence)
+            RETURNING id::text
+        """), {
+            "txt": template_text,
+            "hash": template_hash,
+            "cat": category_code,
+            "ct": check_type,
+            "src": source,
+            "conf": confidence,
+        })
+        return row.scalar_one()
+
+
 @task(name="update-template-db")
 def update_template_db(
     llm_results: list[dict[str, Any]],

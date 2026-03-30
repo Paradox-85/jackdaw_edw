@@ -31,22 +31,7 @@ from sqlalchemy.engine import Engine
 _LLM_BATCH_SIZE = 32
 
 # Categories the LLM is allowed to return (validated on parse)
-_VALID_CATEGORIES = frozenset({
-    "MISSING_DOCUMENT_LINK",
-    "TAG_NOT_FOUND",
-    "MISSING_PROPERTY",
-    "WRONG_TAG_CLASS",
-    "TAG_DESCRIPTION_ISSUE",
-    "SPELLING_ERROR",
-    "MISSING_FROM_TO_LINK",
-    "SAFETY_CRITICAL_MISSING",
-    "WRONG_LOCATION",
-    "DUPLICATE_TAG",
-    "WRONG_TAG_STATUS",
-    "DATA_QUALITY_ISSUE",
-    "GENERAL_COMMENT",
-    "OTHER",
-})
+_VALID_CATEGORIES: frozenset[str] = frozenset(f"CRS-C{i:02d}" for i in range(1, 51))
 
 # ---------------------------------------------------------------------------
 # Parameter extraction
@@ -184,11 +169,8 @@ def _build_prompt(
         f"Comment: {text_val}\n"
         f"Extracted params: {json.dumps(params, default=str)}\n"
         f"EDW verification result: {result_str}\n\n"
-        f"Task: Classify this engineering CRS comment into ONE of these categories:\n"
-        f"MISSING_DOCUMENT_LINK, TAG_NOT_FOUND, MISSING_PROPERTY, WRONG_TAG_CLASS, "
-        f"TAG_DESCRIPTION_ISSUE, SPELLING_ERROR, MISSING_FROM_TO_LINK, "
-        f"SAFETY_CRITICAL_MISSING, WRONG_LOCATION, DUPLICATE_TAG, WRONG_TAG_STATUS, "
-        f"DATA_QUALITY_ISSUE, GENERAL_COMMENT, OTHER\n\n"
+        f"Task: Classify this engineering CRS comment into ONE category code (CRS-C01..C50).\n"
+        f"Categories cover: TAG_DATA, PROPERTY, EQUIPMENT, DOCUMENT, REFERENCE, SAFETY, TOPOLOGY\n\n"
         f"Respond with JSON only:\n"
         f'{{\"category\": \"<CATEGORY>\", \"confidence\": <0.0-1.0>, '
         f'\"response\": \"<brief suggested response>\"}}'
@@ -329,6 +311,8 @@ def run_tier3_llm(
                 "classification_tier":     3,
                 "status":                  status,
                 "_extracted_params":       params,  # used by template_manager
+                "category_code":           llm_out["category"],
+                "category_confidence":     confidence,
             })
 
     classified = sum(1 for r in results if r["status"] == "CLASSIFIED")

@@ -1,63 +1,16 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "respectGitignore": true,
-  "env": {
-    "ANTHROPIC_MODEL": "claude-sonnet-4-6"
-  },
   "includeGitInstructions": true,
   "permissions": {
-    "allow": [
-      "Bash",
-      "Read",
-      "Edit",
-      "mcp__perplexity__*",
-      "mcp__proxmox__*",
-      "mcp__pgedge__*"
-    ],
-    "deny": [
-      "Bash(rm -rf /)",
-      "Bash(rm -rf ~)",
-      "Read(*.env*)",
-      "Read(secrets/**)",
-      "Read(*.pem)",
-      "Read(ssh/**)",
-      "Read(data/private/**)",
-      "Read(logs/prod/**)"
-    ],
-    "ask": [
-      "Bash(rm *)",
-      "Bash(rm -rf *)",
-      "Bash(docker rm *)",
-      "Bash(docker compose down*)",
-      "Bash(docker compose down --volumes*)"
-    ],
+    "allow": ["Bash","Read","Edit","mcp__perplexity__*","mcp__proxmox__*","mcp__pgedge__*"],
+    "deny": ["Bash(rm -rf /)","Bash(rm -rf ~)","Read(*.env*)","Read(secrets/**)","Read(*.pem)","Read(ssh/**)","Read(data/private/**)","Read(logs/prod/**)"],
+    "ask": ["Bash(rm *)","Bash(rm -rf *)","Bash(docker rm *)","Bash(docker compose down*)","Bash(docker compose down --volumes*)"],
     "defaultMode": "acceptEdits"
   },
   "enableAllProjectMcpServers": true,
   "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "ruff check --fix",
-            "timeout": 10,
-            "statusMessage": "Linting with ruff..."
-          }
-        ]
-      }
-    ],
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "scripts/pre-hook.sh",
-            "statusMessage": "Initializing EDW environment..."
-          }
-        ]
-      }
-    ]
+    "PostToolUse": [{"matcher": "Edit|Write","hooks": [{"type": "command","command": "ruff check --fix","timeout": 10,"statusMessage": "Linting with ruff..."}]}],
+    "SessionStart": [{"hooks": [{"type": "command","command": "scripts/pre-hook.sh","statusMessage": "Initializing EDW environment..."}]}]
   }
 }
