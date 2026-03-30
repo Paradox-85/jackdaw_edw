@@ -287,3 +287,61 @@ def test_revision_label_lowercase_key() -> None:
     """_revision_label and _revision_number must work on lower-case keys."""
     assert _revision_label("JDAW-KVE-E-JA-6944-00001-007_a19") == "A19"
     assert _revision_number("JDAW-KVE-E-JA-6944-00001-007_a19") == 19
+
+
+# ---------------------------------------------------------------------------
+# discover_crs_files — Surplus filter and main-file rev mismatch
+# ---------------------------------------------------------------------------
+
+def test_surplus_file_excluded_before_pattern_match(tmp_path: Path) -> None:
+    """Files inside a 'Surplus' subdirectory must be excluded before pattern matching."""
+    key = "JDAW-KVE-E-JA-6944-00001-017_A34"
+    doc_dir = tmp_path / f"JDAW-KVE-E-JA-6944-00001-017_A34 Rev. A34 - DOC_REF"
+    doc_dir.mkdir(parents=True)
+
+    # Create a valid master in the correct dir (control)
+    main_path = doc_dir / f"DOC_COMMENT_{key}_KVE.xlsx"
+    main_path.touch()
+
+    # Create files inside Surplus — both main and detail variants
+    surplus_dir = doc_dir / "Surplus"
+    surplus_dir.mkdir()
+    (surplus_dir / f"DOC_COMMENT_{key}_KVE.xlsx").touch()
+    (surplus_dir / f"{key}_Review_Comments.xlsx").touch()
+
+    main_files, detail_files, _ = discover_crs_files(tmp_path)
+
+    # Master must be found exactly once (from doc_dir, not Surplus)
+    assert key in main_files
+    assert main_files[key].parent == doc_dir
+    # Detail from Surplus must not appear
+    for paths in detail_files.values():
+        assert all("Surplus" not in p.parts for p in paths)
+
+
+def test_main_file_rev_mismatch_excluded(tmp_path: Path) -> None:
+    """Master file whose revision doesn't match its parent directory revision must be skipped."""
+    # Directory named _A17, but the file inside has revision _A16
+    wrong_dir = tmp_path / "JDAW-KVE-E-JA-6944-00001-016_A17"
+    wrong_dir.mkdir()
+    bad_main = wrong_dir / "DOC_COMMENT_JDAW-KVE-E-JA-6944-00001-016_A16_KVE.xlsx"
+    bad_main.touch()
+
+    main_files, _, _ = discover_crs_files(tmp_path)
+
+    key = "JDAW-KVE-E-JA-6944-00001-016_A16"
+    assert key not in main_files, "Master from mismatched directory must not be accepted"
+
+
+def test_main_file_rev_match_accepted(tmp_path: Path) -> None:
+    """Master file whose revision matches its parent directory revision must be accepted."""
+    correct_dir = tmp_path / "JDAW-KVE-E-JA-6944-00001-016_A16"
+    correct_dir.mkdir()
+    good_main = correct_dir / "DOC_COMMENT_JDAW-KVE-E-JA-6944-00001-016_A16_KVE.xlsx"
+    good_main.touch()
+
+    main_files, _, _ = discover_crs_files(tmp_path)
+
+    key = "JDAW-KVE-E-JA-6944-00001-016_A16"
+    assert key in main_files
+    assert main_files[key] == good_main
