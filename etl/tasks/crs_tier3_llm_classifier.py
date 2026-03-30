@@ -137,15 +137,10 @@ def _run_verification(
         List of result row dicts (empty list if no rows or query fails).
     """
     try:
-        # Map our param names to what the SQL expects
         sql_params: dict[str, str] = {}
         for p_name in (query.get("parameter_names") or []):
             val = params.get(p_name)
-            if val:
-                sql_params[p_name] = val
-            else:
-                # Provide empty string as fallback to avoid NULL bind errors
-                sql_params[p_name] = ""
+            sql_params[p_name] = val if val else ""
 
         with engine.connect() as conn:
             rows = conn.execute(text(query["sql_query"]), sql_params).fetchall()
@@ -166,7 +161,7 @@ def _build_prompt(
     """Build a concise prompt for single-comment classification."""
     text_val = comment.get("comment") or comment.get("group_comment") or ""
     sheet = comment.get("detail_sheet") or "unknown"
-    result_str = json.dumps(sql_result[:3], default=str)  # limit tokens
+    result_str = json.dumps(sql_result[:3], default=str)
 
     return (
         f"CRS Comment Classification Task\n\n"
@@ -186,16 +181,18 @@ def _call_llm_batch(
     prompts: list[str],
     model: str,
     base_url: str,
+    logger: Any = None,
 ) -> list[dict[str, Any]]:
     """Call Ollama LLM for a batch of prompts.
 
     Uses langchain_openai.ChatOpenAI pointed at local Ollama endpoint.
-    Falls back gracefully on any error.
+    Logs every error explicitly so connection issues are visible in Prefect UI.
 
     Args:
         prompts: List of prompt strings (max 32 recommended).
         model: Ollama model name (e.g. 'qwen3:32b').
         base_url: Ollama OpenAI-compatible endpoint URL.
+        logger: Prefect run logger for explicit error reporting.
 
     Returns:
         List of parsed result dicts with keys: category, confidence, response.
@@ -203,20 +200,24 @@ def _call_llm_batch(
     try:
         from langchain_openai import ChatOpenAI  # type: ignore[import]
         from langchain_core.messages import HumanMessage  # type: ignore[import]
-    except ImportError:
-        # langchain_openai not installed — fall back to DEFERRED (valid constraint value)
-        return [{"category": "OTHER", "confidence": 0.5, "response": "LLM unavailable (langchain_openai not installed)"}] * len(prompts)
+    except ImportError as e:
+        msg = f"langchain_openai not installed: {e}"
+        if logger:
+            logger.error("Tier 3 LLM unavailable — %s", msg)
+        return [{"category": "OTHER", "confidence": 0.5, "response": msg}] * len(prompts)
 
     llm = ChatOpenAI(
         model=model,
         base_url=base_url,
-        api_key="ollama",  # Ollama doesn't need a real key
+        api_key="ollama",
         temperature=0.1,
         max_tokens=256,
     )
 
     results: list[dict[str, Any]] = []
-    for prompt in prompts:
+    first_error_logged = False
+
+    for i, prompt in enumerate(prompts):
         try:
             msg = llm.invoke([HumanMessage(content=prompt)])
             raw = msg.content.strip()
@@ -233,9 +234,23 @@ def _call_llm_batch(
                     "response":   str(parsed.get("response", "")),
                 })
             else:
+                # LLM responded but not with valid JSON — log first occurrence
+                if logger and not first_error_logged:
+                    logger.warning(
+                        "Tier 3: LLM returned non-JSON response (prompt #%d). "
+                        "Raw (first 300 chars): %s",
+                        i, raw[:300],
+                    )
+                    first_error_logged = True
                 results.append({"category": "OTHER", "confidence": 0.5, "response": raw[:200]})
         except Exception as e:  # noqa: BLE001
-            results.append({"category": "OTHER", "confidence": 0.5, "response": f"LLM error: {e}"})
+            # Log EVERY connection/timeout error explicitly — previously silent
+            if logger:
+                logger.warning(
+                    "Tier 3: LLM call failed for prompt #%d — %s: %s",
+                    i, type(e).__name__, e,
+                )
+            results.append({"category": "OTHER", "confidence": 0.5, "response": f"LLM error: {type(e).__name__}: {e}"})
     return results
 
 
@@ -269,6 +284,9 @@ def run_tier3_llm(
     ollama_base_url = os.environ.get("OLLAMA_BASE_URL", "http://10.10.10.50:11434/v1")
     ollama_model = os.environ.get("OLLAMA_MODEL", "qwen3:32b")
 
+    # Log endpoint so it's always visible in Prefect UI — helps diagnose connectivity fast
+    logger.info("Tier 3: using Ollama endpoint=%s model=%s", ollama_base_url, ollama_model)
+
     # Load validation queries once per task call
     validation_queries = _load_validation_queries(engine)
     if not validation_queries:
@@ -285,7 +303,6 @@ def run_tier3_llm(
         for comment in batch:
             text_val = comment.get("comment") or comment.get("group_comment") or ""
 
-            # Use from_tag / to_tag from DB if present; else extract from text
             params = extract_parameters(text_val)
             if comment.get("from_tag"):
                 params["from_tag"] = comment["from_tag"]
@@ -298,7 +315,6 @@ def run_tier3_llm(
             if comment.get("document_number"):
                 params["doc_number"] = comment["document_number"]
 
-            # Run SQL verification
             vq = _select_query(params, validation_queries)
             sql_result: list[dict[str, Any]] = []
             if vq:
@@ -307,13 +323,11 @@ def run_tier3_llm(
             prompts.append(_build_prompt(comment, params, sql_result))
             batch_params.append(params)
 
-        llm_outputs = _call_llm_batch(prompts, ollama_model, ollama_base_url)
+        # Pass logger so connection errors are visible in Prefect UI
+        llm_outputs = _call_llm_batch(prompts, ollama_model, ollama_base_url, logger=logger)
 
         for comment, params, llm_out in zip(batch, batch_params, llm_outputs):
             confidence = llm_out.get("confidence", 0.7)
-            # Map to valid crs_comment_status_check values:
-            #   high confidence → IN_REVIEW (ready for engineer review)
-            #   low confidence  → DEFERRED  (needs manual triage)
             status = "IN_REVIEW" if confidence >= 0.7 else "DEFERRED"
             results.append({
                 **comment,
@@ -323,7 +337,7 @@ def run_tier3_llm(
                 "llm_model_used":          ollama_model,
                 "classification_tier":     3,
                 "status":                  status,
-                "_extracted_params":       params,  # used by template_manager
+                "_extracted_params":       params,
                 "category_code":           llm_out["category"],
                 "category_confidence":     confidence,
             })
