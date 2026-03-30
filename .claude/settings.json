@@ -2,15 +2,64 @@
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "respectGitignore": true,
   "includeGitInstructions": true,
+  "plansDirectory": "./docs/plans",
+  "language": "russian",
+  "attribution": {
+    "commit": "Co-Authored-By: Claude <noreply@anthropic.com>",
+    "pr": ""
+  },
   "permissions": {
     "allow": ["Bash","Read","Edit","mcp__perplexity__*","mcp__proxmox__*","mcp__pgedge__*"],
     "deny": ["Bash(rm -rf /)","Bash(rm -rf ~)","Read(*.env*)","Read(secrets/**)","Read(*.pem)","Read(ssh/**)","Read(data/private/**)","Read(logs/prod/**)"],
-    "ask": ["Bash(rm *)","Bash(rm -rf *)","Bash(docker rm *)","Bash(docker compose down*)","Bash(docker compose down --volumes*)"],
+    "ask": [
+      "Bash(rm *)",
+      "Bash(rm -rf *)",
+      "Bash(docker rm *)",
+      "Bash(docker compose down*)",
+      "Bash(docker compose down --volumes*)",
+      "Bash(psql * DROP *)",
+      "Bash(psql * ALTER *)",
+      "Bash(psql * TRUNCATE *)",
+      "Bash(psql * DELETE FROM *)"
+    ],
     "defaultMode": "acceptEdits"
   },
   "enableAllProjectMcpServers": true,
   "hooks": {
-    "PostToolUse": [{"matcher": "Edit|Write","hooks": [{"type": "command","command": "ruff check --fix","timeout": 10,"statusMessage": "Linting with ruff..."}]}],
-    "SessionStart": [{"hooks": [{"type": "command","command": "scripts/pre-hook.sh","statusMessage": "Initializing EDW environment..."}]}]
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [{
+          "type": "command",
+          "command": "ruff check --fix",
+          "timeout": 10,
+          "statusMessage": "Linting with ruff..."
+        }]
+      },
+      {
+        "matcher": "Bash(git commit*)",
+        "hooks": [{
+          "type": "command",
+          "command": "bash -c 'CHANGED=$(git diff --cached --name-only 2>/dev/null); if echo \"$CHANGED\" | grep -qE \"\\.(sql|py)$\" && ! echo \"$CHANGED\" | grep -q \"schema.sql\"; then echo \"\\n⚠️  WARNING: SQL/Python files staged but sql/schema.sql NOT staged.\"; echo \"Run /schema-change workflow before committing DB changes.\"; fi'",
+          "timeout": 5,
+          "statusMessage": "Checking schema.sql drift..."
+        }]
+      }
+    ],
+    "SessionStart": [{
+      "hooks": [{
+        "type": "command",
+        "command": "scripts/pre-hook.sh",
+        "statusMessage": "Initializing EDW environment..."
+      }]
+    }],
+    "PreCompact": [{
+      "hooks": [{
+        "type": "command",
+        "command": "echo 'CRITICAL — PRESERVE IN COMPACTION SUMMARY: (1) current task goal in one sentence, (2) exact list of all files modified this session, (3) schema.sql status — changed or not, (4) hash formula in use, (5) sync_status values involved, (6) unresolved FK/SCD2 decisions, (7) last pgedge query result if relevant, (8) exact next step after context reset'",
+        "timeout": 3,
+        "statusMessage": "Preparing EDW context for compaction..."
+      }]
+    }]
   }
 }

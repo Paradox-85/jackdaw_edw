@@ -7,7 +7,7 @@ description: SQL standards for PostgreSQL (engineering_core)
 ## Core Rules
 - **Always schema-prefix**: `project_core.tag` — never bare `tag`
 - **All PKs/FKs**: `UUID` with `DEFAULT gen_random_uuid()`
-- **Timestamps**: `TIMESTAMP DEFAULT now()` (not TIMESTAMPTZ unless explicitly needed)
+- **Timestamps**: `TIMESTAMP WITH TIME ZONE DEFAULT now()` — always TIMESTAMPTZ, never naive TIMESTAMP
 - **Soft deletes**: set `object_status = 'Inactive'` — never `DELETE FROM project_core.*`
 - **No SELECT ***: always list columns explicitly in production queries
 
