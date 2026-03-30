@@ -117,6 +117,83 @@ def _trigger_crs_classify(rev: str) -> None:
         log("warn", f"Classification deployment not found or failed: {err}", "crs_log")
 
 
+def _reset_crs_classification(rev: str, log_key: str) -> None:
+    """NULL-out classification fields for the given revision and write audit rows."""
+    import json
+    import uuid as _uuid
+    from sqlalchemy import create_engine, text as sa_text
+    from etl.tasks.common import load_config, get_db_engine_url
+
+    run_id = str(_uuid.uuid4())
+    log("info", f"Resetting classification for revision {rev} (run_id={run_id[:8]})", log_key)
+
+    engine = create_engine(get_db_engine_url(load_config()))
+    with engine.begin() as conn:
+        ids_result = conn.execute(
+            sa_text(
+                "SELECT id FROM audit_core.crs_comment "
+                "WHERE revision = :rev AND object_status = 'Active'"
+            ),
+            {"rev": rev},
+        ).fetchall()
+        ids = [str(r[0]) for r in ids_result]
+
+        if not ids:
+            log("warn", f"No active comments found for revision {rev} — nothing to reset", log_key)
+            return
+
+        set_parts = ["status = 'RECEIVED'"]
+        optional_cols = [
+            "classification_tier",
+            "classification_template",
+            "llm_response",
+            "llm_response_timestamp",
+        ]
+        existing = {
+            row[0]
+            for row in conn.execute(
+                sa_text("""
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'audit_core'
+                      AND table_name   = 'crs_comment'
+                      AND column_name  = ANY(:cols)
+                """),
+                {"cols": optional_cols},
+            ).fetchall()
+        }
+        for col in optional_cols:
+            if col in existing:
+                set_parts.append(f"{col} = NULL")
+            else:
+                log("warn", f"Column audit_core.crs_comment.{col} not found — skipped", log_key)
+
+        set_clause = ", ".join(set_parts)
+        conn.execute(
+            sa_text(
+                f"UPDATE audit_core.crs_comment SET {set_clause} "
+                "WHERE revision = :rev AND object_status = 'Active'"
+            ),
+            {"rev": rev},
+        )
+
+        snap = json.dumps({"revision": rev, "reset_by": "ui", "reset_at": str(datetime.now())})
+        audit_rows = [{"cid": cid, "rid": run_id, "snap": snap} for cid in ids]
+        try:
+            conn.execute(
+                sa_text(
+                    "INSERT INTO audit_core.crs_comment_audit "
+                    "(comment_id, change_type, snapshot, run_id) "
+                    "VALUES (:cid, 'RESET', CAST(:snap AS jsonb), :rid)"
+                ),
+                audit_rows,
+            )
+        except Exception as audit_exc:
+            log("warn", f"Audit insert skipped (table may not exist): {audit_exc}", log_key)
+
+    log("ok", f"Reset complete — {len(ids)} comment(s) cleared for revision {rev}", log_key)
+
+
 def _fetch_export_deployments():
     """Query Prefect API for all export-* deployments."""
     import pandas as pd
@@ -218,6 +295,8 @@ def render() -> None:
         ("crs_classify_running", False),
         ("crs_classify_done", False),
         ("crs_classify_run_id", None),
+        ("crs_reset_confirm", False),
+        ("crs_reset_done", False),
     ]:
         if _k not in st.session_state:
             st.session_state[_k] = _v
@@ -604,6 +683,49 @@ def render() -> None:
                 f"Check that `classify-crs-comments-deployment` is registered in Prefect. "
                 f"Error: `{err}`"
             )
+
+    # ── Reset Classification ──────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("**⚠ Reset Classification**")
+    st.caption(
+        "Clears `classification_tier`, `classification_template`, `llm_response` "
+        "and resets status to `RECEIVED` for ALL comments in the selected revision. "
+        "This action is logged to `audit_core.crs_comment_audit` and cannot be undone."
+    )
+
+    if not no_sql_revs:
+        reset_confirm = st.checkbox(
+            f"I understand — reset classification for revision **{classify_rev}**",
+            key="crs_reset_confirm",
+            value=False,
+        )
+        col_rst_btn, col_rst_info = st.columns([1, 2])
+        with col_rst_btn:
+            reset_btn = st.button(
+                "🔄 Reset",
+                type="secondary",
+                disabled=(not reset_confirm),
+                key="btn_crs_reset",
+                use_container_width=True,
+            )
+        with col_rst_info:
+            if not reset_confirm:
+                st.caption("Check the box above to enable the Reset button.")
+
+        if reset_btn and reset_confirm:
+            try:
+                with st.spinner(f"Resetting classification for revision {classify_rev}…"):
+                    _reset_crs_classification(classify_rev, "crs_log")
+                st.session_state["crs_reset_confirm"] = False
+                st.session_state["crs_reset_done"] = True
+                st.cache_data.clear()
+                st.success(
+                    f"✅ Classification reset for revision **{classify_rev}**. "
+                    "You can now re-run the Classify flow."
+                )
+                st.rerun()
+            except Exception as exc:
+                st.error(f"❌ Reset failed: {exc}")
 
     # ── Section B: Validate (stub) ─────────────────────────────────────────────
     section("Validate CRS Comments")
