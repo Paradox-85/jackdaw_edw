@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from prefect import task, get_run_logger
+from prefect.cache_policies import NO_CACHE
 
 # ---------------------------------------------------------------------------
 # Sheet-name rules (Amendment #3 — higher confidence than keyword regex)
@@ -242,7 +243,7 @@ def classify_comment(
 # Prefect task
 # ---------------------------------------------------------------------------
 
-@task(name="tier2-keyword-classifier")
+@task(name="tier2-keyword-classifier", cache_policy=NO_CACHE)
 def run_tier2(
     comments: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -264,13 +265,13 @@ def run_tier2(
     keyword_matched = 0
 
     for comment in comments:
-        # Sheet rule first
-        cat, chk, conf = _classify_by_sheet(comment.get("detail_sheet"))
+        # Sheet rule first — unpack all 4 values
+        cat, chk, conf, crs = _classify_by_sheet(comment.get("detail_sheet"))
         if cat:
             sheet_matched += 1
         else:
             text = comment.get("comment") or comment.get("group_comment") or ""
-            cat, chk, conf = classify_by_keywords(text)
+            cat, chk, conf, crs = classify_by_keywords(text)
             if cat:
                 keyword_matched += 1
 
@@ -281,7 +282,8 @@ def run_tier2(
                 "llm_category_confidence": conf,
                 "check_type":              chk,
                 "classification_tier":     2,
-                "status":                  "CLASSIFIED",
+                # IN_REVIEW: valid status in crs_comment_status_check constraint
+                "status":                  "IN_REVIEW",
                 "category_code":           crs,
                 "category_confidence":     conf,
             })

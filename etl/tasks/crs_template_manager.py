@@ -16,6 +16,7 @@ import hashlib
 from typing import Any
 
 from prefect import task, get_run_logger
+from prefect.cache_policies import NO_CACHE
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
@@ -70,7 +71,9 @@ def get_or_create_template(
         return row.scalar_one()
 
 
-@task(name="update-template-db")
+# NO_CACHE: Engine contains weakref objects that cannot be serialized by Prefect
+# cache policy. Caching template-DB writes is also semantically incorrect.
+@task(name="update-template-db", cache_policy=NO_CACHE)
 def update_template_db(
     llm_results: list[dict[str, Any]],
     engine: Engine,
@@ -112,7 +115,6 @@ def update_template_db(
         ON CONFLICT (template_hash) DO UPDATE SET
             usage_count  = audit_core.crs_comment_template.usage_count + 1,
             last_used_at = now(),
-            -- Update confidence if new result is more confident
             confidence   = GREATEST(
                                audit_core.crs_comment_template.confidence,
                                EXCLUDED.confidence
