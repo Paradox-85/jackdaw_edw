@@ -26,6 +26,7 @@
 | audit, log_entry, tag_status_history | `rules/audit-rules.md` |
 | EIS, export, seq, sequence | `rules/export-eis.md` |
 | component, tsx, React, TanStack, shadcn, Tailwind | `rules/ui-standards.md` |
+| MCP fails, unavailable, empty response | `rules/mcp-decision.md` |
 
 ---
 
@@ -39,6 +40,11 @@
 | Validate schema design | **launch `schema-validator` subagent** |
 | After writing/modifying ETL task or flow file | suggest `etl-reviewer` subagent |
 | Context approaching 70% | suggest `/compact-edw` |
+| Before first commit / after major changes | suggest `/push-all` |
+| Test coverage is low or feature just completed | suggest `/unit-test-expand etl/` |
+| Documentation is scattered or outdated | suggest `/doc-refactor` |
+| Complex multi-step task (new source, migration) | suggest `etl-orchestrator` subagent |
+| No CI/CD pipeline yet | suggest `/setup-ci-cd` |
 
 ---
 
