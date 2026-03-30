@@ -12,7 +12,8 @@ Process per comment:
   5. Return with llm_category, confidence, classification_tier=3
 
 Batch inference (32 items) reduces Ollama overhead by ~85% vs one-by-one calls.
-OLLAMA_BASE_URL environment variable must be set to the LXC endpoint.
+LLM endpoint and model are read from config/config.yaml (llm.base_url, llm.model).
+OLLAMA_BASE_URL / OLLAMA_MODEL env vars override config values (useful in CI/tests).
 
 Only 100-200k comments reach this tier in steady state (5-10% of 2M total).
 
@@ -26,6 +27,8 @@ import json
 import os
 import re
 from typing import Any
+
+from etl.tasks.common import load_config, get_llm_config
 
 from prefect import task, get_run_logger
 from prefect.cache_policies import NO_CACHE
@@ -181,6 +184,9 @@ def _call_llm_batch(
     prompts: list[str],
     model: str,
     base_url: str,
+    api_key: str = "none",
+    temperature: float = 0.1,
+    max_tokens: int = 256,
     logger: Any = None,
 ) -> list[dict[str, Any]]:
     """Call Ollama LLM for a batch of prompts.
@@ -190,8 +196,11 @@ def _call_llm_batch(
 
     Args:
         prompts: List of prompt strings (max 32 recommended).
-        model: Ollama model name (e.g. 'qwen3:32b').
+        model: Ollama model name (e.g. 'qwen35-27b').
         base_url: Ollama OpenAI-compatible endpoint URL.
+        api_key: API key for the endpoint (dummy value for local Ollama).
+        temperature: Sampling temperature (lower = more deterministic).
+        max_tokens: Maximum tokens per response.
         logger: Prefect run logger for explicit error reporting.
 
     Returns:
@@ -209,9 +218,9 @@ def _call_llm_batch(
     llm = ChatOpenAI(
         model=model,
         base_url=base_url,
-        api_key="ollama",
-        temperature=0.1,
-        max_tokens=256,
+        api_key=api_key,
+        temperature=temperature,
+        max_tokens=max_tokens,
     )
 
     results: list[dict[str, Any]] = []
@@ -281,8 +290,10 @@ def run_tier3_llm(
     """
     logger = get_run_logger()
 
-    ollama_base_url = os.environ.get("OLLAMA_BASE_URL", "http://10.10.10.50:11434/v1")
-    ollama_model = os.environ.get("OLLAMA_MODEL", "qwen3:32b")
+    # config.yaml is the source of truth; env vars override for CI/testing only
+    llm_cfg = get_llm_config(load_config())
+    ollama_base_url = os.environ.get("OLLAMA_BASE_URL") or llm_cfg["base_url"]
+    ollama_model = os.environ.get("OLLAMA_MODEL") or llm_cfg["model"]
 
     # Log endpoint so it's always visible in Prefect UI — helps diagnose connectivity fast
     logger.info("Tier 3: using Ollama endpoint=%s model=%s", ollama_base_url, ollama_model)
@@ -324,7 +335,15 @@ def run_tier3_llm(
             batch_params.append(params)
 
         # Pass logger so connection errors are visible in Prefect UI
-        llm_outputs = _call_llm_batch(prompts, ollama_model, ollama_base_url, logger=logger)
+        llm_outputs = _call_llm_batch(
+            prompts,
+            ollama_model,
+            ollama_base_url,
+            api_key=llm_cfg.get("api_key", "none"),
+            temperature=llm_cfg.get("temperature", 0.1),
+            max_tokens=llm_cfg.get("max_tokens", 256),
+            logger=logger,
+        )
 
         for comment, params, llm_out in zip(batch, batch_params, llm_outputs):
             confidence = llm_out.get("confidence", 0.7)

@@ -48,6 +48,10 @@ def get_db_engine_url(config):
     pg = config['postgres']
     return f"postgresql://{pg['user']}:{pg['password']}@{pg['host']}:{pg['port']}/{pg['database']}"
 
+def get_llm_config(config: dict) -> dict:
+    """Return LLM settings section from config dict."""
+    return config.get("llm", {})
+
 def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize strings: strip spaces and convert to UPPER case"""
     for col in df.columns:
