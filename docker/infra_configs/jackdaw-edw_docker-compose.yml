@@ -88,8 +88,11 @@ services:
       - /mnt/shared-data:/mnt/shared-data
     # Note: Keep an eye on entrypoint, it overrides Dockerfile's CMD/ENTRYPOINT
     entrypoint: >
-      /bin/sh -c "pip install -r /mnt/shared-data/ram-user/Jackdaw/prefect-worker/scripts/requirements.txt && 
-      exec prefect worker start --pool 'default-agent-pool'"
+      /bin/sh -c "
+        pip install -r /mnt/shared-data/ram-user/Jackdaw/EDW-repository/requirements.txt &&
+        python /mnt/shared-data/ram-user/Jackdaw/EDW-repository/scripts/deploy_all.py &&
+        exec prefect worker start --pool 'default-agent-pool'
+      "
 
   # --- DATABASE GUI: DBGATE ---
   dbgate:
