@@ -10,14 +10,18 @@ Sections:
 from __future__ import annotations
 import io as _io
 import re
+import subprocess
+import threading
 import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
 
+from etl.tasks.common import load_config
+
 import streamlit as st
 from ui.common import (
-    EIS_EXPORT_DIR, get_flow_run_status, log, render_log,
+    EIS_EXPORT_DIR, db_read, get_flow_run_status, log, render_log,
     section, trigger_deployment, prefect_post,
 )
 
@@ -25,6 +29,18 @@ from ui.common import (
 _EIS_DEPLOYMENT = "export_eis_package_data_deploy"
 
 _REV_RE = re.compile(r"^[A-Z]\d{2}$")
+
+# CRS file discovery patterns (mirrored from scripts/import_crs_data.py)
+_CRS_MAIN_PATTERN = re.compile(
+    r"^DOC_COMMENT_(JDAW-KVE-E-JA-6944-00001-\d{3}_A\d+)_[A-Za-z]{3}\.xlsx$",
+    re.IGNORECASE,
+)
+_CRS_DETAIL_PATTERN = re.compile(
+    r"^(JDAW-KVE-E-JA-6944-00001-\d{3}_A\d+)(?:_\d+|_Review_Comments)\.xlsx$",
+    re.IGNORECASE,
+)
+_CRS_REV_RE = re.compile(r"_A(\d+)", re.IGNORECASE)
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Flow run states that require no further polling
 _TERMINAL_STATES = {"COMPLETED", "FAILED", "CRASHED", "CANCELLED"}
@@ -43,6 +59,48 @@ _STATE_COLOR = {
 }
 
 _TOTAL_STEPS = 11
+
+
+@st.cache_data(ttl=120)
+def _scan_crs_revisions(crs_data_dir: str) -> list[str]:
+    """Scan crs_data_dir recursively for CRS Excel files, return sorted revision list."""
+    p = Path(crs_data_dir)
+    if not p.exists():
+        return []
+    keys: set[str] = set()
+    for f in p.rglob("*.xlsx"):
+        for pat in (_CRS_MAIN_PATTERN, _CRS_DETAIL_PATTERN):
+            m = pat.match(f.name)
+            if m:
+                rev_m = _CRS_REV_RE.search(m.group(1))
+                if rev_m:
+                    keys.add(f"A{rev_m.group(1)}")
+                break
+    return sorted(keys, key=lambda r: int(r[1:]))
+
+
+def _run_crs_import(rev: str, log_key: str) -> None:
+    """Run import_crs_data.py in subprocess, stream stdout into session state log list."""
+    cmd = ["python", "scripts/import_crs_data.py", "--debug", "--debug-rev", rev]
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, cwd=str(_REPO_ROOT),
+    )
+    for line in proc.stdout:
+        st.session_state.setdefault(log_key, []).append(line.rstrip())
+    proc.wait()
+    st.session_state[f"{log_key}_done"] = True
+    st.session_state[f"{log_key}_rc"] = proc.returncode
+
+
+def _trigger_crs_classify(rev: str) -> None:
+    """Trigger classify-crs-comments-deployment; log warning if not registered."""
+    result = trigger_deployment("classify-crs-comments-deployment", {"revision": rev})
+    if result and "id" in result:
+        log("ok", f"Classification scheduled — ID: {result['id'][:8]}", "crs_log")
+    else:
+        err = result.get("error", str(result)) if isinstance(result, dict) else str(result)
+        log("warn", f"Classification deployment not found or failed: {err}", "crs_log")
 
 
 def _fetch_export_deployments():
@@ -139,6 +197,13 @@ def _log_child_changes(children: list[dict]) -> None:
 def render() -> None:
     st.markdown("### 📤 EIS Management")
     st.caption("Export EIS data packages · Revision control · Prefect orchestration")
+
+    for _k, _v in [
+        ("crs_log", []), ("crs_import_running", False),
+        ("crs_log_done", False), ("crs_log_rc", None),
+    ]:
+        if _k not in st.session_state:
+            st.session_state[_k] = _v
 
     # ── Export Deployments ────────────────────────────────────────────────────
     section("Export Deployments")
@@ -329,6 +394,111 @@ def render() -> None:
                 st.info("Files not yet written — flow is running, please wait.")
         else:
             st.info("Output folder not yet created — flow is running, please wait.")
+
+    # ════════════════════════════════════════════════════════════════════════════
+    st.divider()
+    st.markdown("## CRS Management")
+
+    # ── Section A: CRS Import ─────────────────────────────────────────────────
+    section("Import CRS Comments")
+
+    try:
+        crs_data_dir = load_config().get("storage", {}).get("crs_data_dir", "")
+    except Exception:
+        crs_data_dir = ""
+
+    revisions = _scan_crs_revisions(crs_data_dir) if crs_data_dir else []
+    no_files  = not revisions
+
+    col_sel, col_btn = st.columns([4, 1])
+    with col_sel:
+        selected_rev = st.selectbox(
+            "CRS Revision", options=revisions if revisions else ["—"],
+            disabled=no_files, key="crs_rev_sel",
+        )
+        if no_files:
+            st.warning(f"No CRS files found in {crs_data_dir or '<crs_data_dir not set>'}")
+        c_refresh, _ = st.columns([1, 8])
+        if c_refresh.button("🔄", key="crs_rev_refresh", help="Rescan directory"):
+            st.cache_data.clear()
+            st.rerun()
+
+    proceed_allowed = not no_files
+    if not no_files and selected_rev and selected_rev != "—":
+        df_existing = db_read(
+            "SELECT status, COUNT(*) AS cnt FROM audit_core.crs_comment "
+            "WHERE revision = :rev GROUP BY status ORDER BY status",
+            {"rev": selected_rev},
+            admin=True,
+        )
+        if not df_existing.empty:
+            total = int(df_existing["cnt"].sum())
+            st.warning(
+                f"Revision **{selected_rev}** already has **{total}** comments in DB. "
+                "Re-importing will overwrite existing data."
+            )
+            st.dataframe(df_existing, hide_index=True, use_container_width=True)
+            proceed_allowed = st.checkbox(
+                "I understand — proceed with import", key="crs_import_confirm"
+            )
+
+    with col_btn:
+        run_btn = st.button(
+            "Load Revision", type="primary",
+            disabled=(no_files or not proceed_allowed or st.session_state["crs_import_running"]),
+            key="crs_import_run",
+        )
+
+    if run_btn and not st.session_state["crs_import_running"]:
+        st.session_state["crs_import_running"] = True
+        st.session_state["crs_log_done"] = False
+        st.session_state["crs_log_rc"] = None
+        st.session_state["crs_log"] = []
+        log("info", f"Starting CRS import for revision {selected_rev}", "crs_log")
+        t = threading.Thread(
+            target=_run_crs_import, args=(selected_rev, "crs_log"), daemon=True,
+        )
+        t.start()
+        st.rerun()
+
+    if st.session_state["crs_import_running"]:
+        if not st.session_state["crs_log_done"]:
+            with st.spinner(f"Importing CRS revision {selected_rev}…"):
+                time.sleep(2)
+                st.rerun()
+        else:
+            st.session_state["crs_import_running"] = False
+            rc = st.session_state.get("crs_log_rc", -1)
+            if rc == 0:
+                st.success(f"Import completed successfully (rc={rc})")
+                log("ok", f"CRS import finished rc={rc}", "crs_log")
+                _trigger_crs_classify(selected_rev)
+            else:
+                st.error(f"Import failed (rc={rc}) — check log below")
+                log("err", f"CRS import failed rc={rc}", "crs_log")
+
+    # CRS Execution Log
+    section("CRS Execution Log")
+    render_log("crs_log")
+    c_clr, _ = st.columns([1, 8])
+    if c_clr.button("Clear", key="crs_log_clr"):
+        st.session_state["crs_log"] = []
+        st.session_state["crs_log_done"] = False
+        st.session_state["crs_log_rc"] = None
+        st.rerun()
+
+    # ── Section B: Validate (stub) ─────────────────────────────────────────────
+    section("Validate CRS Comments")
+    st.info("🚧 Validation not yet implemented. This button will trigger the "
+            "CRS validation Prefect flow in a future release.")
+    st.button("Validate", disabled=True, key="btn_crs_validate")
+
+    # ── Section C: Export (stub) ───────────────────────────────────────────────
+    section("Export CRS Comments")
+    st.info("🚧 Export not yet implemented. Will generate a structured XLSX with "
+            "classification results, LLM responses, and validation outcomes.")
+    st.button("Export CRS Report", disabled=True, key="btn_crs_export")
+
 
 def _trigger_export(rev: str) -> None:
     """Trigger the master EIS package export deployment."""
