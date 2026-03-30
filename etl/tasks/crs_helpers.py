@@ -46,17 +46,26 @@ def get_engine() -> Engine:
 # Load comments
 # ---------------------------------------------------------------------------
 
-def load_received_comments(limit: int, engine: Engine) -> list[dict[str, Any]]:
+def load_received_comments(
+    limit: int,
+    engine: Engine,
+    revision_filter: str | None = None,
+) -> list[dict[str, Any]]:
     """Fetch crs_comment rows with status='RECEIVED' for classification.
 
     Args:
         limit: Maximum rows to fetch (use 100 for smoke tests, 5000+ for batches).
         engine: SQLAlchemy engine.
+        revision_filter: Optional revision code to restrict scope (e.g. 'A36').
+                         When provided, only comments from that revision are loaded.
+                         When None (default), all RECEIVED comments are loaded.
 
     Returns:
         List of row dicts with all crs_comment columns.
     """
-    sql = text("""
+    revision_clause = "AND revision = :revision" if revision_filter else ""
+
+    sql = text(f"""
         SELECT
             id,
             crs_doc_number,
@@ -75,11 +84,17 @@ def load_received_comments(limit: int, engine: Engine) -> list[dict[str, Any]]:
         FROM audit_core.crs_comment
         WHERE status = 'RECEIVED'
           AND object_status = 'Active'
+          {revision_clause}
         ORDER BY crs_doc_number, id
         LIMIT :lim
     """)
+
+    params: dict[str, Any] = {"lim": limit}
+    if revision_filter:
+        params["revision"] = revision_filter
+
     with engine.connect() as conn:
-        rows = conn.execute(sql, {"lim": limit}).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return [dict(row._mapping) for row in rows]
 
 
