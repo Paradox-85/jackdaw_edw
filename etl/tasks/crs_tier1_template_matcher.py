@@ -22,6 +22,7 @@ from difflib import SequenceMatcher
 from typing import Any
 
 from prefect import task, get_run_logger
+from prefect.cache_policies import NO_CACHE
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
@@ -118,7 +119,7 @@ def _load_templates(engine: Engine) -> list[dict[str, Any]]:
 # Prefect task
 # ---------------------------------------------------------------------------
 
-@task(name="tier1-template-matcher")
+@task(name="tier1-template-matcher", cache_policy=NO_CACHE)
 def run_tier1(
     comments: list[dict[str, Any]],
     engine: Engine,
@@ -178,7 +179,8 @@ def run_tier1(
                 "category_confidence":     score,
                 "classification_tier":     1,
                 "template_id":             str(template["id"]),
-                "status":                  "CLASSIFIED",
+                # IN_REVIEW: valid status in crs_comment_status_check constraint
+                "status":                  "IN_REVIEW",
             })
         else:
             unmatched.append(comment)
