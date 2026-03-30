@@ -206,7 +206,7 @@ if __name__ == "__main__":
             source=str(_REPO_ROOT),
             entrypoint="etl/flows/classify_crs_comments.py:classify_crs_comments_cascade",
         ).deploy(
-            name="9_classify-crs-comments-cascade",
+            name="classify_crs_comments_cascade",
             work_pool_name="default-agent-pool",
             parameters={"limit": 0, "batch_size": 500, "revision_filter": None},
         )

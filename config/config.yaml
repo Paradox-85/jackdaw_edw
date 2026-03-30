@@ -22,3 +22,12 @@ storage:
   prop_dataset_file: "/mnt/shared-data/ram-user/Jackdaw/Master-Data/_master/data/TagProperties-rdl.xlsx"
   export_dir: "/mnt/shared-data/ram-user/Jackdaw/Export/EIS"
   crs_data_dir: "/mnt/shared-data/ram-user/Jackdaw/EIS-Data"
+
+llm:
+  base_url: "http://10.10.10.50:8081/v1"      # inside docker network
+  external_url: "https://llm.adzv-pt.dev/v1"  # for external access (e.g., from local machine or other services)
+  model: "qwen35-27b"
+  api_key: "none"
+  temperature: 0.1
+  max_tokens: 256
+  timeout: 120
