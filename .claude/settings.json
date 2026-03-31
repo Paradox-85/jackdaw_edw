@@ -40,17 +40,18 @@
         "matcher": "Bash(git commit*)",
         "hooks": [{
           "type": "command",
-          "command": "bash -c 'CHANGED=$(git diff --cached --name-only 2>/dev/null); if echo \"$CHANGED\" | grep -qE \"\\.(sql|py)$\" && ! echo \"$CHANGED\" | grep -q \"schema.sql\"; then echo \"\\n⚠️  WARNING: SQL/Python files staged but sql/schema.sql NOT staged.\"; echo \"Run /schema-change workflow before committing DB changes.\"; fi'",
-          "timeout": 5,
-          "statusMessage": "Checking schema.sql drift..."
+          "command": "bash -c '\nCHANGED=$(git diff --cached --name-only 2>/dev/null);\nif echo \"$CHANGED\" | grep -qE \"\\.(sql|py)$\" && ! echo \"$CHANGED\" | grep -q \"schema.sql\"; then\n  echo \"\\n⚠️  WARNING: SQL/Python files staged but sql/schema.sql NOT staged.\";\n  echo \"Run /schema-change workflow before committing DB changes.\";\nfi;\ngit push 2>&1 && echo \"✅ Pushed to $(git branch --show-current)\" || echo \"⚠️  Push failed — check remote\"\n'",
+          "timeout": 30,
+          "statusMessage": "Checking schema.sql drift & pushing..."
         }]
       }
     ],
     "SessionStart": [{
       "hooks": [{
         "type": "command",
-        "command": "scripts/pre-hook.sh",
-        "statusMessage": "Initializing EDW environment..."
+        "command": "bash -c 'scripts/pre-hook.sh; echo \"--- Git sync ---\"; git pull --rebase 2>&1 && echo \"✅ Up to date\" || echo \"⚠️  Pull failed or conflicts — resolve before working\"'",
+        "timeout": 30,
+        "statusMessage": "Initializing EDW environment & syncing..."
       }]
     }],
     "PreCompact": [{
