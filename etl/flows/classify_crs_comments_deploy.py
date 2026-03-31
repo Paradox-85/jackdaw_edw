@@ -183,37 +183,39 @@ if __name__ == "__main__":
         description="CRS Phase 2 — 4-tier cascade comment classifier"
     )
     parser.add_argument(
+        "--run", action="store_true",
+        help="Run classifier directly (local execution). Default behaviour (no flags) registers deployment.",
+    )
+    parser.add_argument(
         "--limit", type=int, default=0,
-        help="Max comments to process (0 = all RECEIVED). Use 100 for smoke tests.",
+        help="Max comments to process (0 = all RECEIVED). Used with --run.",
     )
     parser.add_argument(
         "--batch-size", type=int, default=500,
-        help="Comments per processing batch (default 500).",
+        help="Comments per processing batch (default 500). Used with --run.",
     )
     parser.add_argument(
         "--revision", type=str, default=None,
-        help="Restrict to a single revision code, e.g. A36. Default: all RECEIVED.",
-    )
-    parser.add_argument(
-        "--deploy", action="store_true",
-        help="Register as a Prefect deployment instead of running immediately.",
+        help="Restrict to a single revision code, e.g. A36. Used with --run.",
     )
 
     args = parser.parse_args()
 
-    if args.deploy:
-        classify_crs_comments_cascade.from_source(
-            source=str(_REPO_ROOT),
-            entrypoint="etl/flows/classify_crs_comments.py:classify_crs_comments_cascade",
-        ).deploy(
-            name="classify_crs_comments_cascade",
-            work_pool_name="default-agent-pool",
-            parameters={"limit": 0, "batch_size": 500, "revision_filter": None},
-        )
-    else:
+    if args.run:
         result = classify_crs_comments_cascade(
             limit=args.limit,
             batch_size=args.batch_size,
             revision_filter=args.revision,
         )
         print(result)
+    else:
+        # Default: register Prefect deployment.
+        # Called without args by deploy_all.py — must deploy, not run.
+        classify_crs_comments_cascade.from_source(
+            source=str(_REPO_ROOT),
+            entrypoint="etl/flows/classify_crs_comments_deploy.py:classify_crs_comments_cascade",
+        ).deploy(
+            name="classify_crs_comments_cascade",
+            work_pool_name="default-agent-pool",
+            parameters={"limit": 0, "batch_size": 500, "revision_filter": None},
+        )

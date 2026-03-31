@@ -20,7 +20,7 @@ from pathlib import Path
 import streamlit as st
 from ui.common import (
     CRS_DATA_DIR, EIS_EXPORT_DIR, db_read, db_write,
-    get_flow_run_status, log, render_log,
+    get_flow_run_status, is_admin, log, render_log,
     section, trigger_deployment, prefect_post,
 )
 
@@ -58,6 +58,10 @@ _STATE_COLOR = {
 }
 
 _TOTAL_STEPS = 11
+
+# Exact Prefect deployment name for CRS classification
+# Registered by etl/flows/classify_crs_comments_deploy.py
+_CRS_CLASSIFY_DEPLOYMENT = "classify_crs_comments_cascade"
 
 
 @st.cache_data(ttl=120)
@@ -107,8 +111,8 @@ def _run_crs_import(rev: str, log_key: str) -> None:
 
 
 def _trigger_crs_classify(rev: str) -> None:
-    """Trigger classify-crs-comments-deployment; log warning if not registered."""
-    result = trigger_deployment("classify-crs-comments-deployment", {"revision": rev})
+    """Trigger classify_crs_comments_cascade deployment; log warning if not registered."""
+    result = trigger_deployment(_CRS_CLASSIFY_DEPLOYMENT, {"revision_filter": rev})
     if result and "id" in result:
         log("ok", f"Classification scheduled — ID: {result['id'][:8]}", "crs_log")
     else:
@@ -197,6 +201,46 @@ def _reset_crs_classification(rev: str, log_key: str) -> None:
     log("ok",
         f"Reset complete — {len(ids)} comment(s) cleared for revision {rev}",
         log_key)
+
+
+def _crs_needs_reset_count(rev: str) -> tuple[int, int]:
+    """
+    Return (total_active, needs_reset_count) for given revision.
+
+    needs_reset_count > 0 means at least one comment has classification data
+    that has not yet been cleared (status != RECEIVED or classification fields non-null).
+    Uses migration guard — only checks columns that actually exist.
+    """
+    df_cols = db_read(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = 'audit_core' AND table_name = 'crs_comment' "
+        "AND column_name = ANY(:cols)",
+        {"cols": ["classification_tier", "classification_template",
+                  "llm_response", "llm_response_timestamp"]},
+        admin=True,
+    )
+    existing = set(df_cols["column_name"].tolist()) if not df_cols.empty else set()
+
+    # A comment needs reset if its status is no longer RECEIVED OR any classification
+    # field has been written (non-null)
+    cond_parts = ["status != 'RECEIVED'"]
+    for col in ["classification_tier", "classification_template",
+                "llm_response", "llm_response_timestamp"]:
+        if col in existing:
+            cond_parts.append(f"{col} IS NOT NULL")
+    needs_reset_cond = " OR ".join(cond_parts)
+
+    df = db_read(
+        f"SELECT COUNT(*) AS total, "
+        f"COUNT(*) FILTER (WHERE {needs_reset_cond}) AS needs_reset "
+        f"FROM audit_core.crs_comment "
+        f"WHERE revision = :rev AND object_status = 'Active'",
+        {"rev": rev},
+        admin=True,
+    )
+    if df.empty:
+        return 0, 0
+    return int(df["total"].iloc[0]), int(df["needs_reset"].iloc[0])
 
 
 def _fetch_export_deployments():
@@ -291,8 +335,8 @@ def _log_child_changes(children: list[dict]) -> None:
     st.session_state["_eis_child_snapshot"] = curr
 
 def render() -> None:
-    st.markdown("### 📤 EIS Management")
-    st.caption("Export EIS data packages · Revision control · Prefect orchestration")
+    st.markdown("### 📤 EIS & CRS Management")
+    st.caption("Export EIS data packages · CRS classification · Revision control · Prefect orchestration")
 
     for _k, _v in [
         ("crs_log", []), ("crs_import_running", False),
@@ -307,443 +351,520 @@ def render() -> None:
         if _k not in st.session_state:
             st.session_state[_k] = _v
 
-    # ── Export Deployments ────────────────────────────────────────────────────
-    section("Export Deployments")
-    if st.button("⟳", key="eis_dep_refresh", help="Refresh deployment list"):
-        st.rerun()
-    df_deps = _fetch_export_deployments()
-    if not df_deps.empty:
-        st.dataframe(df_deps, use_container_width=True, hide_index=True)
-    else:
-        st.caption("⚠ No export deployments found in Prefect — run `python scripts/deploy_all.py` to register them.")
+    # ════════════════════════════════════════════════════════════════════════════
+    with st.expander("📤 EIS Management", expanded=False):
 
-    # ── Run Export ────────────────────────────────────────────────────────────
-    section("Run Export")
-    col_l, col_r = st.columns([2, 1], gap="large")
+        # ── Export Deployments ────────────────────────────────────────────────────
+        section("Export Deployments")
+        if st.button("⟳", key="eis_dep_refresh", help="Refresh deployment list"):
+            st.rerun()
+        df_deps = _fetch_export_deployments()
+        if not df_deps.empty:
+            st.dataframe(df_deps, use_container_width=True, hide_index=True)
+        else:
+            st.caption("⚠ No export deployments found in Prefect — run `python scripts/deploy_all.py` to register them.")
 
-    with col_l:
-        st.caption(
-            "Triggers **EIS Full Package Export** — all 11 export flows run sequentially: "
-            "Tag Register (003) · Equipment Register (004) · Model Part (209) · "
-            "Tag Connections (212) · Purchase Order (214) · Area Register (203) · "
-            "Process Unit (204) · Tag Properties (303) · Equipment Properties (301) · "
-            "Tag Class Properties (307) · Document Cross-References (408–420)."
-        )
+        # ── Run Export ────────────────────────────────────────────────────────────
+        section("Run Export")
+        col_l, col_r = st.columns([2, 1], gap="large")
 
-    with col_r:
-        rev = st.text_input(
-            "Document revision", value="A35",
-            help="Format: [A-Z]\\d{2} e.g. A35",
-            key="eis_rev",
-        )
-        rev_err = None if _REV_RE.match(rev) else f"Invalid revision '{rev}' — expected e.g. A35"
-        if rev_err:
-            st.warning(rev_err)
-
-        if st.button("▶ Run Export", type="primary", use_container_width=True,
-                     disabled=bool(rev_err), key="btn_eis_run"):
-            _trigger_export(rev)
-
-    # ── Execution Log ─────────────────────────────────────────────────────────
-    section("Execution Log")
-    render_log("eis_log")
-    if st.button("Clear", key="eis_clr"):
-        st.session_state["eis_log"] = []
-        st.rerun()
-
-    # ── Export Progress ───────────────────────────────────────────────────────
-    section("Export Progress")
-    # Create placeholder for log BEFORE calling _poll_run
-    # It will be updated immediately after writing new lines
-    _log_placeholder = st.empty()
-    run = _poll_run()
-
-    if not run:
-        st.caption("No active export. Trigger a run above.")
-    else:
-        state      = run["state"]
-        state_name = run.get("state_name", state)
-        is_terminal = state in _TERMINAL_STATES
-        color = _STATE_COLOR.get(state, "#8B949E")
-
-        st.markdown(
-            f'<span style="color:{color};font-weight:600;font-size:14px">'
-            f'● {state_name}</span>'
-            f' &nbsp; <span style="color:#8B949E">{run["name"]}</span>',
-            unsafe_allow_html=True,
-        )
-
-        # Real progress via child flow runs
-        if run.get("run_id") and not is_terminal:
-            children  = _fetch_child_runs(run["run_id"])
-            _log_child_changes(children)
-            completed = sum(
-                1 for c in children
-                if (c.get("state") or {}).get("type") == "COMPLETED"
+        with col_l:
+            st.caption(
+                "Triggers **EIS Full Package Export** — all 11 export flows run sequentially: "
+                "Tag Register (003) · Equipment Register (004) · Model Part (209) · "
+                "Tag Connections (212) · Purchase Order (214) · Area Register (203) · "
+                "Process Unit (204) · Tag Properties (303) · Equipment Properties (301) · "
+                "Tag Class Properties (307) · Document Cross-References (408–420)."
             )
-            if len(children) == 0:
-                progress_val = 0.02
-                step_label   = "waiting for first step…"
-            else:
-                progress_val = completed / _TOTAL_STEPS
-                step_label   = f"{completed}/{_TOTAL_STEPS}"
-            
-            if completed >= _TOTAL_STEPS and len(children) >= _TOTAL_STEPS:
-                log("ok", "[parent] all subflows completed → forcibly COMPLETED", "eis_log")
-                run = {**run, "state": "COMPLETED", "state_name": "Completed"}
-                st.session_state["export_run"] = run
-                state      = "COMPLETED"
-                is_terminal = True
+
+        with col_r:
+            rev = st.text_input(
+                "Document revision", value="A35",
+                help="Format: [A-Z]\\d{2} e.g. A35",
+                key="eis_rev",
+            )
+            rev_err = None if _REV_RE.match(rev) else f"Invalid revision '{rev}' — expected e.g. A35"
+            if rev_err:
+                st.warning(rev_err)
+
+            if st.button("▶ Run Export", type="primary", use_container_width=True,
+                         disabled=bool(rev_err), key="btn_eis_run"):
+                _trigger_export(rev)
+
+        # ── Execution Log ─────────────────────────────────────────────────────────
+        section("Execution Log")
+        render_log("eis_log")
+        if st.button("Clear", key="eis_clr"):
+            st.session_state["eis_log"] = []
+            st.rerun()
+
+        # ── Export Progress ───────────────────────────────────────────────────────
+        section("Export Progress")
+        # Create placeholder for log BEFORE calling _poll_run
+        # It will be updated immediately after writing new lines
+        _log_placeholder = st.empty()
+        run = _poll_run()
+
+        if not run:
+            st.caption("No active export. Trigger a run above.")
+        else:
+            state      = run["state"]
+            state_name = run.get("state_name", state)
+            is_terminal = state in _TERMINAL_STATES
+            color = _STATE_COLOR.get(state, "#8B949E")
+
+            st.markdown(
+                f'<span style="color:{color};font-weight:600;font-size:14px">'
+                f'● {state_name}</span>'
+                f' &nbsp; <span style="color:#8B949E">{run["name"]}</span>',
+                unsafe_allow_html=True,
+            )
+
+            # Real progress via child flow runs
+            if run.get("run_id") and not is_terminal:
+                children  = _fetch_child_runs(run["run_id"])
+                _log_child_changes(children)
+                completed = sum(
+                    1 for c in children
+                    if (c.get("state") or {}).get("type") == "COMPLETED"
+                )
+                if len(children) == 0:
+                    progress_val = 0.02
+                    step_label   = "waiting for first step…"
+                else:
+                    progress_val = completed / _TOTAL_STEPS
+                    step_label   = f"{completed}/{_TOTAL_STEPS}"
+
+                if completed >= _TOTAL_STEPS and len(children) >= _TOTAL_STEPS:
+                    log("ok", "[parent] all subflows completed → forcibly COMPLETED", "eis_log")
+                    run = {**run, "state": "COMPLETED", "state_name": "Completed"}
+                    st.session_state["export_run"] = run
+                    state      = "COMPLETED"
+                    is_terminal = True
+                    progress_val = 1.0
+                    step_label   = f"{_TOTAL_STEPS}/{_TOTAL_STEPS}"
+
+                with st.expander("🔍 Debug: raw Prefect data", expanded=False):
+                    st.write("**Parent run state:**", run)
+                    st.write("**Child runs:**", [
+                        {
+                            "name":  c.get("name") or c.get("flow_run_name", "")[:30],
+                            "state": (c.get("state") or {}).get("type", "?"),
+                            "end":   (c.get("end_time") or "")[:19],
+                            "dur":   c.get("total_run_time"),
+                        }
+                        for c in children
+                    ])
+            elif state == "COMPLETED":
                 progress_val = 1.0
                 step_label   = f"{_TOTAL_STEPS}/{_TOTAL_STEPS}"
+            else:
+                progress_val = 0.0
+                step_label   = "failed"
 
-            with st.expander("🔍 Debug: raw Prefect data", expanded=False):
-                st.write("**Parent run state:**", run)
-                st.write("**Child runs:**", [
-                    {
-                        "name":  c.get("name") or c.get("flow_run_name", "")[:30],
-                        "state": (c.get("state") or {}).get("type", "?"),
-                        "end":   (c.get("end_time") or "")[:19],
-                        "dur":   c.get("total_run_time"),
-                    }
-                    for c in children
-                ])
-        elif state == "COMPLETED":
-            progress_val = 1.0
-            step_label   = f"{_TOTAL_STEPS}/{_TOTAL_STEPS}"
-        else:
-            progress_val = 0.0
-            step_label   = "failed"
+            st.progress(progress_val, text=f"Steps: {step_label}")
 
-        st.progress(progress_val, text=f"Steps: {step_label}")
+            if state in ("FAILED", "CRASHED"):
+                st.error("Export failed — check Prefect logs for details.")
+            elif state == "CANCELLED":
+                st.warning("Export was cancelled.")
+            elif state == "PAUSED":
+                st.warning("Export is paused — waiting for manual approval in Prefect UI.")
+            elif state_name == "Late":
+                st.warning("Run is late — check that workers are healthy and polling.")
 
-        if state in ("FAILED", "CRASHED"):
-            st.error("Export failed — check Prefect logs for details.")
-        elif state == "CANCELLED":
-            st.warning("Export was cancelled.")
-        elif state == "PAUSED":
-            st.warning("Export is paused — waiting for manual approval in Prefect UI.")
-        elif state_name == "Late":
-            st.warning("Run is late — check that workers are healthy and polling.")
-
-        if is_terminal:
-            # One final rerun to re-render the Download section with updated state
-            if not st.session_state.get("_eis_final_rerun_done"):
-                st.session_state["_eis_final_rerun_done"] = True
+            if is_terminal:
+                # One final rerun to re-render the Download section with updated state
+                if not st.session_state.get("_eis_final_rerun_done"):
+                    st.session_state["_eis_final_rerun_done"] = True
+                    st.rerun()
+            elif state not in _WARN_STATES:
+                time.sleep(5)
                 st.rerun()
-        elif state not in _WARN_STATES:
-            time.sleep(5)
-            st.rerun()
 
-    # ── Download Exported Files ───────────────────────────────────────────────
-    section("Download Exported Files")
-    last        = st.session_state.get("last_export")
-    current_run = st.session_state.get("export_run")
-    any_completed = current_run is not None and current_run["state"] == "COMPLETED"
+        # ── Download Exported Files ───────────────────────────────────────────────
+        section("Download Exported Files")
+        last        = st.session_state.get("last_export")
+        current_run = st.session_state.get("export_run")
+        any_completed = current_run is not None and current_run["state"] == "COMPLETED"
 
-    if not last or not any_completed:
-        if last and current_run:
-            st.caption("Waiting for export to complete before download is available.")
-        else:
-            st.caption("Run an export to generate files.")
-    else:
-        export_path = Path(last["folder"])
-        rev = last["revision"]
-        triggered_at = last["triggered_at"].strftime("%Y-%m-%d %H:%M")
-        st.caption(f"Revision `{rev}` · Triggered: {triggered_at} · `{last['folder']}`")
-        if export_path.exists():
-            rev_upper = rev.upper()
-            all_csvs  = list(export_path.glob("*.CSV")) if export_path.exists() else []
-
-            # Priority 1: by revision mask in file name
-            by_rev = [f for f in all_csvs if rev_upper in f.name.upper()]
-            # Fallback: by triggered time if mask did not yield results
-            if by_rev:
-                files = sorted(by_rev, key=lambda f: f.stat().st_mtime, reverse=True)
+        if not last or not any_completed:
+            if last and current_run:
+                st.caption("Waiting for export to complete before download is available.")
             else:
-                triggered_ts = last["triggered_at"].timestamp()
-                files = sorted(
-                    [f for f in all_csvs if f.stat().st_mtime >= triggered_ts - 30],
-                    key=lambda f: f.stat().st_mtime,
-                    reverse=True,
-                )
-            if files:
-                zip_buf = _io.BytesIO()
-                with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                st.caption("Run an export to generate files.")
+        else:
+            export_path = Path(last["folder"])
+            rev = last["revision"]
+            triggered_at = last["triggered_at"].strftime("%Y-%m-%d %H:%M")
+            st.caption(f"Revision `{rev}` · Triggered: {triggered_at} · `{last['folder']}`")
+            if export_path.exists():
+                rev_upper = rev.upper()
+                all_csvs  = list(export_path.glob("*.CSV")) if export_path.exists() else []
+
+                # Priority 1: by revision mask in file name
+                by_rev = [f for f in all_csvs if rev_upper in f.name.upper()]
+                # Fallback: by triggered time if mask did not yield results
+                if by_rev:
+                    files = sorted(by_rev, key=lambda f: f.stat().st_mtime, reverse=True)
+                else:
+                    triggered_ts = last["triggered_at"].timestamp()
+                    files = sorted(
+                        [f for f in all_csvs if f.stat().st_mtime >= triggered_ts - 30],
+                        key=lambda f: f.stat().st_mtime,
+                        reverse=True,
+                    )
+                if files:
+                    zip_buf = _io.BytesIO()
+                    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                        for fpath in files:
+                            zf.write(fpath, fpath.name)
+                    col_zip, _ = st.columns([2, 6])
+                    col_zip.download_button(
+                        "⬇ Download All (ZIP)",
+                        data=zip_buf.getvalue(),
+                        file_name=f"eis_export_{rev}_{datetime.now():%Y%m%d_%H%M}.zip",
+                        mime="application/zip",
+                        key="dl_all_zip",
+                    )
                     for fpath in files:
-                        zf.write(fpath, fpath.name)
-                col_zip, _ = st.columns([2, 6])
-                col_zip.download_button(
-                    "⬇ Download All (ZIP)",
-                    data=zip_buf.getvalue(),
-                    file_name=f"eis_export_{rev}_{datetime.now():%Y%m%d_%H%M}.zip",
-                    mime="application/zip",
-                    key="dl_all_zip",
-                )
-                for fpath in files:
-                    col_name, col_dl = st.columns([5, 1])
-                    col_name.caption(
-                        f"`{fpath.name}` · {fpath.stat().st_size // 1024} KB · "
-                        f"{datetime.fromtimestamp(fpath.stat().st_mtime):%Y-%m-%d %H:%M}"
-                    )
-                    col_dl.download_button(
-                        "⬇",
-                        data=fpath.read_bytes(),
-                        file_name=fpath.name,
-                        key=f"dl_{fpath.name}",
-                    )
+                        col_name, col_dl = st.columns([5, 1])
+                        col_name.caption(
+                            f"`{fpath.name}` · {fpath.stat().st_size // 1024} KB · "
+                            f"{datetime.fromtimestamp(fpath.stat().st_mtime):%Y-%m-%d %H:%M}"
+                        )
+                        col_dl.download_button(
+                            "⬇",
+                            data=fpath.read_bytes(),
+                            file_name=fpath.name,
+                            key=f"dl_{fpath.name}",
+                        )
+                else:
+                    st.info("Files not yet written — flow is running, please wait.")
             else:
-                st.info("Files not yet written — flow is running, please wait.")
-        else:
-            st.info("Output folder not yet created — flow is running, please wait.")
+                st.info("Output folder not yet created — flow is running, please wait.")
 
     # ════════════════════════════════════════════════════════════════════════════
-    st.divider()
-    st.markdown("## CRS Management")
+    with st.expander("🗂 CRS Management", expanded=True):
 
-    # ── Section A: CRS Import ─────────────────────────────────────────────────
-    section("Import CRS Comments")
+        can_manage_crs = is_admin()
+        if not can_manage_crs:
+            st.caption("🔒 Admin access required for CRS management actions.")
 
-    crs_data_dir = CRS_DATA_DIR
-    revisions = _scan_crs_revisions(crs_data_dir) if crs_data_dir else []
-    no_files  = not revisions
+        # ── Section A: CRS Import ─────────────────────────────────────────────────
+        section("Import CRS Comments")
 
-    col_sel, col_btn = st.columns([4, 1])
-    with col_sel:
-        selected_rev = st.selectbox(
-            "CRS Revision", options=revisions if revisions else ["—"],
-            disabled=no_files, key="crs_rev_sel",
-        )
-        if no_files:
-            st.warning(f"No CRS files found in {crs_data_dir or '<crs_data_dir not set>'}")
-        c_refresh, _ = st.columns([1, 8])
-        if c_refresh.button("🔄", key="crs_rev_refresh", help="Rescan directory"):
-            st.cache_data.clear()
-            st.rerun()
+        crs_data_dir = CRS_DATA_DIR
+        revisions = _scan_crs_revisions(crs_data_dir) if crs_data_dir else []
+        no_files  = not revisions
 
-    proceed_allowed = not no_files
-    if not no_files and selected_rev and selected_rev != "—":
-        df_existing = db_read(
-            "SELECT status, COUNT(*) AS cnt FROM audit_core.crs_comment "
-            "WHERE revision = :rev GROUP BY status ORDER BY status",
-            {"rev": selected_rev},
-            admin=True,
-        )
-        if not df_existing.empty:
-            total = int(df_existing["cnt"].sum())
-            st.warning(
-                f"Revision **{selected_rev}** already has **{total}** comments in DB. "
-                "Re-importing will overwrite existing data."
+        col_sel, col_btn = st.columns([4, 1])
+        with col_sel:
+            selected_rev = st.selectbox(
+                "CRS Revision", options=revisions if revisions else ["—"],
+                disabled=no_files, key="crs_rev_sel",
             )
-            st.dataframe(df_existing, hide_index=True, use_container_width=True)
-            proceed_allowed = st.checkbox(
-                "I understand — proceed with import", key="crs_import_confirm"
-            )
-
-    with col_btn:
-        run_btn = st.button(
-            "Load Revision", type="primary",
-            disabled=(no_files or not proceed_allowed or st.session_state["crs_import_running"]),
-            key="crs_import_run",
-        )
-
-    if run_btn and not st.session_state["crs_import_running"]:
-        st.session_state["crs_import_running"] = True
-        st.session_state["crs_log_done"] = False
-        st.session_state["crs_log_rc"] = None
-        st.session_state["crs_log"] = []
-        log("info", f"Starting CRS import for revision {selected_rev}", "crs_log")
-        t = threading.Thread(
-            target=_run_crs_import, args=(selected_rev, "crs_log"), daemon=True,
-        )
-        t.start()
-        st.rerun()
-
-    if st.session_state["crs_import_running"]:
-        if not st.session_state["crs_log_done"]:
-            with st.spinner(f"Importing CRS revision {selected_rev}…"):
-                time.sleep(2)
+            if no_files:
+                st.warning(f"No CRS files found in {crs_data_dir or '<crs_data_dir not set>'}")
+            c_refresh, _ = st.columns([1, 8])
+            if c_refresh.button("🔄", key="crs_rev_refresh", help="Rescan directory"):
+                st.cache_data.clear()
                 st.rerun()
-        else:
-            st.session_state["crs_import_running"] = False
-            rc = st.session_state.get("crs_log_rc", -1)
-            if rc == 0:
-                st.success(f"Import completed successfully (rc={rc})")
-                log("ok", f"CRS import finished rc={rc}", "crs_log")
-                _trigger_crs_classify(selected_rev)
-            else:
-                st.error(f"Import failed (rc={rc}) — check log below")
-                log("err", f"CRS import failed rc={rc}", "crs_log")
 
-    # CRS Execution Log
-    section("CRS Execution Log")
-    render_log("crs_log")
-    c_clr, _ = st.columns([1, 8])
-    if c_clr.button("Clear", key="crs_log_clr"):
-        st.session_state["crs_log"] = []
-        st.session_state["crs_log_done"] = False
-        st.session_state["crs_log_rc"] = None
-        st.rerun()
-
-    # ── Section D: Classify CRS Comments ─────────────────────────────────────
-    section("Classify CRS Comments")
-
-    sql_revs    = _sql_crs_revisions()
-    no_sql_revs = not sql_revs
-
-    col_cls_sel, col_cls_refresh, col_cls_btn = st.columns([5, 1, 2])
-
-    with col_cls_sel:
-        classify_rev = st.selectbox(
-            "Revision (from DB)",
-            options=sql_revs if sql_revs else ["—"],
-            disabled=no_sql_revs,
-            key="crs_classify_rev_sel",
-            help="Revisions available in audit_core.crs_comment",
-        )
-
-    with col_cls_refresh:
-        st.markdown("&nbsp;", unsafe_allow_html=True)
-        if st.button("🔄", key="crs_classify_rev_refresh", help="Refresh revision list from DB"):
-            st.cache_data.clear()
-            st.rerun()
-
-    with col_cls_btn:
-        st.markdown("&nbsp;", unsafe_allow_html=True)
-        classify_btn = st.button(
-            "▶ Classify",
-            type="primary",
-            disabled=(no_sql_revs or st.session_state["crs_classify_running"]),
-            key="btn_crs_classify",
-            use_container_width=True,
-        )
-
-    if no_sql_revs:
-        st.info(
-            "No imported CRS revisions found in DB. "
-            "Run **Import CRS Comments** first."
-        )
-    else:
-        try:
-            df_cls_summary = db_read(
-                """
-                SELECT
-                    status                                                      AS "Status",
-                    COUNT(*)                                                    AS "Total",
-                    COUNT(*) FILTER (WHERE classification_tier IS NOT NULL)     AS "Classified",
-                    COUNT(*) FILTER (WHERE classification_tier IS NULL)         AS "Pending"
-                FROM audit_core.crs_comment
-                WHERE revision = :rev
-                GROUP BY status
-                ORDER BY status
-                """,
-                {"rev": classify_rev},
+        proceed_allowed = not no_files
+        if not no_files and selected_rev and selected_rev != "—":
+            df_existing = db_read(
+                "SELECT status, COUNT(*) AS cnt FROM audit_core.crs_comment "
+                "WHERE revision = :rev GROUP BY status ORDER BY status",
+                {"rev": selected_rev},
                 admin=True,
             )
-            if not df_cls_summary.empty:
-                total_rev  = int(df_cls_summary["Total"].sum())
-                total_pend = int(df_cls_summary["Pending"].sum())
-                st.caption(
-                    f"Revision **{classify_rev}**: "
-                    f"**{total_rev}** comments total · "
-                    f"**{total_pend}** pending classification"
+            if not df_existing.empty:
+                total = int(df_existing["cnt"].sum())
+                st.warning(
+                    f"Revision **{selected_rev}** already has **{total}** comments in DB. "
+                    "Re-importing will overwrite existing data."
                 )
-                st.dataframe(df_cls_summary, hide_index=True, use_container_width=True)
-        except Exception:
-            st.warning(
-                "classification_tier column not found — run migration_012+ to enable this view."
+                st.dataframe(df_existing, hide_index=True, use_container_width=True)
+                proceed_allowed = st.checkbox(
+                    "I understand — proceed with import", key="crs_import_confirm"
+                )
+
+        with col_btn:
+            run_btn = st.button(
+                "Load Revision", type="primary",
+                disabled=(no_files or not proceed_allowed or st.session_state["crs_import_running"]),
+                key="crs_import_run",
             )
 
-    if classify_btn and not st.session_state["crs_classify_running"]:
-        st.session_state["crs_classify_running"] = True
-        st.session_state["crs_classify_done"]    = False
-        st.session_state["crs_classify_run_id"]  = None
-        log("info", f"Triggering classification for revision {classify_rev}", "crs_log")
-        result = trigger_deployment(
-            "classify-crs-comments-deployment",
-            {"revision": classify_rev},
-        )
-        if result and "id" in result:
-            run_id = result["id"]
-            st.session_state["crs_classify_run_id"]  = run_id
-            st.session_state["crs_classify_running"] = False
-            st.session_state["crs_classify_done"]    = True
-            log("ok",
-                f"Classification scheduled — deployment ID: {run_id[:8]} rev={classify_rev}",
-                "crs_log")
-            st.success(
-                f"✅ Classification flow scheduled for revision **{classify_rev}**. "
-                f"Run ID: `{run_id[:8]}`"
+        if run_btn and not st.session_state["crs_import_running"]:
+            st.session_state["crs_import_running"] = True
+            st.session_state["crs_log_done"] = False
+            st.session_state["crs_log_rc"] = None
+            st.session_state["crs_log"] = []
+            log("info", f"Starting CRS import for revision {selected_rev}", "crs_log")
+            t = threading.Thread(
+                target=_run_crs_import, args=(selected_rev, "crs_log"), daemon=True,
             )
-        else:
-            st.session_state["crs_classify_running"] = False
-            err = (result.get("error", str(result))
-                   if isinstance(result, dict) else str(result))
-            log("err", f"Classification trigger failed: {err}", "crs_log")
-            st.error(
-                f"❌ Could not schedule classification flow. "
-                f"Check that `classify-crs-comments-deployment` is registered in Prefect. "
-                f"Error: `{err}`"
+            t.start()
+            st.rerun()
+
+        if st.session_state["crs_import_running"]:
+            if not st.session_state["crs_log_done"]:
+                with st.spinner(f"Importing CRS revision {selected_rev}…"):
+                    time.sleep(2)
+                    st.rerun()
+            else:
+                st.session_state["crs_import_running"] = False
+                rc = st.session_state.get("crs_log_rc", -1)
+                if rc == 0:
+                    st.success(f"Import completed successfully (rc={rc})")
+                    log("ok", f"CRS import finished rc={rc}", "crs_log")
+                    _trigger_crs_classify(selected_rev)
+                else:
+                    st.error(f"Import failed (rc={rc}) — check log below")
+                    log("err", f"CRS import failed rc={rc}", "crs_log")
+
+        # CRS Execution Log
+        section("CRS Execution Log")
+        render_log("crs_log")
+        c_clr, _ = st.columns([1, 8])
+        if c_clr.button("Clear", key="crs_log_clr"):
+            st.session_state["crs_log"] = []
+            st.session_state["crs_log_done"] = False
+            st.session_state["crs_log_rc"] = None
+            st.rerun()
+
+        # ── Section D: Classify CRS Comments ─────────────────────────────────────
+        section("Classify CRS Comments")
+
+        sql_revs    = _sql_crs_revisions()
+        no_sql_revs = not sql_revs
+
+        col_cls_sel, col_cls_refresh, col_cls_btn = st.columns([5, 1, 2])
+
+        with col_cls_sel:
+            # Default to the latest (highest) revision; preserve user's current selection
+            _current_classify_rev = st.session_state.get("crs_classify_rev_sel")
+            if sql_revs:
+                _default_idx = len(sql_revs) - 1
+                if _current_classify_rev in sql_revs:
+                    _default_idx = sql_revs.index(_current_classify_rev)
+            else:
+                _default_idx = 0
+
+            classify_rev = st.selectbox(
+                "Revision (from DB)",
+                options=sql_revs if sql_revs else ["—"],
+                index=_default_idx,
+                disabled=no_sql_revs,
+                key="crs_classify_rev_sel",
+                help="Revisions available in audit_core.crs_comment",
             )
 
-    # ── Reset Classification ──────────────────────────────────────────────────
-    st.markdown("---")
-    st.markdown("**⚠ Reset Classification**")
-    st.caption(
-        "Clears `classification_tier`, `classification_template`, `llm_response` "
-        "and resets status to `RECEIVED` for ALL comments in the selected revision. "
-        "This action is logged to `audit_core.crs_comment_audit` and cannot be undone."
-    )
+        with col_cls_refresh:
+            st.markdown("&nbsp;", unsafe_allow_html=True)
+            if st.button("🔄", key="crs_classify_rev_refresh", help="Refresh revision list from DB"):
+                st.cache_data.clear()
+                st.rerun()
 
-    if not no_sql_revs:
-        # Flush pending clear: remove widget key so it re-renders unchecked
-        if st.session_state.pop("_crs_reset_clear", False):
-            st.session_state.pop("crs_reset_confirm", None)
-
-        reset_confirm = st.checkbox(
-            f"I understand — reset classification for revision **{classify_rev}**",
-            key="crs_reset_confirm",
-            value=False,
-        )
-        col_rst_btn, col_rst_info = st.columns([1, 2])
-        with col_rst_btn:
-            reset_btn = st.button(
-                "🔄 Reset",
-                type="secondary",
-                disabled=(not reset_confirm),
-                key="btn_crs_reset",
+        with col_cls_btn:
+            st.markdown("&nbsp;", unsafe_allow_html=True)
+            classify_btn = st.button(
+                "▶ Classify",
+                type="primary",
+                disabled=(no_sql_revs or st.session_state["crs_classify_running"] or not can_manage_crs),
+                key="btn_crs_classify",
                 use_container_width=True,
             )
-        with col_rst_info:
-            if not reset_confirm:
-                st.caption("Check the box above to enable the Reset button.")
 
-        if reset_btn and reset_confirm:
+        if no_sql_revs:
+            st.info(
+                "No imported CRS revisions found in DB. "
+                "Run **Import CRS Comments** first."
+            )
+        else:
             try:
-                with st.spinner(f"Resetting classification for revision {classify_rev}…"):
-                    _reset_crs_classification(classify_rev, "crs_log")
-                st.session_state["_crs_reset_clear"] = True
-                st.session_state["crs_reset_done"] = True
-                st.cache_data.clear()
-                st.success(
-                    f"✅ Classification reset for revision **{classify_rev}**. "
-                    "You can now re-run the Classify flow."
+                df_cls_summary = db_read(
+                    """
+                    SELECT
+                        status                                                      AS "Status",
+                        COUNT(*)                                                    AS "Total",
+                        COUNT(*) FILTER (WHERE classification_tier IS NOT NULL)     AS "Classified",
+                        COUNT(*) FILTER (WHERE classification_tier IS NULL)         AS "Pending"
+                    FROM audit_core.crs_comment
+                    WHERE revision = :rev
+                    GROUP BY status
+                    ORDER BY status
+                    """,
+                    {"rev": classify_rev},
+                    admin=True,
                 )
-                st.rerun()
-            except Exception as exc:
-                st.error(f"❌ Reset failed: {exc}")
+                if not df_cls_summary.empty:
+                    total_rev  = int(df_cls_summary["Total"].sum())
+                    total_pend = int(df_cls_summary["Pending"].sum())
+                    st.caption(
+                        f"Revision **{classify_rev}**: "
+                        f"**{total_rev}** comments total · "
+                        f"**{total_pend}** pending classification"
+                    )
+                    st.dataframe(df_cls_summary, hide_index=True, use_container_width=True)
+            except Exception:
+                st.warning(
+                    "classification_tier column not found — run migration_012+ to enable this view."
+                )
 
-    # ── Section B: Validate (stub) ─────────────────────────────────────────────
-    section("Validate CRS Comments")
-    st.info("🚧 Validation not yet implemented. This button will trigger the "
-            "CRS validation Prefect flow in a future release.")
-    st.button("Validate", disabled=True, key="btn_crs_validate")
+        if classify_btn and not st.session_state["crs_classify_running"]:
+            st.session_state["crs_classify_running"] = True
+            st.session_state["crs_classify_done"]    = False
+            st.session_state["crs_classify_run_id"]  = None
+            log("info", f"Triggering classification for revision {classify_rev}", "crs_log")
+            result = trigger_deployment(
+                _CRS_CLASSIFY_DEPLOYMENT,
+                {"revision_filter": classify_rev},
+            )
+            if result and "id" in result:
+                run_id = result["id"]
+                st.session_state["crs_classify_run_id"]  = run_id
+                st.session_state["crs_classify_running"] = False
+                st.session_state["crs_classify_done"]    = True
+                log("ok",
+                    f"Classification scheduled — deployment ID: {run_id[:8]} rev={classify_rev}",
+                    "crs_log")
+                st.success(
+                    f"✅ Classification flow scheduled for revision **{classify_rev}**. "
+                    f"Run ID: `{run_id[:8]}`"
+                )
+            else:
+                st.session_state["crs_classify_running"] = False
+                err = (result.get("error", str(result))
+                       if isinstance(result, dict) else str(result))
+                log("err", f"Classification trigger failed: {err}", "crs_log")
+                st.error(
+                    f"❌ Could not schedule classification flow. "
+                    f"Check that `{_CRS_CLASSIFY_DEPLOYMENT}` is registered in Prefect "
+                    f"(run `python scripts/deploy_all.py`). "
+                    f"Error: `{err}`"
+                )
 
-    # ── Section C: Export (stub) ───────────────────────────────────────────────
-    section("Export CRS Comments")
-    st.info("🚧 Export not yet implemented. Will generate a structured XLSX with "
-            "classification results, LLM responses, and validation outcomes.")
-    st.button("Export CRS Report", disabled=True, key="btn_crs_export")
+        # ── Reset Classification ──────────────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("**⚠ Reset Classification**")
+        st.caption(
+            "Clears `classification_tier`, `classification_template`, `llm_response` "
+            "and resets status to `RECEIVED` for ALL comments in the selected revision. "
+            "This action is logged to `audit_core.crs_comment_audit` and cannot be undone."
+        )
+
+        if not no_sql_revs:
+            # Flush pending clear: remove widget key so it re-renders unchecked
+            if st.session_state.pop("_crs_reset_clear", False):
+                st.session_state.pop("crs_reset_confirm", None)
+
+            # Determine how many comments actually need resetting
+            _total_active, _needs_reset = _crs_needs_reset_count(classify_rev)
+            _nothing_to_reset = (_needs_reset == 0)
+
+            if _nothing_to_reset:
+                st.caption(f"All comments for revision **{classify_rev}** are already reset.")
+            else:
+                st.caption(f"**{_needs_reset}** of {_total_active} comments can still be reset.")
+
+            reset_confirm = st.checkbox(
+                f"I understand — reset classification for revision **{classify_rev}**",
+                key="crs_reset_confirm",
+                value=False,
+            )
+            col_rst_btn, col_rst_info = st.columns([1, 2])
+            with col_rst_btn:
+                reset_btn = st.button(
+                    "🔄 Reset",
+                    type="secondary",
+                    disabled=(not reset_confirm or _nothing_to_reset or not can_manage_crs),
+                    key="btn_crs_reset",
+                    use_container_width=True,
+                )
+            with col_rst_info:
+                if not reset_confirm and not _nothing_to_reset:
+                    st.caption("Check the box above to enable the Reset button.")
+
+            if reset_btn and reset_confirm:
+                try:
+                    with st.spinner(f"Resetting classification for revision {classify_rev}…"):
+                        _reset_crs_classification(classify_rev, "crs_log")
+                    st.session_state["_crs_reset_clear"] = True
+                    st.session_state["crs_reset_done"] = True
+                    st.cache_data.clear()
+                    st.success(
+                        f"✅ Classification reset for revision **{classify_rev}**. "
+                        "You can now re-run the Classify flow."
+                    )
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"❌ Reset failed: {exc}")
+
+        # ── Debug: Reset & Reclassify ─────────────────────────────────────────────
+        if is_admin() and not no_sql_revs:
+            st.markdown("---")
+            st.markdown("**🧪 Debug: Reset & Reclassify**")
+            st.caption(
+                "Resets classification fields for the selected revision (same as Reset above), "
+                "then immediately triggers the classify flow with an optional comment limit. "
+                "Admin-only. All actions logged to `audit_core.crs_comment_audit`."
+            )
+            debug_limit = st.number_input(
+                "Comment limit (0 = all RECEIVED)",
+                min_value=0,
+                value=50,
+                key="crs_debug_limit",
+                help=f"Passed as `limit` parameter to `{_CRS_CLASSIFY_DEPLOYMENT}`. 0 = no limit.",
+            )
+            debug_confirm = st.checkbox(
+                f"I understand — reset & reclassify revision **{classify_rev}**",
+                key="crs_debug_confirm",
+            )
+            debug_btn = st.button(
+                "🧪 Debug Reclassify",
+                disabled=(not debug_confirm),
+                key="btn_crs_debug",
+            )
+            if debug_btn and debug_confirm:
+                try:
+                    with st.spinner(f"Resetting classification for {classify_rev}…"):
+                        _reset_crs_classification(classify_rev, "crs_log")
+                    st.cache_data.clear()
+                    result = trigger_deployment(
+                        _CRS_CLASSIFY_DEPLOYMENT,
+                        {"revision_filter": classify_rev, "limit": int(debug_limit)},
+                    )
+                    if result and "id" in result:
+                        log("ok",
+                            f"Debug reclassify scheduled — ID: {result['id'][:8]} "
+                            f"rev={classify_rev} limit={debug_limit}",
+                            "crs_log")
+                        st.success(
+                            f"✅ Reset done + classification scheduled. "
+                            f"Run ID: `{result['id'][:8]}`"
+                        )
+                    else:
+                        err = (result.get("error", str(result))
+                               if isinstance(result, dict) else str(result))
+                        log("err", f"Debug classify trigger failed: {err}", "crs_log")
+                        st.error(f"❌ Classify trigger failed: {err}")
+                except Exception as exc:
+                    st.error(f"❌ Debug reclassify failed: {exc}")
+
+        # ── Section B: Validate (stub) ─────────────────────────────────────────────
+        section("Validate CRS Comments")
+        st.info("🚧 Validation not yet implemented. This button will trigger the "
+                "CRS validation Prefect flow in a future release.")
+        st.button("Validate", disabled=True, key="btn_crs_validate")
+
+        # ── Section C: Export (stub) ───────────────────────────────────────────────
+        section("Export CRS Comments")
+        st.info("🚧 Export not yet implemented. Will generate a structured XLSX with "
+                "classification results, LLM responses, and validation outcomes.")
+        st.button("Export CRS Report", disabled=True, key="btn_crs_export")
 
 
 def _trigger_export(rev: str) -> None:
