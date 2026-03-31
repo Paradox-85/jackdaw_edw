@@ -63,6 +63,40 @@ _PROPERTY_RE = re.compile(
 )
 
 
+def _extract_json_from_response(raw: str) -> dict[str, Any] | None:
+    """Extract JSON from LLM response, handling Qwen3 thinking mode.
+
+    Priority:
+    1. Text after </think> tag (Qwen3 puts answer after thinking block)
+    2. Text inside <output> tags
+    3. Last JSON block in response (Qwen3 puts answer last)
+    4. First JSON block anywhere (original fallback)
+    """
+    # Priority 1: after </think> tag
+    after_think = re.split(r"</think>", raw, flags=re.IGNORECASE)
+    candidates: list[str] = [after_think[-1]] if len(after_think) > 1 else []
+
+    # Priority 2: inside <output> tags
+    output_match = re.search(r"<output>(.*?)</output>", raw, re.DOTALL | re.IGNORECASE)
+    if output_match:
+        candidates.insert(0, output_match.group(1))
+
+    # Priority 3 + 4: scan candidates then full raw; take last match in each
+    candidates.append(raw)
+
+    for text in candidates:
+        # Try non-nested first (faster), then nested/greedy
+        all_matches = list(re.finditer(r"\{[^{}]*\}", text, re.DOTALL))
+        if not all_matches:
+            all_matches = list(re.finditer(r"\{.*\}", text, re.DOTALL))
+        for m in reversed(all_matches):
+            try:
+                return json.loads(m.group(0))
+            except json.JSONDecodeError:
+                continue
+    return None
+
+
 def extract_parameters(comment_text: str) -> dict[str, str | None]:
     """Extract structured parameters from free-text CRS comment.
 
@@ -167,16 +201,18 @@ def _build_prompt(
     result_str = json.dumps(sql_result[:3], default=str)
 
     return (
-        f"CRS Comment Classification Task\n\n"
-        f"Detail sheet: {sheet}\n"
+        f"/no_think\n"
+        f"You are an engineering data classification system. "
+        f"Output ONLY a single JSON object. No explanation. No markdown. No thinking.\n\n"
+        f"CLASSIFY THIS COMMENT:\n"
+        f"Sheet: {sheet}\n"
         f"Comment: {text_val}\n"
-        f"Extracted params: {json.dumps(params, default=str)}\n"
-        f"EDW verification result: {result_str}\n\n"
-        f"Task: Classify this engineering CRS comment into ONE category code (CRS-C01..C50).\n"
-        f"Categories cover: TAG_DATA, PROPERTY, EQUIPMENT, DOCUMENT, REFERENCE, SAFETY, TOPOLOGY\n\n"
-        f"Respond with JSON only:\n"
-        f'{{\"category\": \"<CATEGORY>\", \"confidence\": <0.0-1.0>, '
-        f'\"response\": \"<brief suggested response>\"}}'
+        f"Params: {json.dumps(params, default=str)}\n"
+        f"DB check: {result_str}\n\n"
+        f"Valid categories: CRS-C01 through CRS-C50\n"
+        f"(C01=TAG_MISSING, C02=PROPERTY_WRONG, C03=DOC_REF, C04=EQUIPMENT_SPEC, "
+        f"C05=TOPOLOGY, C06=SAFETY, C07=UNITS, C08=REVISION)\n\n"
+        f'OUTPUT (JSON only): {{"category":"CRS-C??","confidence":0.0,"response":"..."}}'
     )
 
 
@@ -186,7 +222,7 @@ def _call_llm_batch(
     base_url: str,
     api_key: str = "none",
     temperature: float = 0.1,
-    max_tokens: int = 256,
+    max_tokens: int = 1024,   # was 256 — Qwen3 thinking mode needs headroom
     logger: Any = None,
 ) -> list[dict[str, Any]]:
     """Call Ollama LLM for a batch of prompts.
@@ -231,16 +267,19 @@ def _call_llm_batch(
             msg = llm.invoke([HumanMessage(content=prompt)])
             raw = msg.content.strip()
             # Extract JSON block if wrapped in markdown
-            json_match = re.search(r"\{.*\}", raw, re.DOTALL)
-            if json_match:
-                parsed = json.loads(json_match.group(0))
+            parsed = _extract_json_from_response(raw)
+            if parsed is not None:
                 cat = parsed.get("category", "OTHER")
                 if cat not in _VALID_CATEGORIES:
                     cat = "OTHER"
+                resp = (parsed.get("response") or "").strip()
+                if not resp:
+                    conf_val = parsed.get("confidence", 0.7)
+                    resp = f"Auto-classified as {cat} (confidence: {float(conf_val):.0%})"
                 results.append({
                     "category":   cat,
                     "confidence": float(parsed.get("confidence", 0.7)),
-                    "response":   str(parsed.get("response", "")),
+                    "response":   resp,
                 })
             else:
                 # LLM responded but not with valid JSON — log first occurrence
@@ -341,7 +380,7 @@ def run_tier3_llm(
             ollama_base_url,
             api_key=llm_cfg.get("api_key", "none"),
             temperature=llm_cfg.get("temperature", 0.1),
-            max_tokens=llm_cfg.get("max_tokens", 256),
+            max_tokens=llm_cfg.get("max_tokens", 1024),
             logger=logger,
         )
 
