@@ -1,7 +1,26 @@
+# Core data
 pandas
 sqlalchemy
 psycopg2-binary
 openpyxl
-pyyaml
-prefect
 python-calamine
+
+# Config / utils
+pyyaml
+
+# Orchestration
+prefect
+
+# LLM / AI (Tier 3 CRS classifier)
+langchain-openai
+langchain-core
+
+# UI
+streamlit
+
+# HTTP clients
+httpx
+requests
+
+# Auth
+bcrypt
