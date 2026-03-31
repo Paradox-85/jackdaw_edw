@@ -21,6 +21,8 @@ from typing import Any
 from prefect import task, get_run_logger
 from prefect.cache_policies import NO_CACHE
 
+from etl.tasks.crs_text_generalizer import broadcast_result, group_by_generalized
+
 # ---------------------------------------------------------------------------
 # Sheet-name rules (Amendment #3 — higher confidence than keyword regex)
 # ---------------------------------------------------------------------------
@@ -251,6 +253,16 @@ def run_tier2(
 
     No DB access. No LLM. Pure deterministic classification.
 
+    Uses group-by-apply: comments with the same generalised error pattern
+    (differing only in specific tag names / doc numbers / counts) are grouped
+    together. Classification runs ONCE per unique template and is broadcast
+    to all rows in the group — reducing work from O(N) to O(M) where M << N.
+
+    The first (representative) row in each group determines the classification.
+    Sheet-rule classification uses the representative's detail_sheet; keyword
+    classification uses the generalised text key (all rows in a group share
+    the same underlying error pattern).
+
     Args:
         comments: Batch of unclassified comment dicts (passed from Tier 1).
 
@@ -259,25 +271,30 @@ def run_tier2(
     """
     logger = get_run_logger()
 
-    unmatched: list[dict[str, Any]] = []
-    classified: list[dict[str, Any]] = []
+    # Group by generalised error pattern — M unique keys for N input rows
+    groups = group_by_generalized(comments)
+
+    group_results: dict[str, dict[str, Any]] = {}
+    unmatched_keys: set[str] = set()
     sheet_matched = 0
     keyword_matched = 0
 
-    for comment in comments:
-        # Sheet rule first — unpack all 4 values
-        cat, chk, conf, crs = _classify_by_sheet(comment.get("detail_sheet"))
+    for key, rows in groups.items():
+        # Use the first row as the representative for rule evaluation
+        representative = rows[0]
+
+        # Sheet rule first (Amendment #3 — higher confidence than keyword regex)
+        cat, chk, conf, crs = _classify_by_sheet(representative.get("detail_sheet"))
         if cat:
             sheet_matched += 1
         else:
-            text = comment.get("comment") or comment.get("group_comment") or ""
+            text = representative.get("comment") or representative.get("group_comment") or ""
             cat, chk, conf, crs = classify_by_keywords(text)
             if cat:
                 keyword_matched += 1
 
         if cat:
-            classified.append({
-                **comment,
+            group_results[key] = {
                 "llm_category":            cat,
                 "llm_category_confidence": conf,
                 "check_type":              chk,
@@ -286,12 +303,19 @@ def run_tier2(
                 "status":                  "IN_REVIEW",
                 "category_code":           crs,
                 "category_confidence":     conf,
-            })
+            }
         else:
-            unmatched.append(comment)
+            unmatched_keys.add(key)
+
+    # Broadcast results to all rows in matched groups
+    matched_groups = {k: v for k, v in groups.items() if k not in unmatched_keys}
+    classified = broadcast_result(matched_groups, group_results)
+    unmatched = [row for k in unmatched_keys for row in groups[k]]
 
     logger.info(
-        "Tier 2: %d classified (sheet=%d, keyword=%d), %d unmatched → Tier 3.",
-        len(classified), sheet_matched, keyword_matched, len(unmatched),
+        "Tier 2: %d rows → %d unique templates; %d classified (sheet=%d, keyword=%d), "
+        "%d unmatched → Tier 3.",
+        len(comments), len(groups), len(classified), sheet_matched, keyword_matched,
+        len(unmatched),
     )
     return unmatched, classified

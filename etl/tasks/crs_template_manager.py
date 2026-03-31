@@ -21,6 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from etl.tasks.crs_tier1_template_matcher import normalise_comment
+from etl.tasks.crs_text_generalizer import generalize_comment
 
 
 def _hash(normalised: str) -> str:
@@ -121,6 +122,11 @@ def update_template_db(
                            )
     """)
 
+    # Deduplicate by generalised pattern before building params_list.
+    # When N rows share the same error template (e.g. "For 8990 listed tags..."),
+    # only insert one KB entry for the template — avoids N redundant upserts
+    # that only increment usage_count without adding information.
+    seen_generalized: set[str] = set()
     params_list = []
     for result in eligible:
         raw_text = result.get("comment") or result.get("group_comment") or ""
@@ -130,6 +136,12 @@ def update_template_db(
         norm = normalise_comment(raw_text)
         if not norm:
             continue
+
+        # Skip if another row in this batch already covers the same pattern
+        gen_key = generalize_comment(norm)
+        if gen_key in seen_generalized:
+            continue
+        seen_generalized.add(gen_key)
 
         params_list.append({
             "template_text": norm,
