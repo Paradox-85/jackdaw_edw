@@ -35,6 +35,7 @@ _VIEWER_DB_URL = os.getenv(
 PREFECT_URL    = os.getenv("PREFECT_API_URL", "http://prefect-server:4200/api")
 OLLAMA_URL     = os.getenv("OLLAMA_URL",      "http://ollama:11434")
 EIS_EXPORT_DIR = os.getenv("EIS_EXPORT_DIR",  "/mnt/shared-data/ram-user/Jackdaw/EIS_Exports/")
+CRS_DATA_DIR   = os.getenv("CRS_DATA_DIR",   "/mnt/shared-data/ram-user/Jackdaw/EIS-Data/")
 
 # External infra links — shown ONLY in admin mode
 ADMIN_LINKS = {

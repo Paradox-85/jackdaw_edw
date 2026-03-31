@@ -17,11 +17,10 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-from etl.tasks.common import load_config
-
 import streamlit as st
 from ui.common import (
-    EIS_EXPORT_DIR, db_read, get_flow_run_status, log, render_log,
+    CRS_DATA_DIR, EIS_EXPORT_DIR, db_read, db_write,
+    get_flow_run_status, log, render_log,
     section, trigger_deployment, prefect_post,
 )
 
@@ -118,80 +117,86 @@ def _trigger_crs_classify(rev: str) -> None:
 
 
 def _reset_crs_classification(rev: str, log_key: str) -> None:
-    """NULL-out classification fields for the given revision and write audit rows."""
+    """
+    NULL-out classification fields for the given revision and write audit rows.
+    Uses shared admin engine from ui.common (DATABASE_URL env var).
+    No dependency on config.yaml.
+    """
     import json
     import uuid as _uuid
-    from sqlalchemy import create_engine, text as sa_text
-    from etl.tasks.common import load_config, get_db_engine_url
 
     run_id = str(_uuid.uuid4())
-    log("info", f"Resetting classification for revision {rev} (run_id={run_id[:8]})", log_key)
+    log("info",
+        f"Resetting classification for revision {rev} (run_id={run_id[:8]})",
+        log_key)
 
-    engine = create_engine(get_db_engine_url(load_config()))
-    with engine.begin() as conn:
-        ids_result = conn.execute(
-            sa_text(
-                "SELECT id FROM audit_core.crs_comment "
-                "WHERE revision = :rev AND object_status = 'Active'"
-            ),
-            {"rev": rev},
-        ).fetchall()
-        ids = [str(r[0]) for r in ids_result]
+    # Step 1: collect IDs before resetting (for audit)
+    df_ids = db_read(
+        "SELECT id FROM audit_core.crs_comment "
+        "WHERE revision = :rev AND object_status = 'Active'",
+        {"rev": rev},
+        admin=True,
+    )
+    if df_ids.empty:
+        log("warn",
+            f"No active comments for revision {rev} — nothing to reset",
+            log_key)
+        return
+    ids = df_ids["id"].astype(str).tolist()
 
-        if not ids:
-            log("warn", f"No active comments found for revision {rev} — nothing to reset", log_key)
-            return
-
-        set_parts = ["status = 'RECEIVED'"]
-        optional_cols = [
+    # Step 2: check which optional columns exist (migration guard)
+    df_cols = db_read(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'audit_core'
+          AND table_name   = 'crs_comment'
+          AND column_name  = ANY(:cols)
+        """,
+        {"cols": [
             "classification_tier",
             "classification_template",
             "llm_response",
             "llm_response_timestamp",
-        ]
-        existing = {
-            row[0]
-            for row in conn.execute(
-                sa_text("""
-                    SELECT column_name
-                    FROM information_schema.columns
-                    WHERE table_schema = 'audit_core'
-                      AND table_name   = 'crs_comment'
-                      AND column_name  = ANY(:cols)
-                """),
-                {"cols": optional_cols},
-            ).fetchall()
-        }
-        for col in optional_cols:
-            if col in existing:
-                set_parts.append(f"{col} = NULL")
-            else:
-                log("warn", f"Column audit_core.crs_comment.{col} not found — skipped", log_key)
+        ]},
+        admin=True,
+    )
+    existing_cols = set(df_cols["column_name"].tolist()) if not df_cols.empty else set()
 
-        set_clause = ", ".join(set_parts)
-        conn.execute(
-            sa_text(
-                f"UPDATE audit_core.crs_comment SET {set_clause} "
-                "WHERE revision = :rev AND object_status = 'Active'"
-            ),
-            {"rev": rev},
+    set_parts = ["status = 'RECEIVED'"]
+    for col in ["classification_tier", "classification_template",
+                "llm_response", "llm_response_timestamp"]:
+        if col in existing_cols:
+            set_parts.append(f"{col} = NULL")
+        else:
+            log("warn", f"Column {col} not found in crs_comment — skipped", log_key)
+
+    set_clause = ", ".join(set_parts)
+    ok = db_write(
+        f"UPDATE audit_core.crs_comment SET {set_clause} "
+        "WHERE revision = :rev AND object_status = 'Active'",
+        {"rev": rev},
+    )
+    if not ok:
+        raise RuntimeError("UPDATE failed — check DB error above")
+
+    # Step 3: write one audit row per affected comment
+    snap = json.dumps({
+        "revision": rev,
+        "reset_by": "ui",
+        "reset_at": str(datetime.now()),
+    })
+    for cid in ids:
+        db_write(
+            "INSERT INTO audit_core.crs_comment_audit "
+            "(comment_id, change_type, snapshot, run_id) "
+            "VALUES (:cid, 'RESET', CAST(:snap AS jsonb), :rid)",
+            {"cid": cid, "snap": snap, "rid": run_id},
         )
 
-        snap = json.dumps({"revision": rev, "reset_by": "ui", "reset_at": str(datetime.now())})
-        audit_rows = [{"cid": cid, "rid": run_id, "snap": snap} for cid in ids]
-        try:
-            conn.execute(
-                sa_text(
-                    "INSERT INTO audit_core.crs_comment_audit "
-                    "(comment_id, change_type, snapshot, run_id) "
-                    "VALUES (:cid, 'RESET', CAST(:snap AS jsonb), :rid)"
-                ),
-                audit_rows,
-            )
-        except Exception as audit_exc:
-            log("warn", f"Audit insert skipped (table may not exist): {audit_exc}", log_key)
-
-    log("ok", f"Reset complete — {len(ids)} comment(s) cleared for revision {rev}", log_key)
+    log("ok",
+        f"Reset complete — {len(ids)} comment(s) cleared for revision {rev}",
+        log_key)
 
 
 def _fetch_export_deployments():
@@ -498,11 +503,7 @@ def render() -> None:
     # ── Section A: CRS Import ─────────────────────────────────────────────────
     section("Import CRS Comments")
 
-    try:
-        crs_data_dir = load_config().get("storage", {}).get("crs_data_dir", "")
-    except Exception:
-        crs_data_dir = ""
-
+    crs_data_dir = CRS_DATA_DIR
     revisions = _scan_crs_revisions(crs_data_dir) if crs_data_dir else []
     no_files  = not revisions
 
