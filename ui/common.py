@@ -272,6 +272,17 @@ def prefect_post(path: str, payload: dict):
     except Exception as exc:
         return {"error": str(exc)}
 
+def prefect_run_ui_url(flow_run_id: str) -> str:
+    """Return the Prefect UI URL for a flow run.
+
+    Strips trailing /api from PREFECT_URL to get the browser base,
+    then appends /runs/flow-run/<id>.
+    """
+    base = PREFECT_URL.rstrip("/")
+    if base.endswith("/api"):
+        base = base[:-4]
+    return f"{base}/runs/flow-run/{flow_run_id}"
+
 def trigger_deployment(name: str, params: dict) -> dict:
     """Schedule a flow run by deployment name."""
     data = prefect_post("/deployments/filter",

@@ -21,7 +21,7 @@ import streamlit as st
 from ui.common import (
     CRS_DATA_DIR, EIS_EXPORT_DIR, db_read, db_write,
     get_flow_run_status, is_admin, log, render_log,
-    section, trigger_deployment, prefect_post,
+    section, trigger_deployment, prefect_post, prefect_run_ui_url,
 )
 
 # Single master deployment — runs all 11 EIS export flows sequentially
@@ -334,6 +334,33 @@ def _log_child_changes(children: list[dict]) -> None:
 
     st.session_state["_eis_child_snapshot"] = curr
 
+def _fetch_prefect_run_logs(flow_run_id: str) -> list[str]:
+    """Fetch log lines for a Prefect flow run, sorted ascending by timestamp."""
+    _LEVEL_MAP = {10: "DEBUG", 20: "INFO", 30: "WARNING", 40: "ERROR", 50: "CRITICAL"}
+    payload = {
+        "logs": {"flow_run_id": {"any_": [flow_run_id]}, "level": {"ge_": 20}},
+        "sort": "TIMESTAMP_ASC",
+        "limit": 500,
+        "offset": 0,
+    }
+    try:
+        data = prefect_post("/logs/filter", payload)
+        if not isinstance(data, list):
+            return []
+        lines = []
+        for entry in data:
+            ts = (entry.get("timestamp") or "")[:19].replace("T", " ")
+            time_part = ts[11:19] if len(ts) >= 19 else ts
+            lvl_int = entry.get("level") or 20
+            lvl = _LEVEL_MAP.get(lvl_int, str(lvl_int))
+            name = entry.get("name") or ""
+            msg = entry.get("message") or ""
+            lines.append(f"{time_part} | {lvl:<8} | {name} - {msg}")
+        return lines
+    except Exception:
+        return []
+
+
 def render() -> None:
     st.markdown("### 📤 EIS & CRS Management")
     st.caption("Export EIS data packages · CRS classification · Revision control · Prefect orchestration")
@@ -347,6 +374,12 @@ def render() -> None:
         ("crs_reset_confirm", False),
         ("crs_reset_done", False),
         ("_crs_reset_clear", False),          # Flush flag: removes widget key before re-render
+        ("crs_debug_run_id",     None),
+        ("crs_debug_running",    False),
+        ("crs_debug_done",       False),
+        ("crs_debug_log_lines",  []),
+        ("crs_debug_log_count",  0),
+        ("crs_debug_flow_state", None),
     ]:
         if _k not in st.session_state:
             st.session_state[_k] = _v
@@ -444,7 +477,7 @@ def render() -> None:
                     progress_val = 1.0
                     step_label   = f"{_TOTAL_STEPS}/{_TOTAL_STEPS}"
 
-                with st.expander("🔍 Debug: raw Prefect data", expanded=False):
+                if st.toggle("🔍 Show raw Prefect data", value=False, key="_eis_debug_raw_toggle"):
                     st.write("**Parent run state:**", run)
                     st.write("**Child runs:**", [
                         {
@@ -838,14 +871,18 @@ def render() -> None:
                         {"revision_filter": classify_rev, "limit": int(debug_limit)},
                     )
                     if result and "id" in result:
+                        run_id = result["id"]
+                        st.session_state["crs_debug_run_id"]     = run_id
+                        st.session_state["crs_debug_running"]    = True
+                        st.session_state["crs_debug_done"]       = False
+                        st.session_state["crs_debug_log_lines"]  = []
+                        st.session_state["crs_debug_log_count"]  = 0
+                        st.session_state["crs_debug_flow_state"] = None
                         log("ok",
-                            f"Debug reclassify scheduled — ID: {result['id'][:8]} "
-                            f"rev={classify_rev} limit={debug_limit}",
+                            f"Debug run {run_id[:8]} started — rev={classify_rev} limit={debug_limit}",
                             "crs_log")
-                        st.success(
-                            f"✅ Reset done + classification scheduled. "
-                            f"Run ID: `{result['id'][:8]}`"
-                        )
+                        run_url = prefect_run_ui_url(run_id)
+                        st.markdown(f"🔗 [Open in Prefect]({run_url})")
                     else:
                         err = (result.get("error", str(result))
                                if isinstance(result, dict) else str(result))
@@ -853,6 +890,71 @@ def render() -> None:
                         st.error(f"❌ Classify trigger failed: {err}")
                 except Exception as exc:
                     st.error(f"❌ Debug reclassify failed: {exc}")
+
+        # ── CRS Debug Run — Live Logs ─────────────────────────────────────────────
+        if st.session_state.get("crs_debug_run_id"):
+            section("CRS Debug Run")
+            _debug_run_id  = st.session_state["crs_debug_run_id"]
+            _debug_running = st.session_state.get("crs_debug_running", False)
+            _debug_state   = st.session_state.get("crs_debug_flow_state") or "..."
+
+            run_url = prefect_run_ui_url(_debug_run_id)
+            st.markdown(
+                f"Run `{_debug_run_id[:8]}` · state: **{_debug_state}** · "
+                f"[Open in Prefect]({run_url})"
+            )
+
+            if _debug_running:
+                new_lines = _fetch_prefect_run_logs(_debug_run_id)
+                if len(new_lines) > st.session_state["crs_debug_log_count"]:
+                    st.session_state["crs_debug_log_lines"] = new_lines
+                    st.session_state["crs_debug_log_count"] = len(new_lines)
+
+            if _debug_running:
+                run_info = get_flow_run_status(_debug_run_id)
+                if run_info:
+                    state_obj = run_info.get("state") or {}
+                    raw_state = (state_obj.get("type") or "").upper()
+                    if raw_state:
+                        st.session_state["crs_debug_flow_state"] = raw_state
+                        _debug_state = raw_state
+                    if raw_state in _TERMINAL_STATES:
+                        st.session_state["crs_debug_running"] = False
+                        st.session_state["crs_debug_done"]    = True
+                        _debug_running = False
+
+            log_lines = st.session_state.get("crs_debug_log_lines", [])
+            if log_lines:
+                st.code("\n".join(log_lines), language=None)
+            else:
+                st.caption("Waiting for first log lines…" if _debug_running else "No logs available.")
+
+            if st.session_state.get("crs_debug_done"):
+                final = st.session_state.get("crs_debug_flow_state", "")
+                if final == "COMPLETED":
+                    st.success("✅ Debug run completed.")
+                elif final in ("FAILED", "CRASHED"):
+                    st.error("❌ Debug run failed — see logs above.")
+                elif final == "CANCELLED":
+                    st.warning("⚠ Debug run was cancelled.")
+
+            col_clr, col_ref = st.columns(2)
+            with col_clr:
+                if st.button("Clear Debug Log", key="crs_debug_log_clr"):
+                    for _k, _v in [
+                        ("crs_debug_run_id", None), ("crs_debug_running", False),
+                        ("crs_debug_done", False), ("crs_debug_log_lines", []),
+                        ("crs_debug_log_count", 0), ("crs_debug_flow_state", None),
+                    ]:
+                        st.session_state[_k] = _v
+                    st.rerun()
+            with col_ref:
+                if _debug_running and st.button("Refresh", key="crs_debug_refresh"):
+                    st.rerun()
+
+            if _debug_running:
+                time.sleep(3)
+                st.rerun()
 
         # ── Section B: Validate (stub) ─────────────────────────────────────────────
         section("Validate CRS Comments")
