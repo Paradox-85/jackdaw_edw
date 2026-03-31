@@ -31,17 +31,62 @@ _DATE_FORMATS: list[tuple[re.Pattern, str]] = [
 _SEPARATOR_NORM = re.compile(r"[.\-/]")
 
 def load_config(config_path: "str | Path | None" = None) -> dict:
-    """Load configuration from YAML file.
+    """Load configuration from YAML file, then overlay secrets from config/.env.
 
-    Resolution order:
+    Resolution order for config file:
     1. config_path argument (if provided)
     2. EDW_CONFIG_PATH environment variable
     3. <repo_root>/config/config.yaml (relative to this file)
+
+    After loading YAML, secrets from config/.env are applied (silent if missing).
+
+    .env overlay rules (only these keys are recognised):
+      LLM_API_KEY     → config["llm"]["api_key"]
+      LLM_BASE_URL    → config["llm"]["base_url"]     (optional override)
+      LLM_MODEL       → config["llm"]["model"]         (optional override)
+      DB_PASSWORD     → config["postgres"]["password"]
+
+    os.environ always wins over .env file (Docker/Prefect env injection support).
     """
     if config_path is None:
         config_path = os.getenv("EDW_CONFIG_PATH") or _DEFAULT_CONFIG
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
+
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+
+    # Load config/.env — same directory as config.yaml, silent if missing.
+    _env_file = Path(_DEFAULT_CONFIG).parent / ".env"
+
+    try:
+        from dotenv import dotenv_values  # type: ignore[import]
+        env_vals = dotenv_values(_env_file)  # empty dict if file missing
+    except ImportError:
+        env_vals = {}
+
+    # Overlay: .env values take priority over config.yaml placeholders.
+    _llm = config.setdefault("llm", {})
+    if env_vals.get("LLM_API_KEY"):
+        _llm["api_key"] = env_vals["LLM_API_KEY"]
+    if env_vals.get("LLM_BASE_URL"):
+        _llm["base_url"] = env_vals["LLM_BASE_URL"]
+    if env_vals.get("LLM_MODEL"):
+        _llm["model"] = env_vals["LLM_MODEL"]
+
+    _pg = config.setdefault("postgres", {})
+    if env_vals.get("DB_PASSWORD"):
+        _pg["password"] = env_vals["DB_PASSWORD"]
+
+    # os.environ always wins — covers Docker/Prefect env injection
+    if os.environ.get("LLM_API_KEY"):
+        _llm["api_key"] = os.environ["LLM_API_KEY"]
+    if os.environ.get("LLM_BASE_URL"):
+        _llm["base_url"] = os.environ["LLM_BASE_URL"]
+    if os.environ.get("LLM_MODEL"):
+        _llm["model"] = os.environ["LLM_MODEL"]
+    if os.environ.get("DB_PASSWORD"):
+        _pg["password"] = os.environ["DB_PASSWORD"]
+
+    return config
 
 def get_db_engine_url(config):
     """Generate SQLAlchemy connection URL from config dict"""

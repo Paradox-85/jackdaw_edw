@@ -24,3 +24,6 @@ requests
 
 # Auth
 bcrypt
+
+# Secrets management
+python-dotenv>=1.0.0

@@ -493,8 +493,11 @@ def run_tier3_llm(
 
     # config.yaml is the source of truth; env vars override for CI/testing only
     llm_cfg = get_llm_config(load_config())
+    # load_config() already overlays config/.env — llm_cfg["api_key"] has the real key.
+    # OLLAMA_* env vars still work as highest-priority override for CI/testing.
     ollama_base_url = os.environ.get("OLLAMA_BASE_URL") or llm_cfg["base_url"]
-    ollama_model = os.environ.get("OLLAMA_MODEL") or llm_cfg["model"]
+    ollama_model    = os.environ.get("OLLAMA_MODEL")    or llm_cfg["model"]
+    ollama_api_key  = os.environ.get("OLLAMA_API_KEY")  or llm_cfg.get("api_key", "none")
     two_pass_enabled = os.environ.get("TIER3_TWO_PASS", "true").lower() == "true"
 
     # Log endpoint so it's always visible in Prefect UI — helps diagnose connectivity fast
@@ -571,7 +574,7 @@ def run_tier3_llm(
             batch_prompts,
             ollama_model,
             ollama_base_url,
-            api_key=llm_cfg.get("api_key", "none"),
+            api_key=ollama_api_key,
             temperature=llm_cfg.get("temperature", 0.1),
             max_tokens=llm_cfg.get("max_tokens", 1024),
             logger=logger,
@@ -596,7 +599,7 @@ def run_tier3_llm(
                     retry_prompts,
                     ollama_model,
                     ollama_base_url,
-                    api_key=llm_cfg.get("api_key", "none"),
+                    api_key=ollama_api_key,
                     temperature=llm_cfg.get("temperature", 0.1),
                     max_tokens=llm_cfg.get("max_tokens", 1024),
                     logger=logger,
