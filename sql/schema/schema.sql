@@ -386,6 +386,7 @@ CREATE TABLE "audit_core"."crs_comment_template" (
   "last_used_at" TIMESTAMP NOT NULL DEFAULT now(),
   "created_at" TIMESTAMP NOT NULL DEFAULT now(),
   "object_status" TEXT NOT NULL DEFAULT 'Active'::text,
+  "short_template_text" TEXT NULL,
   CONSTRAINT "crs_comment_template_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "crs_comment_template_hash_key" UNIQUE ("template_hash"),
   CONSTRAINT "chk_crs_template_source" CHECK (source IN ('llm', 'manual', 'rule')),

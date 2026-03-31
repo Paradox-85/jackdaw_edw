@@ -62,6 +62,38 @@ _PROPERTY_RE = re.compile(
     re.IGNORECASE,
 )
 
+_DOMAIN_KEYWORDS: dict[str, list[str]] = {
+    "document": ["document", "drawing", "datasheet", "specification", "dwg",
+                 "rev ", "revision", "mdr", "transmittal"],
+    "property": ["pressure", "temperature", "flow", "material", "rating",
+                 "grade", "insulation", "diameter", "capacity", "voltage", "weight"],
+    "safety":   ["safety", "sil", "sece", "hazard", "relief", "psv", "prv",
+                 "ex class", "ip grade", "atex"],
+    "tag":      ["tag", "equipment", "instrument", "valve", "pump",
+                 "missing", "not found", "does not exist"],
+    "revision": ["revision", "rev ", "updated", "superseded", "obsolete", "withdrawn"],
+}
+
+
+def _detect_comment_domain(comment_text: str) -> str:
+    """Classify comment into broad domain without LLM — keyword matching only.
+
+    Returns one of: 'document', 'property', 'safety', 'tag', 'revision', 'other'.
+    Doc regex checked first (high precision); keyword dicts in priority order;
+    tag/property regexes used as secondary signal if keywords don't match.
+    """
+    lower = comment_text.lower()
+    if _DOC_RE.search(comment_text):
+        return "document"
+    for domain, keywords in _DOMAIN_KEYWORDS.items():
+        if any(kw in lower for kw in keywords):
+            return domain
+    if _PROPERTY_RE.search(comment_text):
+        return "property"
+    if _TAG_RE.search(comment_text):
+        return "tag"
+    return "other"
+
 
 def _extract_json_from_response(raw: str) -> dict[str, Any] | None:
     """Extract JSON from LLM response, handling Qwen3 thinking mode.
@@ -137,6 +169,58 @@ def _load_validation_queries(engine: Engine) -> list[dict[str, Any]]:
     return [dict(r._mapping) for r in rows]
 
 
+def _load_crs_templates(engine: Engine) -> list[dict[str, Any]]:
+    """Load active CRS comment templates for category hint building."""
+    sql = text("""
+        SELECT category, check_type, short_template_text
+        FROM audit_core.crs_comment_template
+        WHERE object_status = 'Active'
+        ORDER BY category
+    """)
+    with engine.connect() as conn:
+        rows = conn.execute(sql).fetchall()
+    return [dict(r._mapping) for r in rows]
+
+
+def _build_categories_line(
+    templates: list[dict[str, Any]],
+    domain: str | None = None,
+    max_chars: int = 400,
+) -> str:
+    """Build compact category hints string for LLM prompt injection.
+
+    Filters templates by check_type substring match against domain.
+    Falls back to all templates if filtered list is empty or domain is None.
+
+    Format per entry: "CRS-C01=TAG_EXISTS" or with short_template_text:
+    "CRS-C01=tag not in register"
+    """
+    if not templates:
+        return ""
+
+    filtered = templates
+    if domain:
+        filtered = [
+            t for t in templates
+            if t.get("check_type") and domain.lower() in t["check_type"].lower()
+        ]
+        if not filtered:
+            filtered = templates  # fallback to all
+
+    parts: list[str] = []
+    for t in filtered:
+        cat = t.get("category") or "?"
+        short = t.get("short_template_text")
+        if short:
+            parts.append(f"{cat}={short[:40]}")
+        else:
+            ct = t.get("check_type") or ""
+            parts.append(f"{cat}={ct}")
+
+    line = ", ".join(parts)
+    return line[:max_chars]
+
+
 def _select_query(
     params: dict[str, str | None],
     queries: list[dict[str, Any]],
@@ -194,6 +278,7 @@ def _build_prompt(
     comment: dict[str, Any],
     params: dict[str, str | None],
     sql_result: list[dict[str, Any]],
+    categories_line: str,
 ) -> str:
     """Build a concise prompt for single-comment classification."""
     text_val = comment.get("comment") or comment.get("group_comment") or ""
@@ -210,8 +295,7 @@ def _build_prompt(
         f"Params: {json.dumps(params, default=str)}\n"
         f"DB check: {result_str}\n\n"
         f"Valid categories: CRS-C01 through CRS-C50\n"
-        f"(C01=TAG_MISSING, C02=PROPERTY_WRONG, C03=DOC_REF, C04=EQUIPMENT_SPEC, "
-        f"C05=TOPOLOGY, C06=SAFETY, C07=UNITS, C08=REVISION)\n\n"
+        f"({categories_line})\n\n"
         f'OUTPUT (JSON only): {{"category":"CRS-C??","confidence":0.0,"response":"..."}}'
     )
 
@@ -337,18 +421,24 @@ def run_tier3_llm(
     # Log endpoint so it's always visible in Prefect UI — helps diagnose connectivity fast
     logger.info("Tier 3: using Ollama endpoint=%s model=%s", ollama_base_url, ollama_model)
 
-    # Load validation queries once per task call
+    # Load validation queries and category templates once per task call
     validation_queries = _load_validation_queries(engine)
     if not validation_queries:
         logger.warning("Tier 3: No active validation queries found in crs_validation_query.")
 
+    crs_templates = _load_crs_templates(engine)
+    if not crs_templates:
+        logger.warning("Tier 3: No active templates — category hints will be empty.")
+
     results: list[dict[str, Any]] = []
+    total_pass2_retried = 0
 
     # Process in batches of 32 for efficient Ollama inference
     for batch_start in range(0, len(comments), _LLM_BATCH_SIZE):
         batch = comments[batch_start : batch_start + _LLM_BATCH_SIZE]
         prompts: list[str] = []
         batch_params: list[dict[str, str | None]] = []
+        batch_sql_results: list[list[dict[str, Any]]] = []
 
         for comment in batch:
             text_val = comment.get("comment") or comment.get("group_comment") or ""
@@ -370,8 +460,12 @@ def run_tier3_llm(
             if vq:
                 sql_result = _run_verification(vq, params, engine)
 
-            prompts.append(_build_prompt(comment, params, sql_result))
+            # Pass 1: narrow prompt with domain-filtered categories
+            domain = _detect_comment_domain(text_val)
+            categories_narrow = _build_categories_line(crs_templates, domain=domain)
+            prompts.append(_build_prompt(comment, params, sql_result, categories_narrow))
             batch_params.append(params)
+            batch_sql_results.append(sql_result)
 
         # Pass logger so connection errors are visible in Prefect UI
         llm_outputs = _call_llm_batch(
@@ -383,6 +477,35 @@ def run_tier3_llm(
             max_tokens=llm_cfg.get("max_tokens", 1024),
             logger=logger,
         )
+
+        # Pass 2: retry OTHER/low-confidence items with full category list
+        retry_indices = [
+            i for i, out in enumerate(llm_outputs)
+            if out["category"] == "OTHER" and out["confidence"] < 0.5
+        ]
+        if retry_indices:
+            categories_full = _build_categories_line(crs_templates, domain=None)
+            retry_prompts = [
+                _build_prompt(batch[i], batch_params[i],
+                              batch_sql_results[i], categories_full)
+                for i in retry_indices
+            ]
+            retry_outputs = _call_llm_batch(
+                retry_prompts,
+                ollama_model,
+                ollama_base_url,
+                api_key=llm_cfg.get("api_key", "none"),
+                temperature=llm_cfg.get("temperature", 0.1),
+                max_tokens=llm_cfg.get("max_tokens", 1024),
+                logger=logger,
+            )
+            for idx, out in zip(retry_indices, retry_outputs):
+                llm_outputs[idx] = out
+            total_pass2_retried += len(retry_indices)
+            logger.info(
+                "Tier 3: Pass 2 retried %d items with full category list.",
+                len(retry_indices),
+            )
 
         for comment, params, llm_out in zip(batch, batch_params, llm_outputs):
             confidence = llm_out.get("confidence", 0.7)
@@ -403,7 +526,7 @@ def run_tier3_llm(
     in_review = sum(1 for r in results if r["status"] == "IN_REVIEW")
     deferred = sum(1 for r in results if r["status"] == "DEFERRED")
     logger.info(
-        "Tier 3: %d processed — %d in_review, %d deferred (model=%s).",
-        len(results), in_review, deferred, ollama_model,
+        "Tier 3: %d processed — %d in_review, %d deferred, %d pass2_retried (model=%s).",
+        len(results), in_review, deferred, total_pass2_retried, ollama_model,
     )
     return results
