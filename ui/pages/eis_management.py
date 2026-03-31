@@ -120,6 +120,20 @@ def _trigger_crs_classify(rev: str) -> None:
         log("warn", f"Classification deployment not found or failed: {err}", "crs_log")
 
 
+_RESET_COLS = [
+    "classification_tier",
+    "classification_template",   # legacy name — skipped by migration guard if absent
+    "template_id",
+    "llm_response",
+    "llm_response_timestamp",
+    "llm_category",
+    "llm_category_confidence",
+    "llm_model_used",
+    "category_code",
+    "category_confidence",
+]
+
+
 def _reset_crs_classification(rev: str, log_key: str) -> None:
     """
     NULL-out classification fields for the given revision and write audit rows.
@@ -157,19 +171,13 @@ def _reset_crs_classification(rev: str, log_key: str) -> None:
           AND table_name   = 'crs_comment'
           AND column_name  = ANY(:cols)
         """,
-        {"cols": [
-            "classification_tier",
-            "classification_template",
-            "llm_response",
-            "llm_response_timestamp",
-        ]},
+        {"cols": _RESET_COLS},
         admin=True,
     )
     existing_cols = set(df_cols["column_name"].tolist()) if not df_cols.empty else set()
 
     set_parts = ["status = 'RECEIVED'"]
-    for col in ["classification_tier", "classification_template",
-                "llm_response", "llm_response_timestamp"]:
+    for col in _RESET_COLS:
         if col in existing_cols:
             set_parts.append(f"{col} = NULL")
         else:
@@ -189,6 +197,7 @@ def _reset_crs_classification(rev: str, log_key: str) -> None:
         "revision": rev,
         "reset_by": "ui",
         "reset_at": str(datetime.now()),
+        "cleared_cols": [col for col in _RESET_COLS if col in existing_cols],
     })
     for cid in ids:
         db_write(
@@ -215,8 +224,7 @@ def _crs_needs_reset_count(rev: str) -> tuple[int, int]:
         "SELECT column_name FROM information_schema.columns "
         "WHERE table_schema = 'audit_core' AND table_name = 'crs_comment' "
         "AND column_name = ANY(:cols)",
-        {"cols": ["classification_tier", "classification_template",
-                  "llm_response", "llm_response_timestamp"]},
+        {"cols": _RESET_COLS},
         admin=True,
     )
     existing = set(df_cols["column_name"].tolist()) if not df_cols.empty else set()
@@ -224,8 +232,7 @@ def _crs_needs_reset_count(rev: str) -> tuple[int, int]:
     # A comment needs reset if its status is no longer RECEIVED OR any classification
     # field has been written (non-null)
     cond_parts = ["status != 'RECEIVED'"]
-    for col in ["classification_tier", "classification_template",
-                "llm_response", "llm_response_timestamp"]:
+    for col in _RESET_COLS:
         if col in existing:
             cond_parts.append(f"{col} IS NOT NULL")
     needs_reset_cond = " OR ".join(cond_parts)
@@ -784,9 +791,11 @@ def render() -> None:
         st.markdown("---")
         st.markdown("**⚠ Reset Classification**")
         st.caption(
-            "Clears `classification_tier`, `classification_template`, `llm_response` "
-            "and resets status to `RECEIVED` for ALL comments in the selected revision. "
-            "This action is logged to `audit_core.crs_comment_audit` and cannot be undone."
+            "Clears all classification fields (`classification_tier`, `template_id`, "
+            "`llm_category`, `llm_category_confidence`, `llm_model_used`, `category_code`, "
+            "`category_confidence`, `llm_response`, `llm_response_timestamp`) and resets "
+            "status to `RECEIVED`. Uses migration guard — only clears columns that exist. "
+            "Logged to `audit_core.crs_comment_audit`."
         )
 
         if not no_sql_revs:
