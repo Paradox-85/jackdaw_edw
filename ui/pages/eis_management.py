@@ -302,6 +302,7 @@ def render() -> None:
         ("crs_classify_run_id", None),
         ("crs_reset_confirm", False),
         ("crs_reset_done", False),
+        ("_crs_reset_clear", False),          # Flush flag: removes widget key before re-render
     ]:
         if _k not in st.session_state:
             st.session_state[_k] = _v
@@ -695,6 +696,10 @@ def render() -> None:
     )
 
     if not no_sql_revs:
+        # Flush pending clear: remove widget key so it re-renders unchecked
+        if st.session_state.pop("_crs_reset_clear", False):
+            st.session_state.pop("crs_reset_confirm", None)
+
         reset_confirm = st.checkbox(
             f"I understand — reset classification for revision **{classify_rev}**",
             key="crs_reset_confirm",
@@ -717,7 +722,7 @@ def render() -> None:
             try:
                 with st.spinner(f"Resetting classification for revision {classify_rev}…"):
                     _reset_crs_classification(classify_rev, "crs_log")
-                st.session_state["crs_reset_confirm"] = False
+                st.session_state["_crs_reset_clear"] = True
                 st.session_state["crs_reset_done"] = True
                 st.cache_data.clear()
                 st.success(
