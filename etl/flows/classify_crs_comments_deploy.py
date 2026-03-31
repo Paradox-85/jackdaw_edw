@@ -48,8 +48,9 @@ from etl.tasks.crs_helpers import (
 from etl.tasks.crs_tier0_prefilter import run_tier0
 from etl.tasks.crs_tier1_template_matcher import run_tier1
 from etl.tasks.crs_tier2_keyword_classifier import run_tier2
-from etl.tasks.crs_tier3_llm_classifier import run_tier3_llm
+from etl.tasks.crs_tier3_llm_classifier import _detect_comment_domain, run_tier3_llm
 from etl.tasks.crs_template_manager import update_template_db
+from etl.tasks.crs_text_generalizer import generalize_comment
 
 
 @flow(name="classify-crs-comments-cascade", log_prints=True)
@@ -57,15 +58,28 @@ def classify_crs_comments_cascade(
     limit: int = 0,
     batch_size: int = 500,
     revision_filter: str | None = None,
+    check_type_filter: str | None = None,
+    sheet_filter: str | None = None,
+    dry_run: bool = False,
+    tier3_only: bool = False,
 ) -> dict[str, int]:
     """4-tier cascade classifier for CRS comments.
 
     Args:
         limit: Max comments to process. 0 = all RECEIVED comments.
         batch_size: Comments per processing batch (default 500).
-        revision_filter: Optional revision code to restrict scope (e.g. 'A36').
-                         When provided, only comments from that revision are loaded.
-                         When None (default), all RECEIVED comments are loaded.
+        revision_filter: Restrict to a single revision code (e.g. 'A36').
+        check_type_filter: Keep only comments whose generalised text matches a
+            detected domain: tag, document, property, safety, revision, other.
+            Applied post-load via _detect_comment_domain(generalize_comment(text)).
+            Useful for isolated testing of two-pass strategy on a single domain.
+        sheet_filter: Keep only comments where detail_sheet contains this
+            substring (case-insensitive). E.g. 'TAG_REGISTER'.
+        dry_run: Classify but do NOT write results to DB.
+            Logs tier statistics only. Use for prompt/strategy debugging.
+        tier3_only: Skip Tiers 0-2 entirely. Send all loaded comments directly
+            to Tier 3 LLM. Forces two-pass on every comment. Use with small
+            --limit for quality testing.
 
     Returns:
         Stats dict: {tier0, tier1, tier2, tier3, saved, total}.
@@ -76,11 +90,16 @@ def classify_crs_comments_cascade(
 
     fetch_limit = limit if limit > 0 else 9_999_999
     logger.info(
-        "CRS Cascade Classifier starting — run_id=%s, revision=%s, limit=%s, batch_size=%d",
+        "CRS Cascade Classifier starting — run_id=%s, revision=%s, limit=%s, "
+        "batch_size=%d, check_type=%s, sheet=%s, dry_run=%s, tier3_only=%s",
         run_id,
         revision_filter or "ALL",
         limit if limit > 0 else "ALL",
         batch_size,
+        check_type_filter or "ALL",
+        sheet_filter or "ALL",
+        dry_run,
+        tier3_only,
     )
 
     comments = load_received_comments(
@@ -88,6 +107,37 @@ def classify_crs_comments_cascade(
         engine=engine,
         revision_filter=revision_filter,
     )
+
+    # Apply sheet filter post-load (substring match, case-insensitive)
+    if sheet_filter:
+        sf_lower = sheet_filter.lower()
+        comments = [
+            c for c in comments
+            if sf_lower in (c.get("detail_sheet") or "").lower()
+        ]
+        logger.info("sheet_filter='%s': %d comments remain.", sheet_filter, len(comments))
+
+    # Apply domain filter post-load — uses generalised text for domain detection
+    if check_type_filter:
+        ct_lower = check_type_filter.lower()
+        comments = [
+            c for c in comments
+            if _detect_comment_domain(
+                generalize_comment(c.get("comment") or c.get("group_comment") or "")
+            ) == ct_lower
+        ]
+        logger.info(
+            "check_type_filter='%s': %d comments remain after domain filter.",
+            check_type_filter, len(comments),
+        )
+        if not comments:
+            logger.warning(
+                "No comments match check_type_filter='%s'. "
+                "Valid values: tag, document, property, safety, revision, other.",
+                check_type_filter,
+            )
+            return {"tier0": 0, "tier1": 0, "tier2": 0, "tier3": 0, "saved": 0, "total": 0}
+
     total = len(comments)
 
     if total == 0:
@@ -112,31 +162,34 @@ def classify_crs_comments_cascade(
         total_batches = (total + batch_size - 1) // batch_size
         logger.info("Batch %d/%d — %d comments", batch_num, total_batches, len(batch))
 
-        # --- Tier 0: Pre-filter ---
-        batch, t0_results = run_tier0(batch, engine)
-        stats["tier0"] += len(t0_results)
-        all_results.extend(t0_results)
+        if not tier3_only:
+            # --- Tier 0: Pre-filter ---
+            batch, t0_results = run_tier0(batch, engine)
+            stats["tier0"] += len(t0_results)
+            all_results.extend(t0_results)
 
-        if not batch:
-            continue
+            if not batch:
+                continue
 
-        # --- Tier 1: Template knowledge base ---
-        batch, t1_results = run_tier1(batch, engine)
-        stats["tier1"] += len(t1_results)
-        all_results.extend(t1_results)
+            # --- Tier 1: Template knowledge base ---
+            batch, t1_results = run_tier1(batch, engine)
+            stats["tier1"] += len(t1_results)
+            all_results.extend(t1_results)
 
-        if not batch:
-            continue
+            if not batch:
+                continue
 
-        # --- Tier 2: Keyword rules + sheet name classification ---
-        batch, t2_results = run_tier2(batch)
-        stats["tier2"] += len(t2_results)
-        all_results.extend(t2_results)
+            # --- Tier 2: Keyword rules + sheet name classification ---
+            batch, t2_results = run_tier2(batch)
+            stats["tier2"] += len(t2_results)
+            all_results.extend(t2_results)
 
-        if not batch:
-            continue
+            if not batch:
+                continue
+        else:
+            logger.info("tier3_only=True — skipping Tiers 0-2 for this batch.")
 
-        # --- Tier 3: LLM (only remaining ~5-10%) ---
+        # --- Tier 3: LLM (only remaining ~5-10%, or all if tier3_only) ---
         t3_results = run_tier3_llm(batch, engine)
         stats["tier3"] += len(t3_results)
         all_results.extend(t3_results)
@@ -150,9 +203,14 @@ def classify_crs_comments_cascade(
             r["category_code"] = r["llm_category"]
             r["category_confidence"] = r.get("llm_category_confidence")
 
-    # Save all results to DB (batch UPDATE)
-    saved = save_classification_results(all_results, engine, run_id)
-    stats["saved"] = saved
+    if dry_run:
+        logger.info(
+            "dry_run=True — skipping DB write. Classified %d comments.", len(all_results)
+        )
+        stats["saved"] = 0
+    else:
+        saved = save_classification_results(all_results, engine, run_id)
+        stats["saved"] = saved
 
     # Summary log
     classified_total = stats["tier0"] + stats["tier1"] + stats["tier2"] + stats["tier3"]
@@ -198,6 +256,35 @@ if __name__ == "__main__":
         "--revision", type=str, default=None,
         help="Restrict to a single revision code, e.g. A36. Used with --run.",
     )
+    parser.add_argument(
+        "--check-type", type=str, default=None,
+        dest="check_type",
+        help=(
+            "Filter by comment domain after loading. "
+            "Values: tag | document | property | safety | revision | other. "
+            "Example: --run --check-type document --limit 200 --tier3-only"
+        ),
+    )
+    parser.add_argument(
+        "--sheet", type=str, default=None,
+        help=(
+            "Filter by detail_sheet name (substring match, case-insensitive). "
+            "Example: --run --sheet TAG_REGISTER --limit 500"
+        ),
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        dest="dry_run",
+        help="Classify comments but do NOT write to DB. Logs statistics only.",
+    )
+    parser.add_argument(
+        "--tier3-only", action="store_true",
+        dest="tier3_only",
+        help=(
+            "Skip Tiers 0-2, send all comments to LLM (Tier 3) directly. "
+            "Useful for testing two-pass classification quality."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -206,6 +293,10 @@ if __name__ == "__main__":
             limit=args.limit,
             batch_size=args.batch_size,
             revision_filter=args.revision,
+            check_type_filter=args.check_type,
+            sheet_filter=args.sheet,
+            dry_run=args.dry_run,
+            tier3_only=args.tier3_only,
         )
         print(result)
     else:

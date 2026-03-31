@@ -42,6 +42,61 @@ _LLM_BATCH_SIZE = 32
 # Categories the LLM is allowed to return (validated on parse)
 _VALID_CATEGORIES: frozenset[str] = frozenset(f"CRS-C{i:02d}" for i in range(1, 51))
 
+# Fallback category dict — used when DB has no active templates (migration not applied,
+# empty table, or DB unreachable). Ensures LLM always receives a non-empty category list.
+_FALLBACK_CATEGORIES: dict[str, str] = {
+    "CRS-C01": "missing required fields",
+    "CRS-C02": "tag description missing",
+    "CRS-C03": "description too long",
+    "CRS-C04": "tag class not in RDL",
+    "CRS-C05": "tag naming convention violated",
+    "CRS-C06": "area code blank",
+    "CRS-C07": "area code invalid",
+    "CRS-C08": "process unit code missing",
+    "CRS-C09": "process unit not in register",
+    "CRS-C10": "parent tag missing for physical tag",
+    "CRS-C11": "parent tag not in MTR",
+    "CRS-C12": "pipe-to-pipe parent reference",
+    "CRS-C13": "safety critical item blank or invalid",
+    "CRS-C14": "safety critical reason missing",
+    "CRS-C15": "production critical item blank",
+    "CRS-C16": "duplicate tags",
+    "CRS-C17": "property tag not in MTR",
+    "CRS-C18": "UOM present when value is NA",
+    "CRS-C19": "property value is zero",
+    "CRS-C20": "property not in class scope",
+    "CRS-C21": "tag has no properties",
+    "CRS-C22": "mandatory property missing",
+    "CRS-C23": "equipment class not in RDL",
+    "CRS-C24": "equipment description blank",
+    "CRS-C25": "manufacturer serial number blank",
+    "CRS-C26": "model part name blank",
+    "CRS-C27": "manufacturer company blank",
+    "CRS-C28": "equipment tag not in MTR",
+    "CRS-C29": "plant code invalid",
+    "CRS-C30": "document missing or NYI/CAN status",
+    "CRS-C31": "tag has no document reference",
+    "CRS-C32": "document in mapping not in DocMaster",
+    "CRS-C33": "tag in mapping not in MTR",
+    "CRS-C34": "document area code missing",
+    "CRS-C35": "document process unit missing",
+    "CRS-C36": "PO code not in register",
+    "CRS-C37": "PO date missing",
+    "CRS-C38": "company name missing or invalid",
+    "CRS-C39": "duplicate physical connections",
+    "CRS-C40": "equipment has no document mapping",
+    "CRS-C41": "EX class or IP grade missing",
+    "CRS-C42": "MC package code missing",
+    "CRS-C43": "heat tracing type missing",
+    "CRS-C44": "insulation type missing",
+    "CRS-C45": "from-tag or to-tag not in MTR",
+    "CRS-C46": "tag linked to inactive document",
+    "CRS-C47": "revision status inconsistent",
+    "CRS-C48": "property UOM not in RDL",
+    "CRS-C49": "tag status inconsistent with class",
+    "CRS-C50": "circular parent hierarchy",
+}
+
 # ---------------------------------------------------------------------------
 # Parameter extraction
 # ---------------------------------------------------------------------------
@@ -80,18 +135,28 @@ def _detect_comment_domain(comment_text: str) -> str:
     """Classify comment into broad domain without LLM — keyword matching only.
 
     Returns one of: 'document', 'property', 'safety', 'tag', 'revision', 'other'.
+    Handles both raw text (with real entity codes) and generalised text (with
+    <doc>/<tag>/<prop> placeholders produced by generalize_comment()).
     Doc regex checked first (high precision); keyword dicts in priority order;
     tag/property regexes used as secondary signal if keywords don't match.
     """
     lower = comment_text.lower()
-    if _DOC_RE.search(comment_text):
+
+    # Check for generalised document placeholder first (post-scrubbing), then raw regex.
+    # After group_by_generalized(), JDAW-... codes become "<doc>" — raw regex never matches.
+    if "<doc>" in lower or _DOC_RE.search(comment_text):
         return "document"
+
+    # Save tag placeholder match — evaluated after keyword priority pass
+    tag_match = "<tag>" in lower or bool(_TAG_RE.search(comment_text))
+
     for domain, keywords in _DOMAIN_KEYWORDS.items():
         if any(kw in lower for kw in keywords):
             return domain
-    if _PROPERTY_RE.search(comment_text):
+
+    if "<prop>" in lower or _PROPERTY_RE.search(comment_text):
         return "property"
-    if _TAG_RE.search(comment_text):
+    if tag_match:
         return "tag"
     return "other"
 
@@ -209,17 +274,18 @@ def _build_categories_line(
             filtered = templates  # fallback to all
 
     parts: list[str] = []
+    current_len = 0
     for t in filtered:
         cat = t.get("category") or "?"
         short = t.get("short_template_text")
-        if short:
-            parts.append(f"{cat}={short[:40]}")
-        else:
-            ct = t.get("check_type") or ""
-            parts.append(f"{cat}={ct}")
+        entry = f"{cat}={short[:40]}" if short else f"{cat}={t.get('check_type') or ''}"
+        separator_len = 2 if parts else 0  # ", " between entries
+        if current_len + separator_len + len(entry) > max_chars:
+            break
+        parts.append(entry)
+        current_len += separator_len + len(entry)
 
-    line = ", ".join(parts)
-    return line[:max_chars]
+    return ", ".join(parts)
 
 
 def _select_query(
@@ -293,7 +359,6 @@ def _build_prompt(
         f"CLASSIFY THIS COMMENT:\n"
         f"Sheet: {sheet}\n"
         f"Comment: {text_val}\n"
-        f"Params: {json.dumps(params, default=str)}\n"
         f"DB check: {result_str}\n\n"
         f"Valid categories: CRS-C01 through CRS-C50\n"
         f"({categories_line})\n\n"
@@ -443,7 +508,15 @@ def run_tier3_llm(
 
     crs_templates = _load_crs_templates(engine)
     if not crs_templates:
-        logger.warning("Tier 3: No active templates — category hints will be empty.")
+        logger.warning(
+            "Tier 3: No active templates in DB — using fallback category dict "
+            "(%d entries). Run migration_021_crs_short_text_seed.sql to seed the KB.",
+            len(_FALLBACK_CATEGORIES),
+        )
+        crs_templates = [
+            {"category": cat, "check_type": None, "short_template_text": desc}
+            for cat, desc in _FALLBACK_CATEGORIES.items()
+        ]
 
     # Group by generalised pattern — classify once per unique template (M << N)
     groups = group_by_generalized(comments)
