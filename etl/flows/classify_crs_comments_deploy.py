@@ -215,7 +215,7 @@ def classify_crs_comments_cascade(
         saved = save_classification_results(all_results, engine, run_id)
         stats["saved"] = saved
 
-    # Summary log
+    # Summary log — use stats["saved"] (always defined, even in dry_run)
     classified_total = stats["tier0"] + stats["tier1"] + stats["tier2"] + stats["tier3"]
     pct = lambda n: f"{100 * n / classified_total:.1f}%" if classified_total else "0%"  # noqa: E731
 
@@ -227,7 +227,7 @@ def classify_crs_comments_cascade(
     logger.info("  Tier 1 (KB match):    %d (%s)", stats["tier1"], pct(stats["tier1"]))
     logger.info("  Tier 2 (keyword):     %d (%s)", stats["tier2"], pct(stats["tier2"]))
     logger.info("  Tier 3 (LLM):         %d (%s)", stats["tier3"], pct(stats["tier3"]))
-    logger.info("  DB rows updated:      %d", saved)
+    logger.info("  DB rows updated:      %d", stats["saved"])
     logger.info("=" * 60)
 
     return stats
