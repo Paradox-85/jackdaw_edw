@@ -1,0 +1,33 @@
+# Jackdaw EDW — Central Configuration
+# Renamed from db_config.yaml (2026-03-19): this file covers DB, storage paths,
+# and any future configuration — not DB-only.
+
+# Database Connection Settings
+postgres:
+  host: "postgres_db"  # Use 'localhost' if running script outside docker (via SSH tunnel)
+  port: 5432
+  database: "engineering_core"
+  user: "postgres_admin"
+  password: "none"
+  schema_reference: "reference_core"
+  schema_ontology: "ontology_core"
+  schema_project: "project_core"
+
+# File Storage Paths
+storage:
+  master_reference_file: "/mnt/shared-data/ram-user/Jackdaw/Reference-Data/_Master/Master-Reference-Data.xlsx"
+  master_rdl: "/mnt/shared-data/ram-user/Jackdaw/Reference-Data/_Master/JDAW-PT-D-JA-7880-00001_A05.xlsx"
+  tag_dataset_file: "/mnt/shared-data/ram-user/Jackdaw/Master-Data/_master/data/MTR-dataset.xlsx"
+  doc_dataset_file: "/mnt/shared-data/ram-user/Jackdaw/Master-Data/_master/data/MDR.xlsx"
+  prop_dataset_file: "/mnt/shared-data/ram-user/Jackdaw/Master-Data/_master/data/TagProperties-rdl.xlsx"
+  export_dir: "/mnt/shared-data/ram-user/Jackdaw/Export/EIS"
+  crs_data_dir: "/mnt/shared-data/ram-user/Jackdaw/EIS-Data"
+
+llm:
+  base_url: "http://10.10.10.50:8081/v1"      # inside docker network
+  external_url: "https://llm.adzv-pt.dev/v1"  # for external access (e.g., from local machine or other services)
+  model: "qwen35-27b"
+  api_key: "none"
+  temperature: 0.1
+  max_tokens: 1024
+  timeout: 120
