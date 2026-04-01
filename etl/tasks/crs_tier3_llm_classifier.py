@@ -337,16 +337,19 @@ def _build_prompt(
     params: dict[str, str | None],
     sql_result: list[dict[str, Any]],
     categories_line: str,
-) -> str:
-    """Build a concise prompt for single-comment classification."""
+) -> tuple[str, str]:
+    """Returns (system_prompt, user_prompt) tuple for ChatOpenAI messages list."""
     text_val = comment.get("comment") or comment.get("group_comment") or ""
     sheet = comment.get("detail_sheet") or "unknown"
     result_str = json.dumps(sql_result[:3], default=str)
 
-    return (
-        f"/no_think\n"
-        f"You are an engineering data classification system. "
-        f"Output ONLY a single JSON object. No explanation. No markdown. No thinking.\n\n"
+    system_msg = (
+        "You are an engineering data classification system. "
+        "Output ONLY a single JSON object. "
+        "Do NOT use <think> blocks. Do NOT explain. Do NOT use markdown. "
+        'Respond ONLY with: {"category":"CRS-C??","confidence":0.0,"response":"..."}'
+    )
+    user_msg = (
         f"CLASSIFY THIS COMMENT:\n"
         f"Sheet: {sheet}\n"
         f"Comment: {text_val}\n"
@@ -355,15 +358,16 @@ def _build_prompt(
         f"({categories_line})\n\n"
         f'OUTPUT (JSON only): {{"category":"CRS-C??","confidence":0.0,"response":"..."}}'
     )
+    return system_msg, user_msg
 
 
 def _call_llm_batch(
-    prompts: list[str],
+    prompts: list[tuple[str, str] | str],
     model: str,
     base_url: str,
     api_key: str = "none",
     temperature: float = 0.1,
-    max_tokens: int = 1024,   # was 256 — Qwen3 thinking mode needs headroom
+    max_tokens: int = 2048,   # was 1024 — increased for thinking suppression overhead
     logger: Any = None,
 ) -> list[dict[str, Any]]:
     """Call Ollama LLM for a batch of prompts.
@@ -385,7 +389,7 @@ def _call_llm_batch(
     """
     try:
         from langchain_openai import ChatOpenAI  # type: ignore[import]
-        from langchain_core.messages import HumanMessage  # type: ignore[import]
+        from langchain_core.messages import HumanMessage, SystemMessage  # type: ignore[import]
     except ImportError as e:
         msg = f"langchain_openai not installed: {e}"
         if logger:
@@ -401,12 +405,24 @@ def _call_llm_batch(
     )
 
     results: list[dict[str, Any]] = []
-    first_error_logged = False
 
     for i, prompt in enumerate(prompts):
         try:
-            msg = llm.invoke([HumanMessage(content=prompt)])
+            if isinstance(prompt, tuple):
+                system_content, user_content = prompt
+                messages = [
+                    SystemMessage(content=system_content),
+                    HumanMessage(content=user_content),
+                ]
+            else:
+                messages = [HumanMessage(content=prompt)]
+            msg = llm.invoke(messages)
             raw = msg.content.strip()
+            if logger:
+                logger.debug(
+                    "Tier 3 LLM raw response (prompt #%d, len=%d): %r",
+                    i, len(raw), raw[:500] if len(raw) > 500 else raw,
+                )
             # Extract JSON block if wrapped in markdown
             parsed = _extract_json_from_response(raw)
             if parsed is not None:
@@ -423,14 +439,12 @@ def _call_llm_batch(
                     "response":   resp,
                 })
             else:
-                # LLM responded but not with valid JSON — log first occurrence
-                if logger and not first_error_logged:
+                if logger:
                     logger.warning(
-                        "Tier 3: LLM returned non-JSON response (prompt #%d). "
-                        "Raw (first 300 chars): %s",
-                        i, raw[:300],
+                        "Tier 3: LLM returned non-JSON for prompt #%d "
+                        "(raw len=%d, first 500 chars): %s",
+                        i, len(raw), raw[:500] if raw else "<EMPTY STRING>",
                     )
-                    first_error_logged = True
                 results.append({"category": "OTHER", "confidence": 0.5, "response": raw[:200]})
         except Exception as e:  # noqa: BLE001
             # Log EVERY connection/timeout error explicitly — previously silent
@@ -511,6 +525,8 @@ def run_tier3_llm(
     # Log endpoint so it's always visible in Prefect UI — helps diagnose connectivity fast
     logger.info("Tier 3: using Ollama endpoint=%s model=%s two_pass=%s",
                 ollama_base_url, ollama_model, two_pass_enabled)
+    _key_preview = ollama_api_key[:4] + "**" if len(ollama_api_key) > 4 else "**"
+    logger.info("Tier 3: LLM auth key prefix=%s endpoint=%s", _key_preview, ollama_base_url)
 
     # Load validation queries and category templates once per task call
     validation_queries = _load_validation_queries(engine)
@@ -534,7 +550,7 @@ def run_tier3_llm(
 
     # Prepare prompts and metadata for unique template representatives
     unique_keys: list[str] = []
-    unique_prompts: list[str] = []
+    unique_prompts: list[tuple[str, str]] = []
     unique_params: list[dict[str, str | None]] = []
     unique_sql_results: list[list[dict[str, Any]]] = []
     unique_reps: list[dict[str, Any]] = []

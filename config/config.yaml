@@ -29,5 +29,5 @@ llm:
   model: "qwen35-27b"
   api_key: "none"
   temperature: 0.1
-  max_tokens: 1024
+  max_tokens: 2048
   timeout: 120
