@@ -51,7 +51,8 @@ def load_config(config_path: "str | Path | None" = None) -> dict:
       Postgres: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB,
                 POSTGRES_HOST, POSTGRES_PORT, DB_PASSWORD (legacy)
       LLM:      LLM_API_KEY, LLAMA_API_KEY (llama.cpp docker name),
-                LLM_BASE_URL, LLM_MODEL
+                LLM_BASE_URL, LLM_MODEL,
+                OLLAMA_URL (jackdaw-ui docker name, normalised to /v1)
       Storage:  EIS_EXPORT_DIR  → config["storage"]["export_dir"]
                 CRS_DATA_DIR    → config["storage"]["crs_data_dir"]
     """
@@ -85,8 +86,12 @@ def load_config(config_path: "str | Path | None" = None) -> dict:
 
     # os.environ always wins — covers Docker/Prefect env injection
     # Postgres — Docker-standard names
+    # Priority: POSTGRES_PASSWORD > DB_PASSWORD (legacy) > config/.env > config.yaml
     if os.environ.get("POSTGRES_USER"):
         _pg["user"] = os.environ["POSTGRES_USER"]
+    # DB_PASSWORD — legacy alias, applied only when POSTGRES_PASSWORD is absent
+    if os.environ.get("DB_PASSWORD") and not os.environ.get("POSTGRES_PASSWORD"):
+        _pg["password"] = os.environ["DB_PASSWORD"]
     if os.environ.get("POSTGRES_PASSWORD"):
         _pg["password"] = os.environ["POSTGRES_PASSWORD"]
     if os.environ.get("POSTGRES_DB"):
@@ -95,14 +100,16 @@ def load_config(config_path: "str | Path | None" = None) -> dict:
         _pg["host"] = os.environ["POSTGRES_HOST"]
     if os.environ.get("POSTGRES_PORT"):
         _pg["port"] = int(os.environ["POSTGRES_PORT"])
-    # EDW custom name (legacy, still honoured — overrides POSTGRES_PASSWORD if both set)
-    if os.environ.get("DB_PASSWORD"):
-        _pg["password"] = os.environ["DB_PASSWORD"]
     # LLM — accept both EDW (LLM_API_KEY) and llama.cpp Docker (LLAMA_API_KEY) names
     if os.environ.get("LLM_API_KEY"):
         _llm["api_key"] = os.environ["LLM_API_KEY"]
     if os.environ.get("LLAMA_API_KEY"):
         _llm["api_key"] = os.environ["LLAMA_API_KEY"]
+    # OLLAMA_URL — name from jackdaw-ui docker-compose; normalised with /v1 suffix
+    if os.environ.get("OLLAMA_URL"):
+        _url = os.environ["OLLAMA_URL"].rstrip("/")
+        _llm["base_url"] = _url if _url.endswith("/v1") else _url + "/v1"
+    # LLM_BASE_URL overrides OLLAMA_URL if both set
     if os.environ.get("LLM_BASE_URL"):
         _llm["base_url"] = os.environ["LLM_BASE_URL"]
     if os.environ.get("LLM_MODEL"):

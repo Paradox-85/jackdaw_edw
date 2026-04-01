@@ -444,6 +444,23 @@ def _call_llm_batch(
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _resolve_llm_url(llm_cfg: dict) -> str:
+    """Resolve LLM endpoint URL with priority:
+    OLLAMA_BASE_URL (CI override) > OLLAMA_URL (docker-compose) > config.yaml llm.base_url.
+    OLLAMA_URL is normalised: /v1 suffix added if missing.
+    """
+    if os.environ.get("OLLAMA_BASE_URL"):
+        return os.environ["OLLAMA_BASE_URL"]
+    if os.environ.get("OLLAMA_URL"):
+        url = os.environ["OLLAMA_URL"].rstrip("/")
+        return url if url.endswith("/v1") else url + "/v1"
+    return llm_cfg.get("base_url", "")
+
+
+# ---------------------------------------------------------------------------
 # Prefect task
 # ---------------------------------------------------------------------------
 
@@ -486,7 +503,7 @@ def run_tier3_llm(
     llm_cfg = get_llm_config(load_config())
     # load_config() already overlays config/.env — llm_cfg["api_key"] has the real key.
     # OLLAMA_* env vars still work as highest-priority override for CI/testing.
-    ollama_base_url = os.environ.get("OLLAMA_BASE_URL") or llm_cfg["base_url"]
+    ollama_base_url = _resolve_llm_url(llm_cfg)
     ollama_model    = os.environ.get("OLLAMA_MODEL")    or llm_cfg["model"]
     ollama_api_key  = os.environ.get("OLLAMA_API_KEY")  or llm_cfg.get("api_key", "none")
     two_pass_enabled = os.environ.get("TIER3_TWO_PASS", "true").lower() == "true"

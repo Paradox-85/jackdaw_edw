@@ -24,7 +24,7 @@ storage:
   crs_data_dir: "/mnt/shared-data/ram-user/Jackdaw/EIS-Data"
 
 llm:
-  base_url: "http://10.10.10.50:8081/v1"      # inside docker network
+  base_url: "http://llamacpp-qwen27b:8081/v1"  # container name inside ai_core_network
   external_url: "https://llm.adzv-pt.dev/v1"  # for external access (e.g., from local machine or other services)
   model: "qwen35-27b"
   api_key: "none"
