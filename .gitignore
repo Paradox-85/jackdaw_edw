@@ -17,7 +17,8 @@ dbgate_data/
 
 # --- Secrets & Configs ---
 .env
-config.yaml
+config/.env
+config/config.yaml
 
 # --- Project Specific ---
 data/
