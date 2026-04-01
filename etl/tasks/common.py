@@ -39,14 +39,19 @@ def load_config(config_path: "str | Path | None" = None) -> dict:
     3. <repo_root>/config/config.yaml (relative to this file)
 
     After loading YAML, secrets from config/.env are applied (silent if missing).
+    os.environ always wins over .env file (Docker/Prefect env injection support).
 
-    .env overlay rules (only these keys are recognised):
+    .env overlay keys (only these are recognised):
       LLM_API_KEY     → config["llm"]["api_key"]
-      LLM_BASE_URL    → config["llm"]["base_url"]     (optional override)
-      LLM_MODEL       → config["llm"]["model"]         (optional override)
+      LLM_BASE_URL    → config["llm"]["base_url"]
+      LLM_MODEL       → config["llm"]["model"]
       DB_PASSWORD     → config["postgres"]["password"]
 
-    os.environ always wins over .env file (Docker/Prefect env injection support).
+    os.environ keys recognised (Docker/Prefect injection):
+      Postgres: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB,
+                POSTGRES_HOST, POSTGRES_PORT, DB_PASSWORD (legacy)
+      LLM:      LLM_API_KEY, LLAMA_API_KEY (llama.cpp docker name),
+                LLM_BASE_URL, LLM_MODEL
     """
     if config_path is None:
         config_path = os.getenv("EDW_CONFIG_PATH") or _DEFAULT_CONFIG
@@ -77,14 +82,29 @@ def load_config(config_path: "str | Path | None" = None) -> dict:
         _pg["password"] = env_vals["DB_PASSWORD"]
 
     # os.environ always wins — covers Docker/Prefect env injection
+    # Postgres — Docker-standard names
+    if os.environ.get("POSTGRES_USER"):
+        _pg["user"] = os.environ["POSTGRES_USER"]
+    if os.environ.get("POSTGRES_PASSWORD"):
+        _pg["password"] = os.environ["POSTGRES_PASSWORD"]
+    if os.environ.get("POSTGRES_DB"):
+        _pg["database"] = os.environ["POSTGRES_DB"]
+    if os.environ.get("POSTGRES_HOST"):
+        _pg["host"] = os.environ["POSTGRES_HOST"]
+    if os.environ.get("POSTGRES_PORT"):
+        _pg["port"] = int(os.environ["POSTGRES_PORT"])
+    # EDW custom name (legacy, still honoured — overrides POSTGRES_PASSWORD if both set)
+    if os.environ.get("DB_PASSWORD"):
+        _pg["password"] = os.environ["DB_PASSWORD"]
+    # LLM — accept both EDW (LLM_API_KEY) and llama.cpp Docker (LLAMA_API_KEY) names
     if os.environ.get("LLM_API_KEY"):
         _llm["api_key"] = os.environ["LLM_API_KEY"]
+    if os.environ.get("LLAMA_API_KEY"):
+        _llm["api_key"] = os.environ["LLAMA_API_KEY"]
     if os.environ.get("LLM_BASE_URL"):
         _llm["base_url"] = os.environ["LLM_BASE_URL"]
     if os.environ.get("LLM_MODEL"):
         _llm["model"] = os.environ["LLM_MODEL"]
-    if os.environ.get("DB_PASSWORD"):
-        _pg["password"] = os.environ["DB_PASSWORD"]
 
     return config
 
@@ -249,3 +269,44 @@ def to_dt(val) -> Optional[date]:
             pass
 
     return result
+
+
+def check_config_sources(config_path=None) -> None:
+    """Diagnostic: load config and print resolved values with their source.
+
+    Never prints raw secret values — only masked versions.
+    Run from repo root:
+        python -c "from etl.tasks.common import check_config_sources; check_config_sources()"
+    """
+    cfg = load_config(config_path)
+    pg = cfg.get("postgres", {})
+    llm = cfg.get("llm", {})
+
+    def _mask(val):
+        if not val or str(val) == "none":
+            return "<NOT SET>"
+        s = str(val)
+        if len(s) <= 4:
+            return "****"
+        return s[:2] + "*" * (len(s) - 4) + s[-2:]
+
+    def _src(key_docker, key_edw=None):
+        if os.environ.get(key_docker):
+            return f"os.environ[{key_docker!r}]"
+        if key_edw and os.environ.get(key_edw):
+            return f"os.environ[{key_edw!r}]"
+        env_file = Path(_DEFAULT_CONFIG).parent / ".env"
+        if env_file.exists():
+            return "config/.env"
+        return "config/config.yaml"
+
+    print("\n=== Jackdaw EDW — config source audit ===")
+    print(f"  postgres.host     : {pg.get('host', '<NOT SET>')}  [{_src('POSTGRES_HOST')}]")
+    print(f"  postgres.port     : {pg.get('port', '<NOT SET>')}  [{_src('POSTGRES_PORT')}]")
+    print(f"  postgres.user     : {pg.get('user', '<NOT SET>')}  [{_src('POSTGRES_USER')}]")
+    print(f"  postgres.password : {_mask(pg.get('password'))}  [{_src('POSTGRES_PASSWORD', 'DB_PASSWORD')}]")
+    print(f"  postgres.database : {pg.get('database', '<NOT SET>')}  [{_src('POSTGRES_DB')}]")
+    print(f"  llm.base_url      : {llm.get('base_url', '<NOT SET>')}  [{_src('LLM_BASE_URL')}]")
+    print(f"  llm.api_key       : {_mask(llm.get('api_key'))}  [{_src('LLAMA_API_KEY', 'LLM_API_KEY')}]")
+    print(f"  llm.model         : {llm.get('model', '<NOT SET>')}  [{_src('LLM_MODEL')}]")
+    print("=========================================\n")
