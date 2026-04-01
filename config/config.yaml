@@ -29,6 +29,6 @@ llm:
   model: "qwen35-27b"
   api_key: "none"
   temperature: 0.1
-  max_tokens: 2048
-  thinking_budget: 512   # Qwen3 <think> token budget per LLM call (without limit: ~1750 tokens, ~60s)
+  max_tokens: 512        # thinking disabled server-side (--reasoning-budget 0); real usage ~8-50 tokens
+  thinking_budget: 0     # 0 = disabled via --reasoning-budget 0 on llamacpp-qwen27b
   timeout: 120

@@ -2,7 +2,8 @@
 Tier 3 LLM classifier for CRS cascade classifier.
 
 Handles the ~5-10% of comments that couldn't be classified by Tiers 0-2.
-Uses Qwen3 via Ollama (local LXC) in batch mode (32 items per call).
+Uses Qwen3.5-27B via llamacpp server (local LXC) in batch mode (32 items per call).
+Thinking mode disabled server-side via --reasoning-budget 0 flag.
 
 Process per comment:
   1. Extract parameters: tag_name, property_name, from_tag, to_tag, doc_number
@@ -346,7 +347,7 @@ def _build_prompt(
     system_msg = (
         "You are an engineering data classification system. "
         "Output ONLY a single JSON object. "
-        "Do NOT use <think> blocks. Do NOT explain. Do NOT use markdown. "
+        "No explanation. No markdown. "
         'Respond ONLY with: {"category":"CRS-C??","confidence":0.0,"response":"..."}'
     )
     user_msg = (
@@ -367,10 +368,9 @@ def _call_llm_batch(
     base_url: str,
     api_key: str = "none",
     temperature: float = 0.1,
-    max_tokens: int = 2048,
+    max_tokens: int = 512,
     logger: Any = None,
     timeout: float = 120.0,
-    thinking_budget: int = 512,
 ) -> list[dict[str, Any]]:
     """Call Ollama LLM for a batch of prompts.
 
@@ -404,17 +404,7 @@ def _call_llm_batch(
         api_key=api_key,
         temperature=temperature,
         max_tokens=max_tokens,
-        model_kwargs={
-            # Qwen3 thinking budget via llamacpp --jinja chat template.
-            # Without: ~1750 thinking tokens/call (~60s). With 512: ~15s/call.
-            # langchain_openai passes extra_body through model_kwargs to OpenAI SDK.
-            "extra_body": {
-                "thinking": {
-                    "type": "enabled",
-                    "budget_tokens": thinking_budget,
-                }
-            },
-        },
+        # thinking disabled server-side via --reasoning-budget 0 on llamacpp-qwen27b
     )
 
     results: list[dict[str, Any]] = []
@@ -645,9 +635,8 @@ def run_tier3_llm(
             ollama_base_url,
             api_key=ollama_api_key,
             temperature=llm_cfg.get("temperature", 0.1),
-            max_tokens=int(llm_cfg.get("max_tokens", 2048)),
+            max_tokens=int(llm_cfg.get("max_tokens", 512)),
             logger=logger,
-            thinking_budget=int(llm_cfg.get("thinking_budget", 512)),
         )
 
         # Pass 2: retry OTHER/low-confidence templates with full category list
@@ -671,9 +660,8 @@ def run_tier3_llm(
                     ollama_base_url,
                     api_key=ollama_api_key,
                     temperature=llm_cfg.get("temperature", 0.1),
-                    max_tokens=int(llm_cfg.get("max_tokens", 2048)),
+                    max_tokens=int(llm_cfg.get("max_tokens", 512)),
                     logger=logger,
-                    thinking_budget=int(llm_cfg.get("thinking_budget", 512)),
                 )
                 for local_i, out in zip(retry_local, retry_outputs):
                     llm_outputs[local_i] = out
