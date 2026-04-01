@@ -52,6 +52,8 @@ def load_config(config_path: "str | Path | None" = None) -> dict:
                 POSTGRES_HOST, POSTGRES_PORT, DB_PASSWORD (legacy)
       LLM:      LLM_API_KEY, LLAMA_API_KEY (llama.cpp docker name),
                 LLM_BASE_URL, LLM_MODEL
+      Storage:  EIS_EXPORT_DIR  → config["storage"]["export_dir"]
+                CRS_DATA_DIR    → config["storage"]["crs_data_dir"]
     """
     if config_path is None:
         config_path = os.getenv("EDW_CONFIG_PATH") or _DEFAULT_CONFIG
@@ -105,6 +107,12 @@ def load_config(config_path: "str | Path | None" = None) -> dict:
         _llm["base_url"] = os.environ["LLM_BASE_URL"]
     if os.environ.get("LLM_MODEL"):
         _llm["model"] = os.environ["LLM_MODEL"]
+    # Storage paths — Docker env vars override config.yaml defaults
+    _st = config.setdefault("storage", {})
+    if os.environ.get("EIS_EXPORT_DIR"):
+        _st["export_dir"] = os.environ["EIS_EXPORT_DIR"]
+    if os.environ.get("CRS_DATA_DIR"):
+        _st["crs_data_dir"] = os.environ["CRS_DATA_DIR"]
 
     return config
 
@@ -300,6 +308,8 @@ def check_config_sources(config_path=None) -> None:
             return "config/.env"
         return "config/config.yaml"
 
+    st = cfg.get("storage", {})
+
     print("\n=== Jackdaw EDW — config source audit ===")
     print(f"  postgres.host     : {pg.get('host', '<NOT SET>')}  [{_src('POSTGRES_HOST')}]")
     print(f"  postgres.port     : {pg.get('port', '<NOT SET>')}  [{_src('POSTGRES_PORT')}]")
@@ -309,4 +319,6 @@ def check_config_sources(config_path=None) -> None:
     print(f"  llm.base_url      : {llm.get('base_url', '<NOT SET>')}  [{_src('LLM_BASE_URL')}]")
     print(f"  llm.api_key       : {_mask(llm.get('api_key'))}  [{_src('LLAMA_API_KEY', 'LLM_API_KEY')}]")
     print(f"  llm.model         : {llm.get('model', '<NOT SET>')}  [{_src('LLM_MODEL')}]")
+    print(f"  storage.export_dir : {st.get('export_dir', '<NOT SET>')}  [{_src('EIS_EXPORT_DIR')}]")
+    print(f"  storage.crs_data   : {st.get('crs_data_dir', '<NOT SET>')}  [{_src('CRS_DATA_DIR')}]")
     print("=========================================\n")
