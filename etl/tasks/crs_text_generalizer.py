@@ -33,6 +33,12 @@ _TAG_RE = re.compile(
 
 _DOC_RE = re.compile(r"JDAW-[A-Z0-9\-]+", re.IGNORECASE)
 
+# NOTE: _PROPERTY_RE is kept for reference / potential future use in Tier 1/2,
+# but is intentionally NOT applied in generalize_comment().
+# Property names (DESIGN_PRESSURE, FLUID_SERVICE, etc.) are meaningful context
+# for the LLM and should be preserved in the generalised key.
+# The catch-all [A-Z][A-Z0-9_]{4,} with re.IGNORECASE was destroying
+# ordinary English words, producing meaningless keys.
 _PROPERTY_RE = re.compile(
     r"\b(DESIGN_PRESSURE|DESIGN_TEMPERATURE|OPERATING_PRESSURE|OPERATING_TEMPERATURE"
     r"|FLUID_SERVICE|MATERIAL_GRADE|INSULATION_TYPE|HEAT_TRACING|IP_GRADE|EX_CLASS"
@@ -60,10 +66,12 @@ def generalize_comment(text: str) -> str:
     Substitutions applied in priority order:
         1. Document numbers (JDAW-...) → "<DOC>"
         2. Tag names (JDA-... / alphanumeric codes) → "<TAG>"
-        3. Engineering property names (DESIGN_PRESSURE etc.) → "<PROP>"
-        4. Standalone integers → "N"
-        5. Strip trailing punctuation
-        6. Normalise whitespace + lowercase
+        3. Standalone integers → "N"
+        4. Strip trailing punctuation
+        5. Normalise whitespace + lowercase
+
+    Property names (DESIGN_PRESSURE, FLUID_SERVICE etc.) are intentionally
+    preserved — they carry semantic meaning for the LLM classifier.
 
     Args:
         text: Raw comment or group_comment string.
@@ -75,7 +83,7 @@ def generalize_comment(text: str) -> str:
         >>> generalize_comment("For 8990 listed tags process unit is not defined")
         'for N listed tags process unit is not defined'
         >>> generalize_comment("JDA-SB-V3C-F001 missing DESIGN_PRESSURE value")
-        '<tag> missing <prop> value'
+        '<tag> missing design_pressure value'
         >>> generalize_comment("JDAW-MEC-0042 not found in DocMaster")
         '<doc> not found in docmaster'
         >>> generalize_comment("")
@@ -89,7 +97,7 @@ def generalize_comment(text: str) -> str:
     # Doc numbers before tags — JDAW-... would also match the broad TAG pattern
     result = _DOC_RE.sub("<DOC>", result)
     result = _TAG_RE.sub("<TAG>", result)
-    result = _PROPERTY_RE.sub("<PROP>", result)
+    # _PROPERTY_RE intentionally not applied — see note above
     result = _INT_RE.sub("N", result)
 
     result = _TRAILING_PUNCT_RE.sub("", result)
