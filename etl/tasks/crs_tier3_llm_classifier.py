@@ -242,7 +242,7 @@ def _load_crs_templates(engine: Engine) -> list[dict[str, Any]]:
 def _build_categories_line(
     templates: list[dict[str, Any]],
     domain: str | None = None,
-    max_chars: int = 400,
+    max_chars: int = 1200,
 ) -> str:
     """Build compact category hints string for LLM prompt injection.
 
@@ -367,8 +367,10 @@ def _call_llm_batch(
     base_url: str,
     api_key: str = "none",
     temperature: float = 0.1,
-    max_tokens: int = 2048,   # was 1024 — increased for thinking suppression overhead
+    max_tokens: int = 2048,
     logger: Any = None,
+    timeout: float = 120.0,
+    thinking_budget: int = 512,
 ) -> list[dict[str, Any]]:
     """Call Ollama LLM for a batch of prompts.
 
@@ -402,6 +404,11 @@ def _call_llm_batch(
         api_key=api_key,
         temperature=temperature,
         max_tokens=max_tokens,
+        model_kwargs={
+            # Qwen3 thinking budget via llamacpp --jinja chat template.
+            # Without: ~1750 thinking tokens/call (~60s). With 512: ~15s/call.
+            "thinking": {"type": "enabled", "budget_tokens": thinking_budget},
+        },
     )
 
     results: list[dict[str, Any]] = []
@@ -482,6 +489,7 @@ def _resolve_llm_url(llm_cfg: dict) -> str:
 def run_tier3_llm(
     comments: list[dict[str, Any]],
     engine: Engine,
+    two_pass: bool | None = None,   # None → read from env TIER3_TWO_PASS; default False
 ) -> list[dict[str, Any]]:
     """LLM-based classification for complex/unclear comments (Tier 3).
 
@@ -520,7 +528,11 @@ def run_tier3_llm(
     ollama_base_url = _resolve_llm_url(llm_cfg)
     ollama_model    = os.environ.get("OLLAMA_MODEL")    or llm_cfg["model"]
     ollama_api_key  = os.environ.get("OLLAMA_API_KEY")  or llm_cfg.get("api_key", "none")
-    two_pass_enabled = os.environ.get("TIER3_TWO_PASS", "true").lower() == "true"
+    if two_pass is not None:
+        two_pass_enabled = two_pass
+    else:
+        # env var default is now "false" — single-pass with full category list
+        two_pass_enabled = os.environ.get("TIER3_TWO_PASS", "false").lower() == "true"
 
     # Log endpoint so it's always visible in Prefect UI — helps diagnose connectivity fast
     logger.info("Tier 3: using Ollama endpoint=%s model=%s two_pass=%s",
@@ -554,6 +566,7 @@ def run_tier3_llm(
     unique_params: list[dict[str, str | None]] = []
     unique_sql_results: list[list[dict[str, Any]]] = []
     unique_reps: list[dict[str, Any]] = []
+    unique_domains: list[str] = []
 
     for key, rows in groups.items():
         rep = rows[0]  # representative row for parameter extraction and prompting
@@ -576,13 +589,17 @@ def run_tier3_llm(
         if vq:
             sql_result = _run_verification(vq, params, engine)
 
-        # Pass 1: domain-filtered narrow categories
-        # Use the generalised key for domain detection (entity-free text)
         domain = _detect_comment_domain(key)
-        categories_narrow = _build_categories_line(crs_templates, domain=domain)
+        if two_pass_enabled:
+            # Two-pass: Pass 1 uses domain-filtered narrow list
+            categories_pass1 = _build_categories_line(crs_templates, domain=domain)
+        else:
+            # Single-pass (default): full category list from the start
+            categories_pass1 = _build_categories_line(crs_templates, domain=None)
 
         unique_keys.append(key)
-        unique_prompts.append(_build_prompt(rep, params, sql_result, categories_narrow))
+        unique_prompts.append(_build_prompt(rep, params, sql_result, categories_pass1))
+        unique_domains.append(domain)
         unique_params.append(params)
         unique_sql_results.append(sql_result)
         unique_reps.append(rep)
@@ -594,14 +611,31 @@ def run_tier3_llm(
     for batch_start in range(0, len(unique_prompts), _LLM_BATCH_SIZE):
         batch_prompts = unique_prompts[batch_start : batch_start + _LLM_BATCH_SIZE]
 
+        for _pi, (_pk, _pp, _dom) in enumerate(zip(
+                unique_keys[batch_start : batch_start + _LLM_BATCH_SIZE],
+                batch_prompts,
+                unique_domains[batch_start : batch_start + _LLM_BATCH_SIZE])):
+            _sys, _usr = _pp if isinstance(_pp, tuple) else ("", _pp)
+            _cat_count = _usr.count("CRS-C")
+            logger.info(
+                "Tier 3 [#%d/%d] domain=%-10s categories_in_prompt=%d key=%r",
+                batch_start + _pi + 1, len(unique_keys),
+                _dom, _cat_count, _pk[:60],
+            )
+            logger.debug(
+                "Tier 3 [#%d] FULL PROMPT\n--- SYSTEM ---\n%s\n--- USER ---\n%s\n--- END ---",
+                batch_start + _pi + 1, _sys, _usr,
+            )
+
         llm_outputs = _call_llm_batch(
             batch_prompts,
             ollama_model,
             ollama_base_url,
             api_key=ollama_api_key,
             temperature=llm_cfg.get("temperature", 0.1),
-            max_tokens=llm_cfg.get("max_tokens", 1024),
+            max_tokens=int(llm_cfg.get("max_tokens", 2048)),
             logger=logger,
+            thinking_budget=int(llm_cfg.get("thinking_budget", 512)),
         )
 
         # Pass 2: retry OTHER/low-confidence templates with full category list
@@ -625,8 +659,9 @@ def run_tier3_llm(
                     ollama_base_url,
                     api_key=ollama_api_key,
                     temperature=llm_cfg.get("temperature", 0.1),
-                    max_tokens=llm_cfg.get("max_tokens", 1024),
+                    max_tokens=int(llm_cfg.get("max_tokens", 2048)),
                     logger=logger,
+                    thinking_budget=int(llm_cfg.get("thinking_budget", 512)),
                 )
                 for local_i, out in zip(retry_local, retry_outputs):
                     llm_outputs[local_i] = out
@@ -635,6 +670,9 @@ def run_tier3_llm(
                     "Tier 3: Pass 2 retried %d items with full category list.",
                     len(retry_local),
                 )
+        else:
+            # Single-pass mode: no retry — full category list was used in Pass 1
+            pass
 
         all_llm_outputs.extend(llm_outputs)
 

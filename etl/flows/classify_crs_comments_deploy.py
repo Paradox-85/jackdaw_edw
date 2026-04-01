@@ -62,6 +62,7 @@ def classify_crs_comments_cascade(
     sheet_filter: str | None = None,
     dry_run: bool = False,
     tier3_only: bool = False,
+    two_pass: bool = False,
 ) -> dict[str, int]:
     """4-tier cascade classifier for CRS comments.
 
@@ -91,7 +92,8 @@ def classify_crs_comments_cascade(
     fetch_limit = limit if limit > 0 else 9_999_999
     logger.info(
         "CRS Cascade Classifier starting — run_id=%s, revision=%s, limit=%s, "
-        "batch_size=%d, check_type=%s, sheet=%s, dry_run=%s, tier3_only=%s",
+        "batch_size=%d, check_type=%s, sheet=%s, dry_run=%s, tier3_only=%s, "
+        "tier3_two_pass=%s",
         run_id,
         revision_filter or "ALL",
         limit if limit > 0 else "ALL",
@@ -100,6 +102,7 @@ def classify_crs_comments_cascade(
         sheet_filter or "ALL",
         dry_run,
         tier3_only,
+        two_pass,
     )
 
     comments = load_received_comments(
@@ -190,7 +193,7 @@ def classify_crs_comments_cascade(
             logger.info("tier3_only=True — skipping Tiers 0-2 for this batch.")
 
         # --- Tier 3: LLM (only remaining ~5-10%, or all if tier3_only) ---
-        t3_results = run_tier3_llm(batch, engine)
+        t3_results = run_tier3_llm(batch, engine, two_pass=two_pass)
         stats["tier3"] += len(t3_results)
         all_results.extend(t3_results)
 
@@ -285,6 +288,18 @@ if __name__ == "__main__":
             "Useful for testing two-pass classification quality."
         ),
     )
+    parser.add_argument(
+        "--two-pass",
+        action="store_true",
+        default=False,
+        dest="two_pass",
+        help=(
+            "Enable two-pass LLM strategy for Tier 3: "
+            "Pass 1 uses domain-filtered category list, "
+            "Pass 2 retries OTHER results with full list. "
+            "Default (no flag): single-pass with full category list."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -297,6 +312,7 @@ if __name__ == "__main__":
             sheet_filter=args.sheet,
             dry_run=args.dry_run,
             tier3_only=args.tier3_only,
+            two_pass=args.two_pass,
         )
         print(result)
     else:

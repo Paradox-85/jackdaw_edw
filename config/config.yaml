@@ -30,4 +30,5 @@ llm:
   api_key: "none"
   temperature: 0.1
   max_tokens: 2048
+  thinking_budget: 512   # Qwen3 <think> token budget per LLM call (without limit: ~1750 tokens, ~60s)
   timeout: 120
