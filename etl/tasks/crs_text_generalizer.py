@@ -18,9 +18,27 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# Import compiled regex patterns from tier3 — single source of truth,
-# no duplication of pattern definitions.
-from etl.tasks.crs_tier3_llm_classifier import _TAG_RE, _DOC_RE, _PROPERTY_RE
+# ---------------------------------------------------------------------------
+# Compiled regex patterns — source of truth for all CRS classifier modules.
+# crs_tier3_llm_classifier imports these from here (one-way dependency).
+# ---------------------------------------------------------------------------
+
+_TAG_RE = re.compile(
+    r"""
+    JDA-[A-Z0-9\.\-]+          |  # JDA-SB-V3C-F001
+    \b[A-Z]{2,6}[0-9]{3,}\b       # HIS0163, STN0264
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_DOC_RE = re.compile(r"JDAW-[A-Z0-9\-]+", re.IGNORECASE)
+
+_PROPERTY_RE = re.compile(
+    r"\b(DESIGN_PRESSURE|DESIGN_TEMPERATURE|OPERATING_PRESSURE|OPERATING_TEMPERATURE"
+    r"|FLUID_SERVICE|MATERIAL_GRADE|INSULATION_TYPE|HEAT_TRACING|IP_GRADE|EX_CLASS"
+    r"|MANUFACTURER|SERIAL_NUMBER|MODEL_NUMBER|[A-Z][A-Z0-9_]{4,})\b",
+    re.IGNORECASE,
+)
 
 # Matches standalone integers — replaced with "N" to merge "8990 tags" with "15 tags"
 _INT_RE = re.compile(r"\b\d+\b")

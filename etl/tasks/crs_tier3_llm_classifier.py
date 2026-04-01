@@ -29,7 +29,15 @@ import re
 from typing import Any
 
 from etl.tasks.common import load_config, get_llm_config
-from etl.tasks.crs_text_generalizer import broadcast_result, group_by_generalized
+# Regex patterns live in crs_text_generalizer (source of truth — breaks circular import).
+# Dependency is one-way: crs_tier3 → crs_text_generalizer (never the reverse).
+from etl.tasks.crs_text_generalizer import (
+    broadcast_result,
+    group_by_generalized,
+    _TAG_RE,
+    _DOC_RE,
+    _PROPERTY_RE,
+)
 
 from prefect import task, get_run_logger
 from prefect.cache_policies import NO_CACHE
@@ -100,23 +108,6 @@ _FALLBACK_CATEGORIES: dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Parameter extraction
 # ---------------------------------------------------------------------------
-
-_TAG_RE = re.compile(
-    r"""
-    JDA-[A-Z0-9\.\-]+          |  # JDA-SB-V3C-F001
-    \b[A-Z]{2,6}[0-9]{3,}\b       # HIS0163, STN0264
-    """,
-    re.IGNORECASE | re.VERBOSE,
-)
-
-_DOC_RE = re.compile(r"JDAW-[A-Z0-9\-]+", re.IGNORECASE)
-
-_PROPERTY_RE = re.compile(
-    r"\b(DESIGN_PRESSURE|DESIGN_TEMPERATURE|OPERATING_PRESSURE|OPERATING_TEMPERATURE"
-    r"|FLUID_SERVICE|MATERIAL_GRADE|INSULATION_TYPE|HEAT_TRACING|IP_GRADE|EX_CLASS"
-    r"|MANUFACTURER|SERIAL_NUMBER|MODEL_NUMBER|[A-Z][A-Z0-9_]{4,})\b",
-    re.IGNORECASE,
-)
 
 _DOMAIN_KEYWORDS: dict[str, list[str]] = {
     "document": ["document", "drawing", "datasheet", "specification", "dwg",
