@@ -407,7 +407,13 @@ def _call_llm_batch(
         model_kwargs={
             # Qwen3 thinking budget via llamacpp --jinja chat template.
             # Without: ~1750 thinking tokens/call (~60s). With 512: ~15s/call.
-            "thinking": {"type": "enabled", "budget_tokens": thinking_budget},
+            # langchain_openai passes extra_body through model_kwargs to OpenAI SDK.
+            "extra_body": {
+                "thinking": {
+                    "type": "enabled",
+                    "budget_tokens": thinking_budget,
+                }
+            },
         },
     )
 
@@ -434,7 +440,7 @@ def _call_llm_batch(
             parsed = _extract_json_from_response(raw)
             if parsed is not None:
                 cat = parsed.get("category", "OTHER")
-                if cat not in _VALID_CATEGORIES:
+                if cat not in _VALID_CATEGORIES and cat != "UNCLASSIFIED":
                     cat = "OTHER"
                 resp = (parsed.get("response") or "").strip()
                 if not resp:
@@ -454,13 +460,19 @@ def _call_llm_batch(
                     )
                 results.append({"category": "OTHER", "confidence": 0.5, "response": raw[:200]})
         except Exception as e:  # noqa: BLE001
+            err_type = type(e).__name__
+            err_short = str(e)[:120]
             # Log EVERY connection/timeout error explicitly — previously silent
             if logger:
                 logger.warning(
                     "Tier 3: LLM call failed for prompt #%d — %s: %s",
-                    i, type(e).__name__, e,
+                    i, err_type, e,
                 )
-            results.append({"category": "OTHER", "confidence": 0.5, "response": f"LLM error: {type(e).__name__}: {e}"})
+            results.append({
+                "category":   "UNCLASSIFIED",
+                "confidence": 0.0,
+                "response":   f"[LLM_ERROR:{err_type}] {err_short}",
+            })
     return results
 
 
@@ -680,6 +692,7 @@ def run_tier3_llm(
     key_results: dict[str, dict[str, Any]] = {}
     for key, llm_out, params in zip(unique_keys, all_llm_outputs, unique_params):
         confidence = llm_out.get("confidence", 0.7)
+        # UNCLASSIFIED (LLM connection error, confidence=0.0) → DEFERRED automatically
         status = "IN_REVIEW" if confidence >= 0.7 else "DEFERRED"
         key_results[key] = {
             "llm_category":            llm_out["category"],
@@ -698,10 +711,14 @@ def run_tier3_llm(
 
     in_review = sum(1 for r in results if r.get("status") == "IN_REVIEW")
     deferred = sum(1 for r in results if r.get("status") == "DEFERRED")
+    llm_errors = sum(
+        1 for out in all_llm_outputs
+        if out.get("response", "").startswith("[LLM_ERROR:")
+    )
     logger.info(
         "Tier 3: %d rows → %d unique templates | %d in_review, %d deferred, "
-        "%d pass2_retried (model=%s).",
+        "%d pass2_retried, %d llm_errors (model=%s).",
         len(results), len(unique_keys), in_review, deferred,
-        total_pass2_retried, ollama_model,
+        total_pass2_retried, llm_errors, ollama_model,
     )
     return results
