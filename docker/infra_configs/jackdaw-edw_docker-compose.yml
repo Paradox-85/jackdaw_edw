@@ -133,6 +133,7 @@ services:
       PREFECT_API_URL: "http://prefect-server:4200/api"
       OLLAMA_URL: "http://ollama:11434" # Connected via ai_core_network
       EIS_EXPORT_DIR: "/mnt/shared-data/ram-user/Jackdaw/Export/EIS/"
+      CRS_DATA_DIR: "/mnt/shared-data/ram-user/Jackdaw/EIS-Data/"
     volumes:
       - /mnt/shared-data:/mnt/shared-data:rw
     depends_on:
