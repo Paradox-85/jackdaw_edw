@@ -84,16 +84,11 @@ services:
         condition: service_healthy
     environment:
       PREFECT_API_URL: https://pve.prefect.adzv-pt.dev/api
-      # DB credentials — injected from .env, consumed by load_config() in ETL flows
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_HOST: postgres
-      # LLM API key — same key as ai-core llamacpp service
       LLAMA_API_KEY: ${LLAMA_API_KEY}
-      # Storage paths — override config.yaml defaults for Docker filesystem layout
-      EIS_EXPORT_DIR: "/mnt/shared-data/ram-user/Jackdaw/Export/EIS"
-      CRS_DATA_DIR: "/mnt/shared-data/ram-user/Jackdaw/EIS-Data"
+      LLM_BASE_URL: "http://llamacpp-qwen27b:8081/v1"
     volumes:
       - /mnt/shared-data:/mnt/shared-data
     # Note: Keep an eye on entrypoint, it overrides Dockerfile's CMD/ENTRYPOINT
@@ -144,6 +139,8 @@ services:
       OLLAMA_URL: "http://ollama:11434" # Connected via ai_core_network
       EIS_EXPORT_DIR: "/mnt/shared-data/ram-user/Jackdaw/Export/EIS/"
       CRS_DATA_DIR: "/mnt/shared-data/ram-user/Jackdaw/EIS-Data/"
+      LLAMA_API_KEY: ${LLAMA_API_KEY}
+      LLM_BASE_URL: "http://llamacpp-qwen27b:8081/v1"
     volumes:
       - /mnt/shared-data:/mnt/shared-data:rw
     depends_on:
