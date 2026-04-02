@@ -49,11 +49,13 @@ CREATE INDEX IF NOT EXISTS idx_crs_template_domain
 -- Part B: DML — seed 179 canonical comment templates
 -- template_hash computed inline: md5(lower(trim(template_text)))
 -- source = 'manual' (curated reference data, not LLM-generated)
+-- category derived from category_code prefix to satisfy NOT NULL constraint
+--   (column `category TEXT NOT NULL` defined in migration_017)
 -- =============================================================================
 
 INSERT INTO audit_core.crs_comment_template
     (category_code, domain, template_text, template_hash,
-     short_template_text, severity, source)
+     short_template_text, severity, source, category)
 SELECT
     category_code,
     domain,
@@ -61,7 +63,24 @@ SELECT
     md5(lower(trim(template_text))),
     short_template_text,
     severity,
-    'manual'
+    'manual',
+    CASE
+        WHEN category_code LIKE 'TAG-06%' OR category_code LIKE 'TAG-07%'
+             THEN 'SAFETY'
+        WHEN category_code LIKE 'TAG-%'   OR category_code LIKE 'AREA-%'
+             THEN 'TAG_DATA'
+        WHEN category_code LIKE 'EQUIP-%'
+             THEN 'EQUIPMENT_DATA'
+        WHEN category_code LIKE 'EQPROP-%' OR category_code LIKE 'TPROP-%'
+          OR category_code LIKE 'TCPROP-%'
+             THEN 'PROPERTY'
+        WHEN category_code LIKE 'TCONN-%'  THEN 'TAG_CONNECTION'
+        WHEN category_code LIKE 'DOC-%'    THEN 'DOCUMENT'
+        WHEN category_code LIKE 'PO-%'     THEN 'PURCHASE_ORDER'
+        WHEN category_code LIKE 'PU-%'     THEN 'PROCESS_UNIT'
+        WHEN category_code LIKE 'MPART-%'  THEN 'MODEL_PART'
+        ELSE 'OTHER'
+    END
 FROM (VALUES
 
 -- =========================================================================
@@ -256,7 +275,7 @@ FROM (VALUES
   ('DOC-052', 'document', 'Site code must be standardised — use the approved site code format.',                                           'Site code format incorrect',                  'Warning'),
   ('DOC-060', 'document', 'Documents are not available in the Document Management system or are in NYI (Not Yet Issued) status.',          'Document not in DMS or NYI',                  'Critical'),
   ('DOC-061', 'document', 'Contractor is asked to reference associated loop diagrams against each tag.',                                    'Loop diagram reference missing',              'Warning'),
-  ('DOC-062', 'document', 'Contractor is asked to reference associated layout drawings against each tag.',                                  'Layout drawing reference missing',            'Warning'),
+  ('DOC-062', 'document', 'Contractor is asked to reference associated layout drawings against each tag.',                                  'Layout drawing reference missing',             'Warning'),
   ('DOC-063', 'document', 'Contractor is asked to reference associated P&ID or schematics against each tag.',                              'PID schematic reference missing',             'Warning'),
   ('DOC-064', 'document', 'Document is submitted as a combined file — individual documents should be referenced separately.',               'Combined document file submitted',            'Info'),
 
@@ -307,6 +326,7 @@ ON CONFLICT (category_code) DO UPDATE SET
     template_hash       = EXCLUDED.template_hash,
     short_template_text = EXCLUDED.short_template_text,
     severity            = EXCLUDED.severity,
+    category            = EXCLUDED.category,
     updated_at          = now();
 
 COMMIT;
