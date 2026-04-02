@@ -115,7 +115,7 @@ def _reset_classification(engine: Any, revision: str, log: logging.Logger) -> No
                     llm_category_confidence = NULL,
                     llm_response         = NULL,
                     llm_model_used       = NULL
-                WHERE revision_code = :rev
+                WHERE revision = :rev
                   AND status != 'RECEIVED'
             """),
             {"rev": revision},
