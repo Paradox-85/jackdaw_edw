@@ -18,6 +18,7 @@ import argparse
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -260,6 +261,9 @@ def _run_tier3_debug(
         )
 
         # ── E. LLM call ───────────────────────────────────────────────────
+        timeout_val = float(llm_cfg.get("timeout", 30.0))
+        log.info("  [%d/%d] calling LLM (timeout=%.0fs)…", idx, total, timeout_val)
+        _t0 = time.monotonic()
         result = _call_llm_single_debug(
             (system_msg, user_msg),
             model,
@@ -267,8 +271,9 @@ def _run_tier3_debug(
             api_key,
             temperature=float(llm_cfg.get("temperature", 0.1)),
             max_tokens=int(llm_cfg.get("max_tokens", 512)),
-            timeout=float(llm_cfg.get("timeout", 30.0)),
+            timeout=timeout_val,
         )
+        log.info("  [%d/%d] LLM responded in %.1fs", idx, total, time.monotonic() - _t0)
 
         if result["error"]:
             log.error("  LLM ERROR: %s", result["error"])

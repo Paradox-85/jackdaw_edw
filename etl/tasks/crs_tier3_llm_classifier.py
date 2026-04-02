@@ -29,6 +29,8 @@ import os
 import re
 from typing import Any
 
+import httpx
+
 from etl.tasks.common import load_config, get_llm_config
 # Regex patterns live in crs_text_generalizer (source of truth — breaks circular import).
 # Dependency is one-way: crs_tier3 → crs_text_generalizer (never the reverse).
@@ -370,7 +372,7 @@ def _call_llm_batch(
     temperature: float = 0.1,
     max_tokens: int = 512,
     logger: Any = None,
-    timeout: float = 120.0,
+    timeout: float = 30.0,
 ) -> list[dict[str, Any]]:
     """Call Ollama LLM for a batch of prompts.
 
@@ -404,6 +406,7 @@ def _call_llm_batch(
         api_key=api_key,
         temperature=temperature,
         max_tokens=max_tokens,
+        http_client=httpx.Client(timeout=timeout),
         # thinking disabled server-side via --reasoning-budget 0 on llamacpp-qwen27b
     )
 
@@ -473,7 +476,7 @@ def _call_llm_single_debug(
     api_key: str = "none",
     temperature: float = 0.1,
     max_tokens: int = 512,
-    timeout: float = 120.0,
+    timeout: float = 30.0,
 ) -> dict[str, Any]:
     """Single-prompt LLM call returning raw response + token usage for debugging.
 
@@ -502,7 +505,7 @@ def _call_llm_single_debug(
         api_key=api_key,
         temperature=temperature,
         max_tokens=max_tokens,
-        timeout=timeout,
+        http_client=httpx.Client(timeout=timeout),
     )
     system_content, user_content = prompt
     messages = [SystemMessage(content=system_content), HumanMessage(content=user_content)]
