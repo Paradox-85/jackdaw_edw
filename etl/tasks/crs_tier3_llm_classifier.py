@@ -466,6 +466,92 @@ def _call_llm_batch(
     return results
 
 
+def _call_llm_single_debug(
+    prompt: tuple[str, str],
+    model: str,
+    base_url: str,
+    api_key: str = "none",
+    temperature: float = 0.1,
+    max_tokens: int = 512,
+    timeout: float = 120.0,
+) -> dict[str, Any]:
+    """Single-prompt LLM call returning raw response + token usage for debugging.
+
+    Args:
+        prompt: (system_content, user_content) tuple.
+        model: Ollama model name.
+        base_url: Ollama OpenAI-compatible endpoint URL.
+        api_key: API key (dummy value for local Ollama).
+        temperature: Sampling temperature.
+        max_tokens: Maximum tokens per response.
+        timeout: Request timeout in seconds.
+
+    Returns:
+        Dict with keys:
+            category, confidence, response — parsed result (same as _call_llm_batch)
+            raw_response                  — full raw string from LLM
+            prompt_tokens, completion_tokens, total_tokens — from response_metadata
+            error                         — error string if call failed, else None
+    """
+    from langchain_openai import ChatOpenAI  # type: ignore[import]
+    from langchain_core.messages import HumanMessage, SystemMessage  # type: ignore[import]
+
+    llm = ChatOpenAI(
+        model=model,
+        base_url=base_url,
+        api_key=api_key,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    system_content, user_content = prompt
+    messages = [SystemMessage(content=system_content), HumanMessage(content=user_content)]
+
+    base_result: dict[str, Any] = {
+        "category":          "UNCLASSIFIED",
+        "confidence":        0.0,
+        "response":          "",
+        "raw_response":      "",
+        "prompt_tokens":     0,
+        "completion_tokens": 0,
+        "total_tokens":      0,
+        "error":             None,
+    }
+    try:
+        msg = llm.invoke(messages)
+        raw = msg.content.strip()
+        base_result["raw_response"] = raw
+
+        # Token usage — LangChain stores in response_metadata under token_usage key
+        usage = getattr(msg, "response_metadata", {}).get("token_usage") or {}
+        base_result["prompt_tokens"]     = usage.get("prompt_tokens", 0)
+        base_result["completion_tokens"] = usage.get("completion_tokens", 0)
+        base_result["total_tokens"]      = usage.get("total_tokens", 0)
+
+        parsed = _extract_json_from_response(raw)
+        if parsed:
+            cat = parsed.get("category", "OTHER")
+            if cat not in _VALID_CATEGORIES and cat != "UNCLASSIFIED":
+                cat = "OTHER"
+            resp = (parsed.get("response") or "").strip()
+            if not resp:
+                resp = f"Auto-classified as {cat}"
+            base_result.update({
+                "category":   cat,
+                "confidence": float(parsed.get("confidence", 0.7)),
+                "response":   resp,
+            })
+        else:
+            base_result.update({
+                "category":   "OTHER",
+                "confidence": 0.5,
+                "response":   raw[:200],
+            })
+    except Exception as e:  # noqa: BLE001
+        base_result["error"] = f"{type(e).__name__}: {e}"
+
+    return base_result
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
