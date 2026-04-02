@@ -141,6 +141,12 @@ def _detect_comment_domain(comment_text: str) -> str:
     if "<doc>" in lower or _DOC_RE.search(comment_text):
         return "document"
 
+    # Early exit for generalised property placeholder (post-scrubbing).
+    # _PROPERTY_RE matches raw codes (DESIGN_PRESSURE etc.); after generalization only <prop> remains.
+    # Must precede keyword loop — otherwise falls through to "other".
+    if "<prop>" in lower or _PROPERTY_RE.search(comment_text):
+        return "property"
+
     # Save tag placeholder match — evaluated after keyword priority pass
     tag_match = "<tag>" in lower or bool(_TAG_RE.search(comment_text))
 
@@ -148,8 +154,6 @@ def _detect_comment_domain(comment_text: str) -> str:
         if any(kw in lower for kw in keywords):
             return domain
 
-    if "<prop>" in lower or _PROPERTY_RE.search(comment_text):
-        return "property"
     if tag_match:
         return "tag"
     return "other"
@@ -437,7 +441,8 @@ def _call_llm_batch(
             parsed = _extract_json_from_response(raw)
             if parsed is not None:
                 cat = parsed.get("category", "OTHER")
-                if cat not in _VALID_CATEGORIES and cat != "UNCLASSIFIED":
+                # UNCLASSIFIED is internal error sentinel — LLM returning it maps to OTHER
+                if cat not in _VALID_CATEGORIES:
                     cat = "OTHER"
                 resp = (parsed.get("response") or "").strip()
                 if not resp:
@@ -799,9 +804,10 @@ def run_tier3_llm(
 
     in_review = sum(1 for r in results if r.get("status") == "IN_REVIEW")
     deferred = sum(1 for r in results if r.get("status") == "DEFERRED")
+    # Count broadcast rows (N) — consistent with in_review/deferred which also use results
     llm_errors = sum(
-        1 for out in all_llm_outputs
-        if out.get("response", "").startswith("[LLM_ERROR:")
+        1 for r in results
+        if (r.get("llm_response") or "").startswith("[LLM_ERROR:")
     )
     logger.info(
         "Tier 3: %d rows → %d unique templates | %d in_review, %d deferred, "
