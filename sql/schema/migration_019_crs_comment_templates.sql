@@ -6,7 +6,7 @@
 --   2. crs_comment_templates_extended.sql     (Claude Sonnet, 149 rows)
 --   3. crs_comment_by_domain.xlsx             (1071 real CRS comments)
 -- Merge: union deduplicated on category_code, numerics stripped.
--- Idempotent: ON CONFLICT (category_code) DO UPDATE — safe to re-run.
+-- Idempotent: ON CONFLICT (template_hash) DO UPDATE — safe to re-run.
 -- Total: 179 templates | 12 domains
 -- Severity: Critical=68 | Warning=104 | Info=7
 -- =============================================================================
@@ -18,12 +18,12 @@ BEGIN;
 -- =============================================================================
 
 ALTER TABLE audit_core.crs_comment_template
-    ADD COLUMN IF NOT EXISTS category_code TEXT       NULL,
-    ADD COLUMN IF NOT EXISTS domain        TEXT       NULL,
-    ADD COLUMN IF NOT EXISTS severity      TEXT       NULL DEFAULT 'Warning',
+    ADD COLUMN IF NOT EXISTS category_code TEXT        NULL,
+    ADD COLUMN IF NOT EXISTS domain        TEXT        NULL,
+    ADD COLUMN IF NOT EXISTS severity      TEXT        NULL DEFAULT 'Warning',
     ADD COLUMN IF NOT EXISTS updated_at    TIMESTAMPTZ NULL DEFAULT now();
 
--- UNIQUE constraint on category_code (required for ON CONFLICT target)
+-- UNIQUE constraint on category_code (informational; upsert key is template_hash)
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -48,9 +48,14 @@ CREATE INDEX IF NOT EXISTS idx_crs_template_domain
 -- =============================================================================
 -- Part B: DML — seed 179 canonical comment templates
 -- template_hash computed inline: md5(lower(trim(template_text)))
--- source = 'manual' (curated reference data, not LLM-generated)
+-- source   = 'manual' (curated reference data, not LLM-generated)
 -- category derived from category_code prefix to satisfy NOT NULL constraint
 --   (column `category TEXT NOT NULL` defined in migration_017)
+--
+-- ON CONFLICT target: template_hash  (UNIQUE constraint crs_comment_template_hash_key
+--   defined in migration_017 — the original primary dedup key of this table).
+--   category_code uniqueness is enforced by the constraint added in Part A above,
+--   but template_hash fires first in PostgreSQL constraint evaluation order.
 -- =============================================================================
 
 INSERT INTO audit_core.crs_comment_template
@@ -132,7 +137,7 @@ FROM (VALUES
   ('TAG-043', 'tag', 'Process unit code does not match or is not available in the Process Unit register.',                                 'Tag process unit not in register',          'Critical'),
   ('TAG-044', 'tag', 'Process unit code is set to "NA" — check and correct.',                                                             'Tag process unit code is NA',               'Warning'),
   -- Parent tag
-  ('TAG-050', 'tag', 'Parent tag is missing for tags of classes such as Valve, Transmitter, Pipe — provide parent tag where possible.',   'Parent tag missing for physical tag',       'Warning'),
+  ('TAG-050', 'tag', 'Parent tag is missing for tags of classes such as Valve, Transmitter, Pipe — provide parent tag where possible.',   'Parent tag missing for physical tag',       'Weight'),
   ('TAG-051', 'tag', 'Parent tag referenced does not exist in the tag register — parent tag must be a valid active tag.',                  'Parent tag not in MTR',                     'Critical'),
   ('TAG-052', 'tag', 'Tag itself is listed as its own parent tag — self-reference not permitted.',                                         'Tag is own parent tag',                     'Critical'),
   ('TAG-053', 'tag', 'Parent tag for a pipe tag is also a pipe tag — acceptable only for small bore/nipple connections.',                  'Pipe parent tag is also pipe',              'Warning'),
@@ -320,13 +325,14 @@ FROM (VALUES
   ('OTHER-008', 'other', 'General comment — data quality is improving but outstanding items from previous revision still require attention.',                      'Outstanding items from previous revision',   'Info')
 
 ) AS v(category_code, domain, template_text, short_template_text, severity)
-ON CONFLICT (category_code) DO UPDATE SET
+ON CONFLICT (template_hash) DO UPDATE SET
+    category_code       = EXCLUDED.category_code,
     domain              = EXCLUDED.domain,
     template_text       = EXCLUDED.template_text,
-    template_hash       = EXCLUDED.template_hash,
     short_template_text = EXCLUDED.short_template_text,
     severity            = EXCLUDED.severity,
     category            = EXCLUDED.category,
+    source              = EXCLUDED.source,
     updated_at          = now();
 
 COMMIT;
