@@ -64,7 +64,7 @@ _FALLBACK_CATEGORIES: dict[str, str] = {
     "CRS-C06": "area code blank",
     "CRS-C07": "area code invalid",
     "CRS-C08": "process unit code missing",
-    "CRS-C09": "process unit not in register",
+    "CRS-C09": "process unit not in register or set to NA/Not Applicable",
     "CRS-C10": "parent tag missing for physical tag",
     "CRS-C11": "parent tag not in MTR",
     "CRS-C12": "pipe-to-pipe parent reference",
@@ -350,7 +350,11 @@ def _build_prompt(
         "You are an engineering data classification system. "
         "Output ONLY a single JSON object. "
         "No explanation. No markdown. "
-        'Respond ONLY with: {"category":"CRS-C??","confidence":0.0,"response":"..."}'
+        "Classification rules: "
+        "use CRS-C08 ONLY when a field is truly blank or absent; "
+        "use CRS-C09 when a field contains 'NA', 'N/A', 'Not Applicable', "
+        "'none', or a placeholder value that is not a valid register entry. "
+        'Respond ONLY with: {"category":"CRS-C??","confidence":0.0,"response":"one sentence max"}'
     )
     user_msg = (
         f"CLASSIFY THIS COMMENT:\n"
@@ -359,7 +363,7 @@ def _build_prompt(
         f"DB check: {result_str}\n\n"
         f"Valid categories: CRS-C01 through CRS-C50\n"
         f"({categories_line})\n\n"
-        f'OUTPUT (JSON only): {{"category":"CRS-C??","confidence":0.0,"response":"..."}}'
+        f'OUTPUT (JSON only): {{"category":"CRS-C??","confidence":0.0,"response":"one sentence max"}}'
     )
     return system_msg, user_msg
 
@@ -661,7 +665,13 @@ def run_tier3_llm(
     unique_domains: list[str] = []
 
     for key, rows in groups.items():
-        rep = rows[0]  # representative row for parameter extraction and prompting
+        # Prefer a row where `comment` differs from `group_comment` (specific error text).
+        # Falls back to rows[0] if all rows share the same comment/group_comment value.
+        rep = next(
+            (r for r in rows
+             if r.get("comment") and r.get("comment") != r.get("group_comment")),
+            rows[0],
+        )
         text_val = rep.get("comment") or rep.get("group_comment") or ""
 
         params = extract_parameters(text_val)

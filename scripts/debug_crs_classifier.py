@@ -215,7 +215,12 @@ def _run_tier3_debug(
     total  = len(groups)
 
     for idx, (key, rows) in enumerate(groups.items(), start=1):
-        rep      = rows[0]  # representative row — use first member of group
+        # Prefer row with specific comment (differs from group_comment sheet header).
+        rep = next(
+            (r for r in rows
+             if r.get("comment") and r.get("comment") != r.get("group_comment")),
+            rows[0],
+        )
         raw_text = rep.get("comment") or rep.get("group_comment") or ""
 
         # ── A. Normalised comment ──────────────────────────────────────────
@@ -252,7 +257,9 @@ def _run_tier3_debug(
 
         # ── C. Domain detection ────────────────────────────────────────────
         domain          = _detect_comment_domain(normalised)
-        categories_line = _build_categories_line(templates, domain=None)
+        # Pass detected domain — mirrors production two_pass=True behaviour.
+        # Helps validate domain filtering logic during development.
+        categories_line = _build_categories_line(templates, domain=domain)
         cat_count       = categories_line.count("CRS-C")
         log.info("  domain:     %s  |  categories_in_prompt=%d", domain, cat_count)
 
