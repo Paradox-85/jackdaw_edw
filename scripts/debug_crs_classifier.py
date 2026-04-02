@@ -104,7 +104,6 @@ def _reset_classification(engine: Any, revision: str, log: logging.Logger) -> No
         revision: Revision code to reset.
         log: Logger instance.
     """
-    log.info("_reset_classification for revision=%s: initated, setting status back to RECEIVED and clearing classification fields.", revision)
     
     with engine.begin() as conn:
         result = conn.execute(
@@ -324,6 +323,7 @@ def main() -> None:
     args = parse_args()
     setup_logging(args.verbose)
     log = logging.getLogger("debug_crs")
+    log.info("Starting CRS debug classifier with args: %s", args)
 
     engine = get_engine()
 
