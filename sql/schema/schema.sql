@@ -392,6 +392,26 @@ CREATE TABLE "audit_core"."crs_comment_template" (
   CONSTRAINT "chk_crs_template_source" CHECK (source IN ('llm', 'manual', 'rule')),
   CONSTRAINT "chk_crs_template_object_status" CHECK (object_status IN ('Active', 'Inactive'))
 );
+CREATE TABLE "audit_core"."crs_llm_template_staging" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "template_text" TEXT NOT NULL,
+  "template_hash" CHAR(32) NOT NULL,
+  "suggested_category" VARCHAR(20) NOT NULL,
+  "check_type" VARCHAR(50) NULL,
+  "confidence" NUMERIC(4,3) NOT NULL,
+  "llm_response" TEXT NULL,
+  "revision" VARCHAR(20) NULL,
+  "occurrence_count" INTEGER NOT NULL DEFAULT 1,
+  "last_seen_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
+  "created_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
+  "object_status" VARCHAR(20) NOT NULL DEFAULT 'PendingReview',
+  "reviewed_at" TIMESTAMPTZ NULL,
+  "review_notes" TEXT NULL,
+  CONSTRAINT "crs_llm_staging_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "uq_llm_staging_hash" UNIQUE ("template_hash"),
+  CONSTRAINT "chk_llm_staging_confidence" CHECK (confidence BETWEEN 0.0 AND 1.0),
+  CONSTRAINT "chk_llm_staging_status" CHECK (object_status IN ('PendingReview', 'Approved', 'Rejected'))
+);
 CREATE TABLE "audit_core"."crs_comment" (
   "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
   "crs_doc_number" TEXT NOT NULL,
