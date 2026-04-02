@@ -112,50 +112,63 @@ _FALLBACK_CATEGORIES: dict[str, str] = {
 # Parameter extraction
 # ---------------------------------------------------------------------------
 
-_DOMAIN_KEYWORDS: dict[str, list[str]] = {
-    "document": ["document", "drawing", "datasheet", "specification", "dwg",
-                 "rev ", "revision", "mdr", "transmittal"],
-    "property": ["pressure", "temperature", "flow", "material", "rating",
-                 "grade", "insulation", "diameter", "capacity", "voltage", "weight"],
-    "safety":   ["safety", "sil", "sece", "hazard", "relief", "psv", "prv",
-                 "ex class", "ip grade", "atex"],
-    "tag":      ["tag", "equipment", "instrument", "valve", "pump",
-                 "missing", "not found", "does not exist"],
-    "revision": ["revision", "rev ", "updated", "superseded", "obsolete", "withdrawn"],
+# ---------------------------------------------------------------------------
+# Domain detection — seq-code routing (deterministic)
+# Source of truth: eis_registers dict in the import flow.
+# Seq-code = the 3-digit segment between the 5th and 6th dashes in the
+# detail_sheet filename, e.g. "...00001-003-A36..." → "-003-" → "tag".
+# Domain values MUST match check_type values in audit_core.crs_comment_template.
+# ---------------------------------------------------------------------------
+
+_SEQ_TO_DOMAIN: dict[str, str] = {
+    "-001-": "area",                # EIS 203 — Area register
+    "-002-": "process_unit",        # EIS 204 — ProcessUnit register
+    "-003-": "tag",                 # EIS 205 — Tag Register (MTR)
+    "-004-": "equipment",           # EIS 206 — Equipment Register
+    "-005-": "model_part",          # EIS 209 — Model Part Register
+    "-006-": "tag_connection",      # EIS 212 — Tag Physical Connections
+    "-008-": "purchase_order",      # EIS 214 — Purchase Order Register
+    "-009-": "tag_class_property",  # EIS 307 — Tag Class Properties (schema)
+    "-010-": "tag_property",        # EIS 303 — Tag Property Values (EAV)
+    "-011-": "equipment_property",  # EIS 301 — Equipment Property Values (EAV)
+    "-016-": "document",            # EIS 412 — Doc→Tag
+    "-017-": "document",            # EIS 411 — Doc→Area
+    "-018-": "document",            # EIS 410 — Doc→ProcessUnit
+    "-019-": "document",            # EIS 413 — Doc→Equipment
+    "-020-": "document",            # EIS 414 — Doc→ModelPart
+    "-022-": "document",            # EIS 420 — Doc→PurchaseOrder
+    "-023-": "document",            # EIS 409 — Doc→PlantCode
+    "-024-": "document",            # EIS 408 — Doc→Site
 }
 
 
-def _detect_comment_domain(comment_text: str) -> str:
-    """Classify comment into broad domain without LLM — keyword matching only.
+def _detect_comment_domain(comment_text: str, detail_sheet: str = "") -> str:
+    """Determine comment domain from detail_sheet filename seq-code.
 
-    Returns one of: 'document', 'property', 'safety', 'tag', 'revision', 'other'.
-    Handles both raw text (with real entity codes) and generalised text (with
-    <doc>/<tag>/<prop> placeholders produced by generalize_comment()).
-    Doc regex checked first (high precision); keyword dicts in priority order;
-    tag/property regexes used as secondary signal if keywords don't match.
+    The seq-code segment (e.g. '-003-', '-016-') in the detail_sheet filename
+    maps deterministically to a domain per the JDAW EIS register mapping
+    (source of truth: eis_registers dict in the import flow).
+
+    Domain values match check_type in audit_core.crs_comment_template —
+    used by _build_categories_line() to filter LLM prompt to relevant categories.
+
+    Falls back to regex heuristics ONLY when detail_sheet is absent
+    (synthetic/test data without a real filename).
+    Returns one of the domain values in _SEQ_TO_DOMAIN, or 'other'.
     """
-    lower = comment_text.lower()
+    if detail_sheet:
+        for seq, domain in _SEQ_TO_DOMAIN.items():
+            if seq in detail_sheet:
+                return domain
 
-    # Check for generalised document placeholder first (post-scrubbing), then raw regex.
-    # After group_by_generalized(), JDAW-... codes become "<doc>" — raw regex never matches.
+    # Fallback: regex heuristics for synthetic/test data only (no detail_sheet).
+    lower = comment_text.lower()
     if "<doc>" in lower or _DOC_RE.search(comment_text):
         return "document"
-
-    # Early exit for generalised property placeholder (post-scrubbing).
-    # _PROPERTY_RE matches raw codes (DESIGN_PRESSURE etc.); after generalization only <prop> remains.
-    # Must precede keyword loop — otherwise falls through to "other".
-    if "<prop>" in lower or _PROPERTY_RE.search(comment_text):
-        return "property"
-
-    # Save tag placeholder match — evaluated after keyword priority pass
-    tag_match = "<tag>" in lower or bool(_TAG_RE.search(comment_text))
-
-    for domain, keywords in _DOMAIN_KEYWORDS.items():
-        if any(kw in lower for kw in keywords):
-            return domain
-
-    if tag_match:
+    if "<tag>" in lower or _TAG_RE.search(comment_text):
         return "tag"
+    if "<prop>" in lower or _PROPERTY_RE.search(comment_text):
+        return "tag_property"
     return "other"
 
 
@@ -696,10 +709,9 @@ def run_tier3_llm(
         if vq:
             sql_result = _run_verification(vq, params, engine)
 
-        # Detect domain from raw comment text, NOT from the generalised key.
-        # The generalised key contains <tag>/<doc>/<prop> placeholders that
-        # corrupt keyword matching (e.g. <prop> always triggers "property" domain).
-        domain = _detect_comment_domain(text_val)
+        # Domain derived from detail_sheet filename seq-code (deterministic).
+        # rep is the representative row for this comment group.
+        domain = _detect_comment_domain(text_val, detail_sheet=rep.get("detail_sheet", ""))
         if two_pass_enabled:
             # Two-pass: Pass 1 uses domain-filtered narrow list
             categories_pass1 = _build_categories_line(crs_templates, domain=domain)
