@@ -267,6 +267,7 @@ def _run_tier3_debug(
             api_key,
             temperature=float(llm_cfg.get("temperature", 0.1)),
             max_tokens=int(llm_cfg.get("max_tokens", 512)),
+            timeout=float(llm_cfg.get("timeout", 30.0)),
         )
 
         if result["error"]:

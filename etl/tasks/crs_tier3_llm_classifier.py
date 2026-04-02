@@ -502,6 +502,7 @@ def _call_llm_single_debug(
         api_key=api_key,
         temperature=temperature,
         max_tokens=max_tokens,
+        timeout=timeout,
     )
     system_content, user_content = prompt
     messages = [SystemMessage(content=system_content), HumanMessage(content=user_content)]
