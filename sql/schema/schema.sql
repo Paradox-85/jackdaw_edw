@@ -387,8 +387,13 @@ CREATE TABLE "audit_core"."crs_comment_template" (
   "created_at" TIMESTAMP NOT NULL DEFAULT now(),
   "object_status" TEXT NOT NULL DEFAULT 'Active'::text,
   "short_template_text" TEXT NULL,
+  "category_code"       TEXT NULL,
+  "domain"              TEXT NULL,
+  "severity"            TEXT NULL DEFAULT 'Warning'::text,
+  "updated_at"          TIMESTAMPTZ NULL DEFAULT now(),
   CONSTRAINT "crs_comment_template_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "crs_comment_template_hash_key" UNIQUE ("template_hash"),
+  CONSTRAINT "crs_comment_template_category_code_key" UNIQUE ("category_code"),
   CONSTRAINT "chk_crs_template_source" CHECK (source IN ('llm', 'manual', 'rule')),
   CONSTRAINT "chk_crs_template_object_status" CHECK (object_status IN ('Active', 'Inactive'))
 );

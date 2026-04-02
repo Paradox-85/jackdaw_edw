@@ -141,6 +141,23 @@ _SEQ_TO_DOMAIN: dict[str, str] = {
     "-024-": "document",            # EIS 408 — Doc→Site
 }
 
+# All domain values that appear in audit_core.crs_comment_template.domain.
+# Must stay in sync with migration_019_crs_comment_templates.sql.
+KNOWN_DOMAINS: list[str] = [
+    "tag",
+    "equipment",
+    "tag_property",
+    "equipment_property",
+    "tag_connection",
+    "tag_class_property",
+    "document",
+    "purchase_order",
+    "process_unit",
+    "area",
+    "model_part",
+    "other",
+]
+
 
 def _detect_comment_domain(comment_text: str, detail_sheet: str = "") -> str:
     """Determine comment domain from detail_sheet filename seq-code.
