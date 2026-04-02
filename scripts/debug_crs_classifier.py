@@ -14,9 +14,18 @@ Usage:
 """
 from __future__ import annotations
 
+import os
+
+# Suppress Prefect API calls and telemetry banner before any other imports.
+# Without these, importing etl.tasks.* modules that use @task decorator
+# triggers a Prefect server DNS/TCP lookup that hangs ~30s when run outside
+# the container network.
+os.environ.setdefault("PREFECT_API_URL", "")
+os.environ.setdefault("DO_NOT_TRACK", "1")
+os.environ.setdefault("PREFECT_SERVER_ANALYTICS_ENABLED", "false")
+
 import argparse
 import logging
-import os
 import sys
 import time
 from pathlib import Path
@@ -26,15 +35,6 @@ from typing import Any
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
-
-from sqlalchemy import text  # noqa: E402 — after sys.path bootstrap
-
-from etl.tasks.crs_helpers import get_engine, load_received_comments  # noqa: E402
-from etl.tasks.crs_text_generalizer import generalize_comment, group_by_generalized  # noqa: E402
-from etl.tasks.crs_tier0_prefilter import run_tier0  # noqa: E402
-from etl.tasks.crs_tier1_template_matcher import run_tier1  # noqa: E402
-from etl.tasks.crs_tier2_keyword_classifier import run_tier2  # noqa: E402
-from etl.tasks.common import load_config, get_llm_config  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +104,8 @@ def _reset_classification(engine: Any, revision: str, log: logging.Logger) -> No
         revision: Revision code to reset.
         log: Logger instance.
     """
-    
+    from sqlalchemy import text
+
     with engine.begin() as conn:
         result = conn.execute(
             text("""
@@ -138,6 +139,8 @@ def _log_tier_results(
 
     Format: [Tier N] group_key='...' → category=CRS-C08 confidence=1.0 status=IN_REVIEW (N rows)
     """
+    from etl.tasks.crs_text_generalizer import group_by_generalized  # noqa: PLC0415
+
     if not classified:
         log.info("[Tier %d] 0 classified.", tier_num)
         return
@@ -178,7 +181,7 @@ def _run_tier3_debug(
         args: Parsed CLI args (for verbose flag).
         log: Logger instance.
     """
-    from etl.tasks.crs_tier3_llm_classifier import (
+    from etl.tasks.crs_tier3_llm_classifier import (  # noqa: PLC0415
         _build_prompt,
         _call_llm_single_debug,
         _build_categories_line,
@@ -190,6 +193,8 @@ def _run_tier3_debug(
         _detect_comment_domain,
         _resolve_llm_url,
     )
+    from etl.tasks.crs_text_generalizer import generalize_comment, group_by_generalized  # noqa: PLC0415
+    from etl.tasks.common import load_config, get_llm_config  # noqa: PLC0415
 
     llm_cfg  = get_llm_config(load_config())
     base_url = _resolve_llm_url(llm_cfg)
@@ -323,6 +328,17 @@ def main() -> None:
     args = parse_args()
     setup_logging(args.verbose)
     log = logging.getLogger("debug_crs")
+
+    # Lazy imports — deferred until after env vars are set above, so Prefect
+    # @task decorators don't trigger an API server lookup at module load time.
+    log.info("Importing ETL modules…")
+    from etl.tasks.crs_helpers import get_engine, load_received_comments  # noqa: PLC0415
+    from etl.tasks.crs_text_generalizer import group_by_generalized  # noqa: PLC0415
+    from etl.tasks.crs_tier0_prefilter import run_tier0  # noqa: PLC0415
+    from etl.tasks.crs_tier1_template_matcher import run_tier1  # noqa: PLC0415
+    from etl.tasks.crs_tier2_keyword_classifier import run_tier2  # noqa: PLC0415
+    log.info("ETL modules loaded.")
+
     log.info("Starting CRS debug classifier with args: %s", args)
 
     engine = get_engine()
