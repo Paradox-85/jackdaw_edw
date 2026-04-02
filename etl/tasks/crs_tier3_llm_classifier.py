@@ -696,7 +696,10 @@ def run_tier3_llm(
         if vq:
             sql_result = _run_verification(vq, params, engine)
 
-        domain = _detect_comment_domain(key)
+        # Detect domain from raw comment text, NOT from the generalised key.
+        # The generalised key contains <tag>/<doc>/<prop> placeholders that
+        # corrupt keyword matching (e.g. <prop> always triggers "property" domain).
+        domain = _detect_comment_domain(text_val)
         if two_pass_enabled:
             # Two-pass: Pass 1 uses domain-filtered narrow list
             categories_pass1 = _build_categories_line(crs_templates, domain=domain)

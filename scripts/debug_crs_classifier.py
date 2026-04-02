@@ -256,7 +256,9 @@ def _run_tier3_debug(
         log.info("  sql_result: %s", sql_result[:2])
 
         # ── C. Domain detection ────────────────────────────────────────────
-        domain          = _detect_comment_domain(normalised)
+        # Use raw_text for domain detection — normalised text has <prop>/<tag>/<doc>
+        # placeholders that corrupt keyword-based domain matching.
+        domain          = _detect_comment_domain(raw_text)
         # Pass detected domain — mirrors production two_pass=True behaviour.
         # Helps validate domain filtering logic during development.
         categories_line = _build_categories_line(templates, domain=domain)
