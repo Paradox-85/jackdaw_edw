@@ -258,7 +258,7 @@ def _run_tier3_debug(
         # ── C. Domain detection ────────────────────────────────────────────
         # Use raw_text for domain detection — normalised text has <prop>/<tag>/<doc>
         # placeholders that corrupt keyword-based domain matching.
-        domain          = _detect_comment_domain(raw_text)
+        domain          = _detect_comment_domain(raw_text, detail_sheet=rep.get("detail_sheet") or "")
         # Pass detected domain — mirrors production two_pass=True behaviour.
         # Helps validate domain filtering logic during development.
         categories_line = _build_categories_line(templates, domain=domain)
@@ -396,12 +396,13 @@ def main() -> None:
     classified: list[dict[str, Any]] = []
     run_tier = args.tier.lower()
 
-    if run_tier in ("0", "1", "2", "all"):
-        log.info("── Tier 0: pre-filter ──  (%d comments)", len(remaining))
-        remaining, t0 = run_tier0(remaining, engine)
-        classified.extend(t0)
-        _log_tier_results(log, 0, t0)
-        log.info("Tier 0: %d handled, %d remaining.", len(t0), len(remaining))
+    # Tier 0 always runs — mandatory pre-filter regardless of --tier flag.
+    # Mirrors production flow where Tier 0 always precedes all other tiers.
+    log.info("── Tier 0: pre-filter ──  (%d comments)", len(remaining))
+    remaining, t0 = run_tier0(remaining, engine)
+    classified.extend(t0)
+    _log_tier_results(log, 0, t0)
+    log.info("Tier 0: %d handled, %d remaining.", len(t0), len(remaining))
 
     if run_tier in ("1", "2", "all"):
         log.info("── Tier 1: template KB match ──  (%d comments)", len(remaining))

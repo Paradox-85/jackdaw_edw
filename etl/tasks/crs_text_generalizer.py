@@ -128,7 +128,9 @@ def group_by_generalized(comments: list[dict[str, Any]]) -> dict[str, list[dict[
     """
     groups: dict[str, list[dict[str, Any]]] = {}
     for comment in comments:
-        raw = comment.get("comment") or comment.get("group_comment") or ""
+        _c = comment.get("comment")
+        _g = comment.get("group_comment")
+        raw = (_c.strip() if isinstance(_c, str) and _c.strip() else None) or _g or ""
         key = generalize_comment(raw)
         if key not in groups:
             groups[key] = []

@@ -48,6 +48,13 @@ _INFO_PATTERN = re.compile(
     r"|confirmed\b"
     r"|ok\b|okay\b"
     r"|noted\b"
+    r"|no\s+matching\s+detail\s+sheet(\s+found)?"
+    r"|multiple\s+comments[:\s]"
+    r"|this\s+sheet\s+contains\s+multiple\s+comments"
+    r"|please\s+find\s+(the\s+)?attached(\s+file)?"
+    r"|please\s+(refer|see)\s+(the\s+)?attach(ed)?"
+    r"|data\s+is\s+still\s+to\s+be\s+completed"
+    r"|data\s+to\s+be\s+completed\s+in\s+next"
     r")\b",
     re.IGNORECASE,
 )
@@ -85,7 +92,9 @@ def should_skip(
         (True, reason) if should skip; (False, None) otherwise.
     """
     # 1. Informational text
-    text = comment.get("comment") or comment.get("group_comment") or ""
+    _c = comment.get("comment")
+    _g = comment.get("group_comment")
+    text = (_c.strip() if isinstance(_c, str) and _c.strip() else None) or _g or ""
     if _INFO_PATTERN.search(text):
         return True, SKIP_REASON_INFORMATIONAL
 

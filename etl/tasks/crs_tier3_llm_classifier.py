@@ -160,32 +160,18 @@ KNOWN_DOMAINS: list[str] = [
 
 
 def _detect_comment_domain(comment_text: str, detail_sheet: str = "") -> str:
-    """Determine comment domain from detail_sheet filename seq-code.
+    """Determine comment domain from detail_sheet filename seq-code only.
 
-    The seq-code segment (e.g. '-003-', '-016-') in the detail_sheet filename
-    maps deterministically to a domain per the JDAW EIS register mapping
-    (source of truth: eis_registers dict in the import flow).
-
-    Domain values match check_type in audit_core.crs_comment_template —
-    used by _build_categories_line() to filter LLM prompt to relevant categories.
-
-    Falls back to regex heuristics ONLY when detail_sheet is absent
-    (synthetic/test data without a real filename).
-    Returns one of the domain values in _SEQ_TO_DOMAIN, or 'other'.
+    Maps the seq-code segment (e.g. '-003-', '-016-') in the detail_sheet
+    filename deterministically to a domain per the JDAW EIS register mapping.
+    Returns 'other' if detail_sheet is absent or seq-code not recognised —
+    _build_categories_line() with domain='other' falls back to ALL templates
+    (safe default: LLM sees full category list).
     """
     if detail_sheet:
         for seq, domain in _SEQ_TO_DOMAIN.items():
             if seq in detail_sheet:
                 return domain
-
-    # Fallback: regex heuristics for synthetic/test data only (no detail_sheet).
-    lower = comment_text.lower()
-    if "<doc>" in lower or _DOC_RE.search(comment_text):
-        return "document"
-    if "<tag>" in lower or _TAG_RE.search(comment_text):
-        return "tag"
-    if "<prop>" in lower or _PROPERTY_RE.search(comment_text):
-        return "tag_property"
     return "other"
 
 
