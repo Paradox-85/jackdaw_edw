@@ -55,6 +55,7 @@ def load_received_comments(
 
     Args:
         limit: Maximum rows to fetch (use 100 for smoke tests, 5000+ for batches).
+               Pass 0 to fetch all rows (no LIMIT applied).
         engine: SQLAlchemy engine.
         revision_filter: Optional revision code to restrict scope (e.g. 'A36').
                          When provided, only comments from that revision are loaded.
@@ -64,6 +65,9 @@ def load_received_comments(
         List of row dicts with all crs_comment columns.
     """
     revision_clause = "AND revision = :revision" if revision_filter else ""
+    # limit=0 means "fetch all" — omit LIMIT clause entirely.
+    # SQL LIMIT 0 returns zero rows, which is never the desired behaviour here.
+    limit_clause = "LIMIT :lim" if limit > 0 else ""
 
     sql = text(f"""
         SELECT
@@ -86,10 +90,12 @@ def load_received_comments(
           AND object_status = 'Active'
           {revision_clause}
         ORDER BY crs_doc_number, id
-        LIMIT :lim
+        {limit_clause}
     """)
 
-    params: dict[str, Any] = {"lim": limit}
+    params: dict[str, Any] = {}
+    if limit > 0:
+        params["lim"] = limit
     if revision_filter:
         params["revision"] = revision_filter
 
