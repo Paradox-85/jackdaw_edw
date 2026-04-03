@@ -50,62 +50,73 @@ from sqlalchemy.engine import Engine
 # LLM batch size — 32 items per Ollama call reduces per-item overhead ~85%
 _LLM_BATCH_SIZE = 32
 
-# Categories the LLM is allowed to return (validated on parse)
-_VALID_CATEGORIES: frozenset[str] = frozenset(f"CRS-C{i:02d}" for i in range(1, 51))
+# Categories the LLM is allowed to return (validated on parse).
+# CRS-C001..C050 = canonical categories; CRS-C051..C229 = granular sub-categories
+# (assigned by migration_022_crs_template_harmonisation.sql — one code per row).
+_VALID_CATEGORIES: frozenset[str] = frozenset(f"CRS-C{i:03d}" for i in range(1, 230))
 
 # Fallback category dict — used when DB has no active templates (migration not applied,
 # empty table, or DB unreachable). Ensures LLM always receives a non-empty category list.
+# Keys use 3-digit format (CRS-C001..CRS-C229) per migration_022_crs_template_harmonisation.sql.
+# CRS-C051..CRS-C229 populated after running migration_022 + querying:
+#   SELECT category, short_template_text FROM audit_core.crs_comment_template
+#   WHERE object_status='Active' AND category > 'CRS-C050' ORDER BY category;
 _FALLBACK_CATEGORIES: dict[str, str] = {
-    "CRS-C01": "missing required fields",
-    "CRS-C02": "tag description missing",
-    "CRS-C03": "description too long",
-    "CRS-C04": "tag class not in RDL",
-    "CRS-C05": "tag naming convention violated",
-    "CRS-C06": "area code blank",
-    "CRS-C07": "area code invalid",
-    "CRS-C08": "process unit code missing",
-    "CRS-C09": "process unit not in register or set to NA/Not Applicable",
-    "CRS-C10": "parent tag missing for physical tag",
-    "CRS-C11": "parent tag not in MTR",
-    "CRS-C12": "pipe-to-pipe parent reference",
-    "CRS-C13": "safety critical item blank or invalid",
-    "CRS-C14": "safety critical reason missing",
-    "CRS-C15": "production critical item blank",
-    "CRS-C16": "duplicate tags",
-    "CRS-C17": "property tag not in MTR",
-    "CRS-C18": "UOM present when value is NA",
-    "CRS-C19": "property value is zero",
-    "CRS-C20": "property not in class scope",
-    "CRS-C21": "tag has no properties",
-    "CRS-C22": "mandatory property missing",
-    "CRS-C23": "equipment class not in RDL",
-    "CRS-C24": "equipment description blank",
-    "CRS-C25": "manufacturer serial number blank",
-    "CRS-C26": "model part name blank",
-    "CRS-C27": "manufacturer company blank",
-    "CRS-C28": "equipment tag not in MTR",
-    "CRS-C29": "plant code invalid",
-    "CRS-C30": "document missing or NYI/CAN status",
-    "CRS-C31": "tag has no document reference",
-    "CRS-C32": "document in mapping not in DocMaster",
-    "CRS-C33": "tag in mapping not in MTR",
-    "CRS-C34": "document area code missing",
-    "CRS-C35": "document process unit missing",
-    "CRS-C36": "PO code not in register",
-    "CRS-C37": "PO date missing",
-    "CRS-C38": "company name missing or invalid",
-    "CRS-C39": "duplicate physical connections",
-    "CRS-C40": "equipment has no document mapping",
-    "CRS-C41": "EX class or IP grade missing",
-    "CRS-C42": "MC package code missing",
-    "CRS-C43": "heat tracing type missing",
-    "CRS-C44": "insulation type missing",
-    "CRS-C45": "from-tag or to-tag not in MTR",
-    "CRS-C46": "tag linked to inactive document",
-    "CRS-C47": "revision status inconsistent",
-    "CRS-C48": "property UOM not in RDL",
-    "CRS-C49": "tag status inconsistent with class",
-    "CRS-C50": "circular parent hierarchy",
+    "CRS-C001": "missing required fields",
+    "CRS-C002": "tag description missing",
+    "CRS-C003": "description too long",
+    "CRS-C004": "tag class not in RDL",
+    "CRS-C005": "tag naming convention violated",
+    "CRS-C006": "area code blank",
+    "CRS-C007": "area code invalid",
+    "CRS-C008": "process unit code missing",
+    "CRS-C009": "process unit not in register or set to NA/Not Applicable",
+    "CRS-C010": "parent tag missing for physical tag",
+    "CRS-C011": "parent tag not in MTR",
+    "CRS-C012": "pipe-to-pipe parent reference",
+    "CRS-C013": "safety critical item blank or invalid",
+    "CRS-C014": "safety critical reason missing",
+    "CRS-C015": "production critical item blank",
+    "CRS-C016": "duplicate tags",
+    "CRS-C017": "property tag not in MTR",
+    "CRS-C018": "UOM present when value is NA",
+    "CRS-C019": "property value is zero",
+    "CRS-C020": "property not in class scope",
+    "CRS-C021": "tag has no properties",
+    "CRS-C022": "mandatory property missing",
+    "CRS-C023": "equipment class not in RDL",
+    "CRS-C024": "equipment description blank",
+    "CRS-C025": "manufacturer serial number blank",
+    "CRS-C026": "model part name blank",
+    "CRS-C027": "manufacturer company blank",
+    "CRS-C028": "equipment tag not in MTR",
+    "CRS-C029": "plant code invalid",
+    "CRS-C030": "document missing or NYI/CAN status",
+    "CRS-C031": "tag has no document reference",
+    "CRS-C032": "document in mapping not in DocMaster",
+    "CRS-C033": "tag in mapping not in MTR",
+    "CRS-C034": "document area code missing",
+    "CRS-C035": "document process unit missing",
+    "CRS-C036": "PO code not in register",
+    "CRS-C037": "PO date missing",
+    "CRS-C038": "company name missing or invalid",
+    "CRS-C039": "duplicate physical connections",
+    "CRS-C040": "equipment has no document mapping",
+    "CRS-C041": "EX class or IP grade missing",
+    "CRS-C042": "MC package code missing",
+    "CRS-C043": "heat tracing type missing",
+    "CRS-C044": "insulation type missing",
+    "CRS-C045": "from-tag or to-tag not in MTR",
+    "CRS-C046": "tag linked to inactive document",
+    "CRS-C047": "revision status inconsistent",
+    "CRS-C048": "property UOM not in RDL",
+    "CRS-C049": "tag status inconsistent with class",
+    "CRS-C050": "circular parent hierarchy",
+    # CRS-C051..CRS-C229: granular sub-categories assigned by migration_022.
+    # Populate by running: SELECT category, short_template_text
+    #   FROM audit_core.crs_comment_template
+    #   WHERE object_status='Active' AND category > 'CRS-C050'
+    #   ORDER BY category;
 }
 
 # ---------------------------------------------------------------------------
@@ -141,8 +152,8 @@ _SEQ_TO_DOMAIN: dict[str, str] = {
     "-024-": "document",            # EIS 408 — Doc→Site
 }
 
-# All domain values that appear in audit_core.crs_comment_template.domain.
-# Must stay in sync with migration_019_crs_comment_templates.sql.
+# All valid check_type values in audit_core.crs_comment_template.
+# Must stay in sync with migration_022_crs_template_harmonisation.sql.
 KNOWN_DOMAINS: list[str] = [
     "tag",
     "equipment",
@@ -155,7 +166,6 @@ KNOWN_DOMAINS: list[str] = [
     "process_unit",
     "area",
     "model_part",
-    "other",
 ]
 
 
@@ -164,15 +174,15 @@ def _detect_comment_domain(comment_text: str, detail_sheet: str = "") -> str:
 
     Maps the seq-code segment (e.g. '-003-', '-016-') in the detail_sheet
     filename deterministically to a domain per the JDAW EIS register mapping.
-    Returns 'other' if detail_sheet is absent or seq-code not recognised —
-    _build_categories_line() with domain='other' falls back to ALL templates
+    Returns '' if detail_sheet is absent or seq-code not recognised —
+    _build_categories_line() with domain='' falls back to ALL templates
     (safe default: LLM sees full category list).
     """
     if detail_sheet:
         for seq, domain in _SEQ_TO_DOMAIN.items():
             if seq in detail_sheet:
                 return domain
-    return "other"
+    return ""
 
 
 def _extract_json_from_response(raw: str) -> dict[str, Any] | None:
@@ -805,6 +815,13 @@ def run_tier3_llm(
         confidence = llm_out.get("confidence", 0.7)
         # UNCLASSIFIED (LLM connection error, confidence=0.0) → DEFERRED automatically
         status = "IN_REVIEW" if confidence >= 0.7 else "DEFERRED"
+        # Look up template to get the correct category_code (CRS-C01..C50)
+        # LLM returns "category" field which is the category_code in templates
+        matched_template = next(
+            (t for t in crs_templates if t.get("category_code") == llm_out["category"]),
+            None
+        )
+
         key_results[key] = {
             "llm_category":            llm_out["category"],
             "llm_category_confidence": confidence,
@@ -813,7 +830,7 @@ def run_tier3_llm(
             "classification_tier":     3,
             "status":                  status,
             "_extracted_params":       params,
-            "category_code":           llm_out["category"],
+            "category_code":           llm_out["category"],  # LLM returns category_code (CRS-C01)
             "category_confidence":     confidence,
         }
 

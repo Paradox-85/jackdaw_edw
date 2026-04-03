@@ -101,11 +101,11 @@ def _load_templates(engine: Engine) -> list[dict[str, Any]]:
     """Fetch all active templates from audit_core.crs_comment_template.
 
     Returns list of dicts with keys: id, template_text, template_hash,
-    category, check_type, response_template, confidence.
+    category, check_type, confidence.
     """
     sql = text("""
         SELECT id, template_text, template_hash,
-               category, check_type, response_template, confidence
+               category, check_type, confidence
         FROM audit_core.crs_comment_template
         WHERE object_status = 'Active'
         ORDER BY usage_count DESC
@@ -153,7 +153,17 @@ def run_tier1(
         norm = normalise_comment(raw_text)
         h = _hash(norm)
 
-        # 1. Exact hash match (O(1))
+        # Domain pre-filtering: restrict fuzzy search to templates matching comment domain.
+        # Reduces cross-domain false positives (e.g. equipment template matching tag comment).
+        # Falls back to all templates when domain is unknown or no templates for that domain.
+        domain = comment.get("domain", "")
+        if domain:
+            domain_templates = [t for t in templates if t.get("check_type") == domain]
+        else:
+            domain_templates = []
+        search_pool = domain_templates if domain_templates else templates
+
+        # 1. Exact hash match (O(1)) — domain-independent (hash uniquely identifies content)
         template = hash_index.get(h)
         score = 1.0
 
@@ -161,7 +171,7 @@ def run_tier1(
         if template is None and norm:
             best_score = 0.0
             best_tpl = None
-            for tpl in templates:
+            for tpl in search_pool:
                 ratio = SequenceMatcher(None, norm, tpl["template_text"]).ratio()
                 if ratio > best_score:
                     best_score = ratio
