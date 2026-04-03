@@ -57,11 +57,12 @@ _VALID_CATEGORIES: frozenset[str] = frozenset(f"CRS-C{i:03d}" for i in range(1, 
 
 # Fallback category dict — used when DB has no active templates (migration not applied,
 # empty table, or DB unreachable). Ensures LLM always receives a non-empty category list.
-# Keys use 3-digit format (CRS-C001..CRS-C229) per migration_022_crs_template_harmonisation.sql.
-# CRS-C051..CRS-C229 populated after running migration_022 + querying:
-#   SELECT category, short_template_text FROM audit_core.crs_comment_template
-#   WHERE object_status='Active' AND category > 'CRS-C050' ORDER BY category;
+# Source: audit_core.crs_comment_template WHERE object_status='Active', synced 2026-04-03.
+# C051..C054 absent (no Active rows in DB). C133..C229 not yet Active — omitted.
+# Re-sync: SELECT category, short_template_text FROM audit_core.crs_comment_template
+#   WHERE object_status='Active' ORDER BY category;
 _FALLBACK_CATEGORIES: dict[str, str] = {
+    # --- CRS-C001..C050: canonical categories ---
     "CRS-C001": "missing required fields",
     "CRS-C002": "tag description missing",
     "CRS-C003": "description too long",
@@ -70,7 +71,7 @@ _FALLBACK_CATEGORIES: dict[str, str] = {
     "CRS-C006": "area code blank",
     "CRS-C007": "area code invalid",
     "CRS-C008": "process unit code missing",
-    "CRS-C009": "process unit not in register or set to NA/Not Applicable",
+    "CRS-C009": "process unit not in register",
     "CRS-C010": "parent tag missing for physical tag",
     "CRS-C011": "parent tag not in MTR",
     "CRS-C012": "pipe-to-pipe parent reference",
@@ -112,11 +113,86 @@ _FALLBACK_CATEGORIES: dict[str, str] = {
     "CRS-C048": "property UOM not in RDL",
     "CRS-C049": "tag status inconsistent with class",
     "CRS-C050": "circular parent hierarchy",
-    # CRS-C051..CRS-C229: granular sub-categories assigned by migration_022.
-    # Populate by running: SELECT category, short_template_text
-    #   FROM audit_core.crs_comment_template
-    #   WHERE object_status='Active' AND category > 'CRS-C050'
-    #   ORDER BY category;
+    # C051..C054: no Active rows in DB — intentionally omitted
+    # --- CRS-C055..C132: granular sub-categories (migration_022) ---
+    "CRS-C055": "Missing mandatory area data",
+    "CRS-C056": "Tags mapped to incorrect area level",
+    "CRS-C057": "Combined document file submitted",
+    "CRS-C058": "Company name not in company register for PO",
+    "CRS-C059": "Doc-area document not in DocMaster",
+    "CRS-C060": "Doc-area reference missing area code",
+    "CRS-C061": "Doc-equipment document not in DocMaster",
+    "CRS-C062": "Doc-equipment equipment not in register",
+    "CRS-C063": "Doc-equipment references model parts",
+    "CRS-C064": "Doc numbers not matching DMS",
+    "CRS-C065": "Doc-plant document not in DocMaster",
+    "CRS-C066": "Doc-PO code not in PO register",
+    "CRS-C067": "Doc-PO document not in DocMaster",
+    "CRS-C068": "Doc-PU document not in DocMaster",
+    "CRS-C069": "Doc-PU plant code not in register",
+    "CRS-C070": "Doc-PU process unit not in register",
+    "CRS-C071": "Doc-PU reference missing process unit code",
+    "CRS-C072": "Doc revision mismatch with DMS",
+    "CRS-C073": "Doc-site document not in DocMaster",
+    "CRS-C074": "Doc-tag document not in DocMaster",
+    "CRS-C075": "Doc-tag references tag not in MTR",
+    "CRS-C076": "Doc title mismatch with DMS",
+    "CRS-C077": "Document not in DMS or NYI",
+    "CRS-C078": "Documents not in DMS or in NYI status",
+    "CRS-C079": "Duplicate document records",
+    "CRS-C080": "Equipment without document reference",
+    "CRS-C081": "Layout drawing reference missing",
+    "CRS-C082": "Loop diagram reference missing",
+    "CRS-C083": "Outdated document template used",
+    "CRS-C084": "PID schematic reference missing",
+    "CRS-C085": "Site code format incorrect",
+    "CRS-C086": "Tags without document references",
+    "CRS-C087": "Void PO code in doc-PO reference",
+    "CRS-C088": "Void tags have doc references",
+    "CRS-C089": "Wrong CIS submission template used",
+    "CRS-C090": "Wrong CSV template for doc-PU register",
+    "CRS-C091": "Equipment class blank",
+    "CRS-C092": "Equipment class not in ISM",
+    "CRS-C093": "Equipment class vs description mismatch",
+    "CRS-C094": "Equipment description duplicated",
+    "CRS-C095": "Equipment description ends with dash",
+    "CRS-C096": "Equipment description missing",
+    "CRS-C097": "Equipment description spelling error",
+    "CRS-C098": "Equipment description starts with dash",
+    "CRS-C099": "Equipment description too short",
+    "CRS-C100": "Equipment has no document references",
+    "CRS-C101": "Equipment is own parent tag",
+    "CRS-C102": "Equipment not matched with doc reference",
+    "CRS-C104": "Equipment parent tag derivable from description",
+    "CRS-C105": "Equipment plant code not in register",
+    "CRS-C106": "Equipment tag not in MTR",
+    "CRS-C107": "Equipment TNC non-compliance",
+    "CRS-C108": "General equipment data missing",
+    "CRS-C109": "Mandatory equipment fields blank",
+    "CRS-C110": "Manufacturer serial number blank",
+    "CRS-C111": "Manufacturer serial number is NA",
+    "CRS-C112": "Manufacturing company not populated",
+    "CRS-C113": "Model part name missing",
+    "CRS-C114": "Tag register changes not in equipment register",
+    "CRS-C115": "Duplicate equipment property entries",
+    "CRS-C116": "Equipment class-property mapping mismatch",
+    "CRS-C117": "Equipment has no properties",
+    "CRS-C118": "Equipment in property register not in equip register",
+    "CRS-C119": "Equipment property orphan record",
+    "CRS-C120": "Equipment property register has tag numbers",
+    "CRS-C121": "Equipment property value blank",
+    "CRS-C122": "Equipment property value is zero",
+    "CRS-C123": "Required ISM equipment properties not submitted",
+    "CRS-C124": "UOM populated when property value is NA for equipment",
+    "CRS-C125": "Wrong header in equipment property register",
+    "CRS-C126": "Model part description not defined",
+    "CRS-C127": "Model part not in model part register",
+    "CRS-C128": "Model part number invalid characters",
+    "CRS-C129": "Multiple process unit codes for same system",
+    "CRS-C130": "Process unit description blank",
+    "CRS-C131": "Process unit formatting inconsistent",
+    "CRS-C132": "Process unit hierarchy inconsistent",
+    # C133..C229: not yet Active in DB — omitted
 }
 
 # ---------------------------------------------------------------------------
@@ -275,7 +351,7 @@ def _load_crs_templates(engine: Engine) -> list[dict[str, Any]]:
 def _build_categories_line(
     templates: list[dict[str, Any]],
     domain: str | None = None,
-    max_chars: int = 1200,
+    max_chars: int = 10000,
 ) -> str:
     """Build compact category hints string for LLM prompt injection.
 
@@ -370,6 +446,7 @@ def _build_prompt(
     params: dict[str, str | None],
     sql_result: list[dict[str, Any]],
     categories_line: str,
+    max_category: str = "CRS-C050",
 ) -> tuple[str, str]:
     """Returns (system_prompt, user_prompt) tuple for ChatOpenAI messages list."""
     text_val = comment.get("comment") or comment.get("group_comment") or ""
@@ -391,7 +468,7 @@ def _build_prompt(
         f"Sheet: {sheet}\n"
         f"Comment: {text_val}\n"
         f"DB check: {result_str}\n\n"
-        f"Valid categories: CRS-C01 through CRS-C50\n"
+        f"Valid categories: CRS-C001 through {max_category}\n"
         f"({categories_line})\n\n"
         f'OUTPUT (JSON only): {{"category":"CRS-C??","confidence":0.0,"response":"one sentence max"}}'
     )
@@ -684,6 +761,11 @@ def run_tier3_llm(
             for cat, desc in _FALLBACK_CATEGORIES.items()
         ]
 
+    max_category = max(
+        (t.get("category") or "CRS-C001" for t in crs_templates),
+        default="CRS-C050",
+    )
+
     # Group by generalised pattern — classify once per unique template (M << N)
     groups = group_by_generalized(comments)
 
@@ -733,7 +815,7 @@ def run_tier3_llm(
             categories_pass1 = _build_categories_line(crs_templates, domain=None)
 
         unique_keys.append(key)
-        unique_prompts.append(_build_prompt(rep, params, sql_result, categories_pass1))
+        unique_prompts.append(_build_prompt(rep, params, sql_result, categories_pass1, max_category=max_category))
         unique_domains.append(domain)
         unique_params.append(params)
         unique_sql_results.append(sql_result)
@@ -784,7 +866,8 @@ def run_tier3_llm(
                     _build_prompt(unique_reps[batch_start + i],
                                   unique_params[batch_start + i],
                                   unique_sql_results[batch_start + i],
-                                  categories_full)
+                                  categories_full,
+                                  max_category=max_category)
                     for i in retry_local
                 ]
                 retry_outputs = _call_llm_batch(
