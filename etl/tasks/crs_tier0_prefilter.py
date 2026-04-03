@@ -92,9 +92,22 @@ def should_skip(
         (True, reason) if should skip; (False, None) otherwise.
     """
     # 1. Informational text
+    #
+    # Check group_comment independently FIRST: if the group header matches
+    # an informational pattern (e.g. "multiple comments: this sheet contains
+    # multiple comments..."), ALL child rows in that group must be DEFERRED —
+    # even if their individual comment text would not match on its own.
+    # This prevents child rows from slipping through to Tier 3 when the
+    # group itself is a meta/administrative wrapper with no actionable content.
     _c = comment.get("comment")
     _g = comment.get("group_comment")
-    text = (_c.strip() if isinstance(_c, str) and _c.strip() else None) or _g or ""
+    group_text = (_g or "").strip()
+    individual_text = (_c or "").strip()
+
+    if _INFO_PATTERN.search(group_text):
+        return True, SKIP_REASON_INFORMATIONAL
+
+    text = individual_text or group_text
     if _INFO_PATTERN.search(text):
         return True, SKIP_REASON_INFORMATIONAL
 
@@ -125,7 +138,7 @@ def run_tier0(
     """Skip comments that don't need classification (Tier 0).
 
     Skipped comments are written back with status='DEFERRED' — the only
-    allowed status in crs_comment_status_check outside the RECEIVED→IN_REVIEW
+    allowed status in crs_comment_status_check outside the RECEIVED\u2192IN_REVIEW
     pipeline.
 
     Args:
