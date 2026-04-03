@@ -49,8 +49,6 @@ _INFO_PATTERN = re.compile(
     r"|ok\b|okay\b"
     r"|noted\b"
     r"|no\s+matching\s+detail\s+sheet(\s+found)?"
-    r"|multiple\s+comments[:\s]"
-    r"|this\s+sheet\s+contains\s+multiple\s+comments"
     r"|please\s+find\s+(the\s+)?attached(\s+file)?"
     r"|please\s+(refer|see)\s+(the\s+)?attach(ed)?"
     r"|data\s+is\s+still\s+to\s+be\s+completed"
@@ -58,6 +56,35 @@ _INFO_PATTERN = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+
+# ---------------------------------------------------------------------------
+# Multi-comment group pattern
+# Matches group_comment values that are administrative wrappers only.
+# Individual comment fields in these groups hold the real defect texts.
+# ---------------------------------------------------------------------------
+
+_MULTI_COMMENT_PATTERN = re.compile(
+    r"\bmultiple\s+comments[:\s]"
+    r"|this\s+sheet\s+contains\s+multiple\s+comments",
+    re.IGNORECASE,
+)
+
+
+def is_multi_comment_group(comment: dict[str, Any]) -> bool:
+    """Return True if this row belongs to a 'multiple comments' wrapper group.
+
+    Such groups use group_comment as an administrative header only.
+    The actionable defect text (if any) lives in the individual comment field.
+
+    Args:
+        comment: Dict with keys from crs_comment row.
+
+    Returns:
+        True when group_comment matches the multi-comment wrapper pattern.
+    """
+    g = (comment.get("group_comment") or "").strip()
+    return bool(_MULTI_COMMENT_PATTERN.search(g))
+
 
 # ---------------------------------------------------------------------------
 # Skip statuses — non-active tag states that should not be classified.
@@ -91,19 +118,21 @@ def should_skip(
     Returns:
         (True, reason) if should skip; (False, None) otherwise.
     """
-    # 1. Informational text
-    #
-    # Check group_comment independently FIRST: if the group header matches
-    # an informational pattern (e.g. "multiple comments: this sheet contains
-    # multiple comments..."), ALL child rows in that group must be DEFERRED —
-    # even if their individual comment text would not match on its own.
-    # This prevents child rows from slipping through to Tier 3 when the
-    # group itself is a meta/administrative wrapper with no actionable content.
+    # 1. Informational / multi-comment wrapper handling
     _c = comment.get("comment")
     _g = comment.get("group_comment")
-    group_text = (_g or "").strip()
+    group_text      = (_g or "").strip()
     individual_text = (_c or "").strip()
 
+    if is_multi_comment_group(comment):
+        # group_comment is an administrative wrapper — not an error signal.
+        # Only skip rows where the individual comment is empty (no actionable content).
+        if not individual_text:
+            return True, SKIP_REASON_INFORMATIONAL
+        # Non-empty individual comment → pass through to Tier 1+
+        return False, None
+
+    # Standard path: check both group_comment and individual text.
     if _INFO_PATTERN.search(group_text):
         return True, SKIP_REASON_INFORMATIONAL
 

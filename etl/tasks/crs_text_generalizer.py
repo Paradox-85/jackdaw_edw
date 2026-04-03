@@ -27,6 +27,8 @@ import logging
 import re
 from typing import Any
 
+from etl.tasks.crs_tier0_prefilter import is_multi_comment_group
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -263,13 +265,17 @@ def group_by_generalized(comments: list[dict[str, Any]]) -> dict[str, list[dict[
     """
     groups: dict[str, list[dict[str, Any]]] = {}
     for comment in comments:
-        _c = comment.get("comment")
-        _g = comment.get("group_comment")
-        raw = (_c.strip() if isinstance(_c, str) and _c.strip() else None) or _g or ""
+        if is_multi_comment_group(comment):
+            # Use individual comment text for grouping, not the wrapper group_comment.
+            # Empty rows should have been DEFERRED in Tier 0; guard here for safety.
+            _c = comment.get("comment")
+            raw = (_c.strip() if isinstance(_c, str) else "") or ""
+        else:
+            _c = comment.get("comment")
+            _g = comment.get("group_comment")
+            raw = (_c.strip() if isinstance(_c, str) and _c.strip() else None) or _g or ""
         key = generalize_comment(raw)
-        if key not in groups:
-            groups[key] = []
-        groups[key].append(comment)
+        groups.setdefault(key, []).append(comment)
     return groups
 
 
