@@ -20,6 +20,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from etl.tasks.common import load_config, get_db_engine_url
+from etl.tasks.crs_text_generalizer import load_naming_patterns
 
 # ---------------------------------------------------------------------------
 # DB connection
@@ -40,6 +41,22 @@ def get_engine() -> Engine:
         url = get_db_engine_url(config)
         _engine = create_engine(url, pool_size=5, max_overflow=10)
     return _engine
+
+
+def initialise_generalizer(engine: Engine | None = None) -> None:
+    """Load naming patterns from audit_core.naming_rule into the text generalizer.
+
+    Call this once at the start of any Prefect flow or CLI script that uses
+    generalize_comment().  It is safe to call multiple times — after the first
+    successful DB load the module-level flag _PATTERNS_LOADED_FROM_DB is set
+    and subsequent calls are still idempotent (DB re-queried but patterns rebuilt).
+
+    Args:
+        engine: Optional engine override.  Defaults to the module singleton
+                returned by get_engine().
+    """
+    eng = engine or get_engine()
+    load_naming_patterns(eng)
 
 
 # ---------------------------------------------------------------------------
@@ -65,8 +82,6 @@ def load_received_comments(
         List of row dicts with all crs_comment columns.
     """
     revision_clause = "AND revision = :revision" if revision_filter else ""
-    # limit=0 means "fetch all" — omit LIMIT clause entirely.
-    # SQL LIMIT 0 returns zero rows, which is never the desired behaviour here.
     limit_clause = "LIMIT :lim" if limit > 0 else ""
 
     sql = text(f"""
@@ -125,7 +140,6 @@ def prefetch_tag_statuses(
     if not tag_names:
         return {}
 
-    # De-duplicate
     unique_names = list(set(tag_names))
 
     sql = text("""
@@ -138,8 +152,6 @@ def prefetch_tag_statuses(
 
     result: dict[str, str] = {}
     for row in rows:
-        # Use object_status='Inactive' as the authoritative soft-delete indicator,
-        # but also store tag_status so Tier 0 can check ASB / VOIDED variants.
         result[row.tag_name] = row.tag_status or row.object_status or "Active"
     return result
 
@@ -188,9 +200,6 @@ def save_classification_results(
         WHERE id = :id
     """)
 
-    # Valid statuses per crs_comment_status_check:
-    #   RECEIVED | IN_REVIEW | RESPONDED | APPROVED | CLOSED | DEFERRED
-    # Fallback is IN_REVIEW (comment was processed and needs engineer review).
     _VALID_STATUSES = frozenset({
         "RECEIVED", "IN_REVIEW", "RESPONDED", "APPROVED", "CLOSED", "DEFERRED"
     })
@@ -198,7 +207,6 @@ def save_classification_results(
     params = []
     for r in results:
         raw_status = r.get("status", "IN_REVIEW")
-        # Guard: if a tier somehow produced an invalid status, coerce to IN_REVIEW
         safe_status = raw_status if raw_status in _VALID_STATUSES else "IN_REVIEW"
         params.append({
             "id":           str(r["id"]),

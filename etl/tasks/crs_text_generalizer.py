@@ -12,15 +12,25 @@ Group-by-apply pattern:
 
 This reduces LLM calls from O(N) to O(M) — typically 10-20x fewer calls
 when bulk comments share the same underlying error pattern.
+
+Pattern loading:
+    By default the module uses built-in fallback regex compiled at import time.
+    Call load_naming_patterns(engine) once at flow startup to replace these
+    with patterns loaded from audit_core.naming_rule (DB source of truth).
+    This allows rule updates (new aliases, new doc types) without code changes.
 """
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
-# Compiled regex patterns — source of truth for all CRS classifier modules.
-# crs_tier3_llm_classifier imports these from here (one-way dependency).
+# Fallback compiled regex — used when DB patterns have not been loaded.
+# These remain the source of truth until load_naming_patterns() is called.
+# crs_tier3_llm_classifier imports _TAG_RE / _DOC_RE from here (one-way dep).
 # ---------------------------------------------------------------------------
 
 _TAG_RE = re.compile(
@@ -37,8 +47,6 @@ _DOC_RE = re.compile(r"JDAW-[A-Z0-9\-]+", re.IGNORECASE)
 # but is intentionally NOT applied in generalize_comment().
 # Property names (DESIGN_PRESSURE, FLUID_SERVICE, etc.) are meaningful context
 # for the LLM and should be preserved in the generalised key.
-# The catch-all [A-Z][A-Z0-9_]{4,} with re.IGNORECASE was destroying
-# ordinary English words, producing meaningless keys.
 _PROPERTY_RE = re.compile(
     r"\b(DESIGN_PRESSURE|DESIGN_TEMPERATURE|OPERATING_PRESSURE|OPERATING_TEMPERATURE"
     r"|FLUID_SERVICE|MATERIAL_GRADE|INSULATION_TYPE|HEAT_TRACING|IP_GRADE|EX_CLASS"
@@ -55,6 +63,93 @@ _TRAILING_PUNCT_RE = re.compile(r"[,;:()\[\]]+\s*$")
 # Collapse runs of whitespace to single space
 _WHITESPACE_RE = re.compile(r"\s+")
 
+# Flag: True once load_naming_patterns() has successfully populated from DB
+_PATTERNS_LOADED_FROM_DB: bool = False
+
+
+# ---------------------------------------------------------------------------
+# DB pattern loader — call once at flow startup
+# ---------------------------------------------------------------------------
+
+def load_naming_patterns(engine: Any) -> None:  # engine: sqlalchemy.engine.Engine
+    """Replace module-level _TAG_RE / _DOC_RE with patterns from audit_core.naming_rule.
+
+    Reads all active rows ordered by sort_order.  DOC rules (sort_order 10-37)
+    are assembled into _DOC_RE; TAG rules (sort_order 50+) into _TAG_RE.
+    regex_full is used for DOC_VENDOR / DOC_DESIGN; regex_search + regex_aliases
+    are used for DOC_EIS free-text matching.  regex_search is used for TAG inline.
+
+    Falls back silently to the built-in patterns if the DB query fails,
+    so the flow is never blocked by a missing migration.
+
+    Args:
+        engine: SQLAlchemy Engine connected to jackdaw_edw.
+    """
+    global _TAG_RE, _DOC_RE, _PATTERNS_LOADED_FROM_DB
+
+    try:
+        from sqlalchemy import text  # local import — keeps module importable without sqlalchemy
+
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT domain, regex_full, regex_search, regex_aliases
+                FROM audit_core.naming_rule
+                WHERE is_active = TRUE
+                ORDER BY sort_order, rule_id
+            """)).fetchall()
+
+        doc_parts: list[str] = []
+        tag_parts: list[str] = []
+
+        for row in rows:
+            domain      = row[0]
+            regex_full  = row[1]
+            regex_search = row[2]
+            regex_aliases = row[3] or []
+
+            if domain.startswith('DOC_'):
+                # Formal full-number pattern first (highest priority)
+                if regex_full:
+                    doc_parts.append(f"(?:{regex_full})")
+                # Partial prefix / inline search pattern
+                if regex_search:
+                    doc_parts.append(f"(?:{regex_search})")
+                # Contractor abbreviation aliases
+                for alias in regex_aliases:
+                    if alias:
+                        doc_parts.append(f"(?:{alias})")
+
+            elif domain == 'TAG':
+                if regex_search:
+                    tag_parts.append(f"(?:{regex_search})")
+                # regex_full used for standalone register validation only (not inline)
+
+        if doc_parts:
+            _DOC_RE = re.compile("|".join(doc_parts), re.IGNORECASE)
+            logger.info("load_naming_patterns: _DOC_RE built with %d sub-patterns.", len(doc_parts))
+        else:
+            logger.warning("load_naming_patterns: no DOC patterns found — fallback retained.")
+
+        if tag_parts:
+            _TAG_RE = re.compile("|".join(tag_parts), re.IGNORECASE)
+            logger.info("load_naming_patterns: _TAG_RE built with %d sub-patterns.", len(tag_parts))
+        else:
+            logger.warning("load_naming_patterns: no TAG patterns found — fallback retained.")
+
+        _PATTERNS_LOADED_FROM_DB = True
+        logger.info("load_naming_patterns: DB patterns loaded successfully.")
+
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "load_naming_patterns: failed to load from DB (%s). "
+            "Falling back to built-in patterns.",
+            exc,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Core generalizer
+# ---------------------------------------------------------------------------
 
 def generalize_comment(text: str) -> str:
     """Scrub specific engineering identifiers from comment text.
@@ -64,7 +159,7 @@ def generalize_comment(text: str) -> str:
     are grouped together for a single classification pass.
 
     Substitutions applied in priority order:
-        1. Document numbers (JDAW-...) → "<DOC>"
+        1. Document numbers / doc type references → "<DOC>"
         2. Tag names (JDA-... / alphanumeric codes) → "<TAG>"
         3. Standalone integers → "N"
         4. Strip trailing punctuation
@@ -86,6 +181,8 @@ def generalize_comment(text: str) -> str:
         '<tag> missing design_pressure value'
         >>> generalize_comment("JDAW-MEC-0042 not found in DocMaster")
         '<doc> not found in docmaster'
+        >>> generalize_comment("see doc ref to tag 016")
+        'see <doc>'
         >>> generalize_comment("")
         '_empty_'
     """
@@ -94,7 +191,8 @@ def generalize_comment(text: str) -> str:
 
     result = text
 
-    # Doc numbers before tags — JDAW-... would also match the broad TAG pattern
+    # DOC before TAG — JDAW-... formal numbers and aliases must be caught first
+    # to avoid the broad TAG pattern consuming parts of a doc number.
     result = _DOC_RE.sub("<DOC>", result)
     result = _TAG_RE.sub("<TAG>", result)
     # _PROPERTY_RE intentionally not applied — see note above
@@ -105,6 +203,10 @@ def generalize_comment(text: str) -> str:
 
     return result if result else "_empty_"
 
+
+# ---------------------------------------------------------------------------
+# Group / broadcast helpers (unchanged)
+# ---------------------------------------------------------------------------
 
 def group_by_generalized(comments: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     """Group raw comment dicts by their generalised comment key.
@@ -165,9 +267,7 @@ def broadcast_result(
         classification = results.get(key)
         for row in rows:
             if classification:
-                # Merge: classification on top, but preserve identity fields
                 merged = {**row, **classification}
-                # Restore fields that must not be overwritten
                 for field in ("id", "comment", "group_comment"):
                     if field in row:
                         merged[field] = row[field]
