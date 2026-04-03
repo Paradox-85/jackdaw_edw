@@ -15,8 +15,10 @@ when bulk comments share the same underlying error pattern.
 
 Pattern loading:
     By default the module uses built-in fallback regex compiled at import time.
-    Call load_naming_patterns(engine) once at flow startup to replace these
-    with patterns loaded from audit_core.naming_rule (DB source of truth).
+    On first call to generalize_comment() the module auto-loads patterns from
+    audit_core.naming_rule via _ensure_patterns_loaded() (lazy DB init).
+    Call load_naming_patterns(engine) explicitly at flow startup to force a
+    reload or to supply a specific engine instance.
     This allows rule updates (new aliases, new doc types) without code changes.
 """
 from __future__ import annotations
@@ -68,7 +70,7 @@ _PATTERNS_LOADED_FROM_DB: bool = False
 
 
 # ---------------------------------------------------------------------------
-# DB pattern loader — call once at flow startup
+# DB pattern loader — call once at flow startup (or rely on lazy-init)
 # ---------------------------------------------------------------------------
 
 def load_naming_patterns(engine: Any) -> None:  # engine: sqlalchemy.engine.Engine
@@ -148,6 +150,32 @@ def load_naming_patterns(engine: Any) -> None:  # engine: sqlalchemy.engine.Engi
 
 
 # ---------------------------------------------------------------------------
+# Lazy DB init — called automatically on first generalize_comment() invocation
+# ---------------------------------------------------------------------------
+
+def _ensure_patterns_loaded() -> None:
+    """Auto-load naming patterns from DB on first call to generalize_comment().
+
+    Attempts to acquire a SQLAlchemy engine via etl.db.get_engine() (the shared
+    engine factory used across all ETL tasks).  If the import or DB call fails
+    for any reason the exception is swallowed and the built-in fallback patterns
+    remain active — the flow is never blocked.
+
+    This function is a no-op if patterns have already been loaded (either via a
+    previous lazy call or via an explicit load_naming_patterns() call at startup).
+    """
+    if _PATTERNS_LOADED_FROM_DB:
+        return
+    try:
+        from etl.db import get_engine  # project-standard engine factory
+        load_naming_patterns(get_engine())
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(
+            "_ensure_patterns_loaded: skipping DB load (%s). Built-in patterns active.", exc
+        )
+
+
+# ---------------------------------------------------------------------------
 # Core generalizer
 # ---------------------------------------------------------------------------
 
@@ -157,6 +185,9 @@ def generalize_comment(text: str) -> str:
     Produces a hashable generic template so that comments sharing the same
     error pattern (differing only in tag names, doc numbers, or counts)
     are grouped together for a single classification pass.
+
+    Patterns are loaded from audit_core.naming_rule on first call (lazy DB init).
+    If the DB is unavailable, built-in fallback patterns are used transparently.
 
     Substitutions applied in priority order:
         1. Document numbers / doc type references → "<DOC>"
@@ -186,6 +217,8 @@ def generalize_comment(text: str) -> str:
         >>> generalize_comment("")
         '_empty_'
     """
+    _ensure_patterns_loaded()  # no-op after first successful DB load
+
     if not text or not text.strip():
         return "_empty_"
 
