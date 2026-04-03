@@ -27,7 +27,7 @@ import logging
 import re
 from typing import Any
 
-from etl.tasks.crs_tier0_prefilter import is_multi_comment_group
+from etl.tasks.crs_multi_comment import is_multi_comment_group
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +240,7 @@ def generalize_comment(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Group / broadcast helpers (unchanged)
+# Group / broadcast helpers
 # ---------------------------------------------------------------------------
 
 def group_by_generalized(comments: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -249,6 +249,12 @@ def group_by_generalized(comments: list[dict[str, Any]]) -> dict[str, list[dict[
     Insertion order is preserved (Python 3.7+ dict guarantee).
     Each group contains all original comment dicts that share the same
     generalised text pattern.
+
+    For rows belonging to a 'multiple comments' wrapper group
+    (is_multi_comment_group() == True), grouping is based on the individual
+    comment text rather than the uninformative group_comment header.
+    Empty individual comments in such groups are grouped under '_empty_'
+    (they should have been DEFERRED by Tier 0; this is a safety guard).
 
     Args:
         comments: List of raw comment dicts, each with a "comment" or
@@ -266,8 +272,9 @@ def group_by_generalized(comments: list[dict[str, Any]]) -> dict[str, list[dict[
     groups: dict[str, list[dict[str, Any]]] = {}
     for comment in comments:
         if is_multi_comment_group(comment):
-            # Use individual comment text for grouping, not the wrapper group_comment.
-            # Empty rows should have been DEFERRED in Tier 0; guard here for safety.
+            # Use individual comment text — group_comment is a wrapper, not a signal.
+            # Empty individual comments land on '_empty_' sentinel (safety guard;
+            # Tier 0 should have DEFERRED these already).
             _c = comment.get("comment")
             raw = (_c.strip() if isinstance(_c, str) else "") or ""
         else:

@@ -19,6 +19,7 @@ from prefect.cache_policies import NO_CACHE
 from sqlalchemy.engine import Engine
 
 from etl.tasks.crs_helpers import prefetch_tag_statuses
+from etl.tasks.crs_multi_comment import is_multi_comment_group  # noqa: F401 (re-exported)
 
 # ---------------------------------------------------------------------------
 # Skip reason constants
@@ -31,6 +32,8 @@ SKIP_REASON_TAG_INACTIVE = "TAG_INACTIVE"
 # ---------------------------------------------------------------------------
 # Informational phrase pattern
 # Matches comments that are status/notification notes, not actionable CRS items.
+# NOTE: 'multiple comments' phrases are intentionally absent — those rows are
+# handled by the is_multi_comment_group() branch in should_skip(), not here.
 # ---------------------------------------------------------------------------
 
 _INFO_PATTERN = re.compile(
@@ -56,35 +59,6 @@ _INFO_PATTERN = re.compile(
     r")\b",
     re.IGNORECASE,
 )
-
-# ---------------------------------------------------------------------------
-# Multi-comment group pattern
-# Matches group_comment values that are administrative wrappers only.
-# Individual comment fields in these groups hold the real defect texts.
-# ---------------------------------------------------------------------------
-
-_MULTI_COMMENT_PATTERN = re.compile(
-    r"\bmultiple\s+comments[:\s]"
-    r"|this\s+sheet\s+contains\s+multiple\s+comments",
-    re.IGNORECASE,
-)
-
-
-def is_multi_comment_group(comment: dict[str, Any]) -> bool:
-    """Return True if this row belongs to a 'multiple comments' wrapper group.
-
-    Such groups use group_comment as an administrative header only.
-    The actionable defect text (if any) lives in the individual comment field.
-
-    Args:
-        comment: Dict with keys from crs_comment row.
-
-    Returns:
-        True when group_comment matches the multi-comment wrapper pattern.
-    """
-    g = (comment.get("group_comment") or "").strip()
-    return bool(_MULTI_COMMENT_PATTERN.search(g))
-
 
 # ---------------------------------------------------------------------------
 # Skip statuses — non-active tag states that should not be classified.
@@ -125,11 +99,11 @@ def should_skip(
     individual_text = (_c or "").strip()
 
     if is_multi_comment_group(comment):
-        # group_comment is an administrative wrapper — not an error signal.
-        # Only skip rows where the individual comment is empty (no actionable content).
+        # group_comment is an administrative wrapper — not a classification signal.
+        # Only DEFERRED rows where individual comment is empty (no actionable content).
+        # Non-empty individual comment → pass through to Tier 1+ using comment text.
         if not individual_text:
             return True, SKIP_REASON_INFORMATIONAL
-        # Non-empty individual comment → pass through to Tier 1+
         return False, None
 
     # Standard path: check both group_comment and individual text.
@@ -167,7 +141,7 @@ def run_tier0(
     """Skip comments that don't need classification (Tier 0).
 
     Skipped comments are written back with status='DEFERRED' — the only
-    allowed status in crs_comment_status_check outside the RECEIVED\u2192IN_REVIEW
+    allowed status in crs_comment_status_check outside the RECEIVED→IN_REVIEW
     pipeline.
 
     Args:
