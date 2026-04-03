@@ -358,8 +358,7 @@ def _build_categories_line(
     Filters templates by check_type substring match against domain.
     Falls back to all templates if filtered list is empty or domain is None.
 
-    Format per entry: "CRS-C01=TAG_EXISTS" or with short_template_text:
-    "CRS-C01=tag not in register"
+    Format per entry: "CRS-C001=tag not in register"
     """
     if not templates:
         return ""
@@ -458,10 +457,10 @@ def _build_prompt(
         "Output ONLY a single JSON object. "
         "No explanation. No markdown. "
         "Classification rules: "
-        "use CRS-C08 ONLY when a field is truly blank or absent; "
-        "use CRS-C09 when a field contains 'NA', 'N/A', 'Not Applicable', "
+        "use CRS-C008 ONLY when a field is truly blank or absent; "
+        "use CRS-C009 when a field contains 'NA', 'N/A', 'Not Applicable', "
         "'none', or a placeholder value that is not a valid register entry. "
-        'Respond ONLY with: {"category":"CRS-C??","confidence":0.0,"response":"one sentence max"}'
+        'Respond ONLY with: {"category":"CRS-C???","confidence":0.0,"response":"one sentence max"}'
     )
     user_msg = (
         f"CLASSIFY THIS COMMENT:\n"
@@ -470,7 +469,7 @@ def _build_prompt(
         f"DB check: {result_str}\n\n"
         f"Valid categories: CRS-C001 through {max_category}\n"
         f"({categories_line})\n\n"
-        f'OUTPUT (JSON only): {{"category":"CRS-C??","confidence":0.0,"response":"one sentence max"}}'
+        f'OUTPUT (JSON only): {{"category":"CRS-C???","confidence":0.0,"response":"one sentence max"}}'
     )
     return system_msg, user_msg
 
@@ -898,12 +897,6 @@ def run_tier3_llm(
         confidence = llm_out.get("confidence", 0.7)
         # UNCLASSIFIED (LLM connection error, confidence=0.0) → DEFERRED automatically
         status = "IN_REVIEW" if confidence >= 0.7 else "DEFERRED"
-        # Look up template to get the correct category_code (CRS-C01..C50)
-        # LLM returns "category" field which is the category_code in templates
-        matched_template = next(
-            (t for t in crs_templates if t.get("category_code") == llm_out["category"]),
-            None
-        )
 
         key_results[key] = {
             "llm_category":            llm_out["category"],
@@ -913,7 +906,7 @@ def run_tier3_llm(
             "classification_tier":     3,
             "status":                  status,
             "_extracted_params":       params,
-            "category_code":           llm_out["category"],  # LLM returns category_code (CRS-C01)
+            "category_code":           llm_out["category"],
             "category_confidence":     confidence,
         }
 
