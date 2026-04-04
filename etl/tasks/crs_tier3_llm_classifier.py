@@ -466,9 +466,16 @@ def _build_prompt(
         "Output ONLY a single JSON object. "
         "No explanation. No markdown. "
         "Classification rules: "
-        "use CRS-C008 ONLY when a field is truly blank or absent; "
-        "use CRS-C009 when a field contains 'NA', 'N/A', 'Not Applicable', "
-        "'none', or a placeholder value that is not a valid register entry. "
+        "If the comment indicates a field is empty, blank, missing, not defined, "
+        "null, unset, none or not populated — the value is ABSENT. "
+        "Match to a category whose description covers absent/missing values. "
+        "Example: 'Area code is blank' → category for missing area code. "
+        "If the comment indicates a field contains 'NA', 'N/A', 'n/a', "
+        "'Not Applicable' or a similar placeholder — the value IS present "
+        "but is a placeholder that fails validation. "
+        "Match to a category whose description covers invalid or non-matching values. "
+        "Example: 'Area code is NA' → category for invalid/non-matching area code. "
+        "Apply this distinction to ALL field types, not just specific ones. "
         'Respond ONLY with: {"category":"CRS-C???","confidence":0.0,"response":"one sentence max"}'
     )
     user_msg = (

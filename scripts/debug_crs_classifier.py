@@ -554,10 +554,10 @@ def main() -> None:
     except Exception as e:
         log.warning("Could not load category descriptions: %s", e)
 
-    sep  = "═" * 90
-    line = "─" * 90
+    sep  = "═" * 116
+    line = "─" * 116
     hdr  = (
-        f"{'#':>3}  {'Tier':>4}  {'Status':<10}  {'Category':<26}  "
+        f"{'#':>3}  {'Tier':>4}  {'Status':<10}  {'Category':<52}  "
         f"{'Rows':>5}  {'M':>1}  {'Comment (truncated)'}"
     )
     print(f"\n{sep}")
@@ -574,7 +574,7 @@ def main() -> None:
             cat_code = r["category"]
             desc = cat_desc.get(cat_code, "")
             if desc:
-                max_desc = 26 - len(cat_code) - 1  # 1 for space separator
+                max_desc = 52 - len(cat_code) - 1  # 1 for space separator
                 if max_desc > 4:
                     desc_short = desc[:max_desc - 1] + "…" if len(desc) > max_desc - 1 else desc
                     cat_cell = f"{cat_code} {desc_short}"
@@ -584,7 +584,7 @@ def main() -> None:
                 cat_cell = cat_code
 
         print(
-            f"{i:>3}  {r['tier']:>4}  {r['status']:<10}  {cat_cell:<26}"
+            f"{i:>3}  {r['tier']:>4}  {r['status']:<10}  {cat_cell:<52}"
             f"  {r['row_count']:>5}  {'Y' if r['is_multi'] else 'N':>1}  {comment_col}"
         )
     print(line)
