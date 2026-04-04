@@ -533,7 +533,9 @@ def main() -> None:
     total_loaded   = len(comments)
     total_groups   = len(_gbg(comments))
     n_deferred     = sum(1 for r in summary_rows if r["status"] == "DEFERRED")
-    n_classified   = sum(1 for r in summary_rows if r["status"] not in ("DEFERRED", "ERROR", "?"))
+    n_needs_new    = sum(1 for r in summary_rows if r["status"] == "NEEDS_NEW_CATEGORY")
+    n_classified   = sum(1 for r in summary_rows
+                         if r["status"] not in ("DEFERRED", "NEEDS_NEW_CATEGORY", "ERROR", "?"))
 
     # Build category → short description lookup (DB first, fallback to hardcoded)
     cat_desc: dict[str, str] = {}
@@ -568,7 +570,10 @@ def main() -> None:
     for i, r in enumerate(summary_rows, start=1):
         comment_col = r["raw_text"][:45].replace("\n", " ")
 
-        if r["status"] == "DEFERRED" and r["tier"] == 0 and r.get("deferred_reason"):
+        if r["status"] == "NEEDS_NEW_CATEGORY":
+            llm_hint = (r.get("llm_response") or r.get("template") or "")[:28]
+            cat_cell = f"? UNMATCHED  {llm_hint}"
+        elif r["status"] == "DEFERRED" and r["tier"] == 0 and r.get("deferred_reason"):
             cat_cell = f"N/A ({r['deferred_reason']})"
         else:
             cat_code = r["category"]
@@ -590,7 +595,9 @@ def main() -> None:
     print(line)
     print(
         f"TOTAL: {total_loaded} loaded → {total_groups} unique groups selected"
-        f" → {n_deferred} DEFERRED → {n_classified} classified by LLM"
+        f" → {n_deferred} DEFERRED"
+        f" → {n_needs_new} NEEDS_NEW_CATEGORY"
+        f" → {n_classified} classified by LLM"
     )
     print(f"{sep}\n")
 

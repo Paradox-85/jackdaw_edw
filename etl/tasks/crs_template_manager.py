@@ -69,6 +69,53 @@ def update_template_db(
         and r.get("llm_category") not in (None, "OTHER", "GENERAL_COMMENT")
     ]
 
+    # Handle NEEDS_NEW_CATEGORY rows — stage with NULL category for human review
+    needs_new = [r for r in llm_results if r.get("status") == "NEEDS_NEW_CATEGORY"]
+    if needs_new:
+        seen_needs_new: set[str] = set()
+        staging_params: list[dict] = []
+        for result in needs_new:
+            raw = result.get("comment") or result.get("group_comment") or ""
+            norm = normalise_comment(raw)
+            if not norm or norm in seen_needs_new:
+                continue
+            seen_needs_new.add(norm)
+            staging_params.append({
+                "template_text": norm,
+                "template_hash": _hash(norm),
+                "check_type":    result.get("check_type"),
+                "confidence":    float(result.get("llm_category_confidence") or 0.0),
+                "llm_response":  result.get("llm_response"),
+                "revision":      revision,
+            })
+        if staging_params:
+            try:
+                with engine.begin() as conn:
+                    for p in staging_params:
+                        conn.execute(text("""
+                            INSERT INTO audit_core.crs_llm_template_staging
+                                (template_text, template_hash, suggested_category,
+                                 check_type, confidence, llm_response, revision,
+                                 occurrence_count, last_seen_at, created_at, object_status)
+                            VALUES
+                                (:template_text, :template_hash, NULL,
+                                 :check_type, :confidence, :llm_response, :revision,
+                                 1, now(), now(), 'NeedsNewCategory')
+                            ON CONFLICT (template_hash) DO UPDATE SET
+                                occurrence_count = audit_core.crs_llm_template_staging.occurrence_count + 1,
+                                last_seen_at     = now(),
+                                confidence       = GREATEST(
+                                                       audit_core.crs_llm_template_staging.confidence,
+                                                       EXCLUDED.confidence)
+                            WHERE audit_core.crs_llm_template_staging.object_status = 'NeedsNewCategory'
+                        """), p)
+                logger.info(
+                    "Staged %d NEEDS_NEW_CATEGORY comments → crs_llm_template_staging",
+                    len(staging_params),
+                )
+            except Exception as exc:
+                logger.warning("crs_llm_template_staging NEEDS_NEW_CATEGORY write failed (skipping): %s", exc)
+
     if not eligible:
         logger.info("Template staging: no eligible results (confidence >= %.2f).", min_confidence)
         return 0

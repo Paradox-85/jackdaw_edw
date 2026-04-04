@@ -738,8 +738,9 @@ def run_tier3_llm(
               Disable via env var TIER3_TWO_PASS=false.
 
     Status mapping (must satisfy crs_comment_status_check constraint):
-      confidence >= 0.7 → IN_REVIEW
-      confidence <  0.7 → DEFERRED
+      cat == 'OTHER' and confidence <= 0.30 → NEEDS_NEW_CATEGORY
+      confidence >= 0.7                     → IN_REVIEW
+      confidence <  0.7                     → DEFERRED
 
     Args:
         comments: Batch of unclassified comment dicts (passed from Tier 2).
@@ -913,21 +914,29 @@ def run_tier3_llm(
 
     # Build key → classification fields mapping for broadcast
     key_results: dict[str, dict[str, Any]] = {}
-    for key, llm_out, params in zip(unique_keys, all_llm_outputs, unique_params):
+    for key, llm_out, params, domain in zip(
+            unique_keys, all_llm_outputs, unique_params, unique_domains):
         confidence = llm_out.get("confidence", 0.7)
+        cat = llm_out["category"]
         # UNCLASSIFIED (LLM connection error, confidence=0.0) → DEFERRED automatically
-        status = "IN_REVIEW" if confidence >= 0.7 else "DEFERRED"
+        if cat == "OTHER" and confidence <= 0.30:
+            status = "NEEDS_NEW_CATEGORY"
+        elif confidence >= 0.7:
+            status = "IN_REVIEW"
+        else:
+            status = "DEFERRED"
 
         key_results[key] = {
-            "llm_category":            llm_out["category"],
+            "llm_category":            cat,
             "llm_category_confidence": confidence,
             "llm_response":            llm_out.get("response", ""),
             "llm_model_used":          ollama_model,
             "classification_tier":     3,
             "status":                  status,
             "_extracted_params":       params,
-            "category_code":           llm_out["category"],
+            "category_code":           cat,
             "category_confidence":     confidence,
+            "check_type":              domain,
         }
 
     # Broadcast: fan out classification result to all rows in each group
