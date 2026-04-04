@@ -456,6 +456,7 @@ CREATE TABLE "audit_core"."crs_comment" (
   "category_confidence" REAL NULL,
   "validation_query_ids" UUID[] NULL,
   "template_id" UUID NULL,
+  "deferred_reason" TEXT NULL,
   CONSTRAINT "crs_comment_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "crs_comment_comment_id_key" UNIQUE ("comment_id"),
   CONSTRAINT "crs_comment_template_id_fkey" FOREIGN KEY ("template_id") REFERENCES "audit_core"."crs_comment_template"("id") ON DELETE SET NULL
@@ -652,6 +653,13 @@ COMMENT ON COLUMN "audit_core"."crs_comment"."document_number" IS
 
 COMMENT ON COLUMN "audit_core"."crs_comment"."llm_category_confidence" IS
     'LLM confidence score 0-1. Partial index idx_crs_comment_low_confidence for values < 0.7.';
+
+COMMENT ON COLUMN "audit_core"."crs_comment"."deferred_reason" IS
+    'Tier 0 skip reason. Values: INFORMATIONAL (status note, not actionable), '
+    'TAG_NOT_IN_EDW (tag_name present but tag_id NULL), '
+    'TAG_INACTIVE (tag exists but status is Inactive/Voided/Cancelled), '
+    'TAG_NO_STATUS (tag exists but tag_status IS NULL or empty). '
+    'NULL for rows processed by Tier 1+.';
 
 COMMENT ON TABLE "audit_core"."crs_validation_query" IS
     'Registry of SQL validation queries used in Phase 2 CRS comment processing. '

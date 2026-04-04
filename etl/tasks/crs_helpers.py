@@ -134,8 +134,8 @@ def prefetch_tag_statuses(
         engine: SQLAlchemy engine.
 
     Returns:
-        Dict mapping tag_name → tag_status (e.g. 'ACTIVE', 'ASB', 'Inactive').
-        Missing tags are absent from the dict (caller treats absence as unknown).
+        Dict mapping tag_name → tag_status string, or None if tag_status IS NULL.
+        Missing tags are absent from the dict (not in project_core.tag).
     """
     if not tag_names:
         return {}
@@ -152,7 +152,7 @@ def prefetch_tag_statuses(
 
     result: dict[str, str] = {}
     for row in rows:
-        result[row.tag_name] = row.tag_status or row.object_status or "Active"
+        result[row.tag_name] = row.tag_status  # may be None for unset tag_status
     return result
 
 
@@ -196,6 +196,7 @@ def save_classification_results(
             template_id              = :template_id,
             category_code            = :category_code,
             category_confidence      = :category_confidence,
+            deferred_reason          = :deferred_reason,
             sync_timestamp           = now()
         WHERE id = :id
     """)
@@ -219,6 +220,7 @@ def save_classification_results(
             "template_id":  r.get("template_id"),
             "category_code":       r.get("category_code"),
             "category_confidence": r.get("category_confidence"),
+            "deferred_reason":     r.get("skip_reason"),  # None for Tier 1-3 rows
         })
 
     with engine.begin() as conn:

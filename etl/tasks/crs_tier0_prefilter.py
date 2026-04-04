@@ -4,7 +4,7 @@ Tier 0 pre-filter for CRS cascade classifier.
 Deterministically skips ~5-10% of comments that don't need classification:
   1. Informational phrases ("For information", "See attached", "FYI", etc.)
   2. tag_name set but tag_id is NULL (tag not in EDW)
-  3. Tag has a non-active status (Inactive, ASB, VOIDED, VOIDD, CANCELLED)
+  3. Tag has a non-active status (Inactive, VOID, VOIDED, VOIDD, CANCELLED)
 
 Speed: ~500k records/sec (pure Python + single batch DB prefetch).
 No LLM calls. No per-row queries.
@@ -28,6 +28,7 @@ from etl.tasks.crs_multi_comment import is_multi_comment_group  # noqa: F401 (re
 SKIP_REASON_INFORMATIONAL = "INFORMATIONAL"
 SKIP_REASON_TAG_NOT_IN_EDW = "TAG_NOT_IN_EDW"
 SKIP_REASON_TAG_INACTIVE = "TAG_INACTIVE"
+SKIP_REASON_TAG_NO_STATUS = "TAG_NO_STATUS"
 
 # ---------------------------------------------------------------------------
 # Informational phrase pattern
@@ -62,12 +63,12 @@ _INFO_PATTERN = re.compile(
 
 # ---------------------------------------------------------------------------
 # Skip statuses — non-active tag states that should not be classified.
-# ASB = Abandoned/Scrapped; VOIDD/VOIDED = typos seen in production xlsx.
+# VOIDD/VOIDED = production xlsx typo variants for VOIDED.
+# ASB (As Built) is intentionally excluded — valid operational status.
 # ---------------------------------------------------------------------------
 
 _SKIP_STATUSES: frozenset[str] = frozenset({
     "inactive",
-    "asb",
     "voided",
     "voidd",
     "cancelled",
@@ -120,11 +121,19 @@ def should_skip(
     if tag_name and not tag_id:
         return True, SKIP_REASON_TAG_NOT_IN_EDW
 
-    # 3. Tag has inactive/scrapped status
+    # 3. Tag has inactive/scrapped status or no status set
     if tag_name:
-        status = tag_status_lookup.get(tag_name, "")
-        if status and status.lower() in _SKIP_STATUSES:
-            return True, SKIP_REASON_TAG_INACTIVE
+        raw_status = tag_status_lookup.get(tag_name)  # None = tag not in prefetch result
+        if raw_status is not None:
+            # Tag found in project_core.tag — check its status
+            status_norm = raw_status.strip().lower() if raw_status else ""
+            if not status_norm:
+                # tag_status IS NULL or empty — tag not finalised, skip classification
+                return True, SKIP_REASON_TAG_NO_STATUS
+            if status_norm in _SKIP_STATUSES:
+                return True, SKIP_REASON_TAG_INACTIVE
+        # raw_status is None → tag_name not in prefetch result
+        # (already handled above by the tag_id IS NULL check)
 
     return False, None
 
@@ -177,12 +186,13 @@ def run_tier0(
             to_process.append(comment)
 
     logger.info(
-        "Tier 0: %d skipped (informational=%d, not_in_edw=%d, inactive=%d), "
-        "%d passed through.",
+        "Tier 0: %d skipped (informational=%d, not_in_edw=%d, "
+        "inactive=%d, no_status=%d), %d passed through.",
         len(skipped),
         sum(1 for s in skipped if s["skip_reason"] == SKIP_REASON_INFORMATIONAL),
         sum(1 for s in skipped if s["skip_reason"] == SKIP_REASON_TAG_NOT_IN_EDW),
         sum(1 for s in skipped if s["skip_reason"] == SKIP_REASON_TAG_INACTIVE),
+        sum(1 for s in skipped if s["skip_reason"] == SKIP_REASON_TAG_NO_STATUS),
         len(to_process),
     )
     return to_process, skipped
