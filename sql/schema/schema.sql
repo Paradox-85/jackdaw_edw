@@ -655,11 +655,8 @@ COMMENT ON COLUMN "audit_core"."crs_comment"."llm_category_confidence" IS
     'LLM confidence score 0-1. Partial index idx_crs_comment_low_confidence for values < 0.7.';
 
 COMMENT ON COLUMN "audit_core"."crs_comment"."deferred_reason" IS
-    'Tier 0 skip reason. Values: INFORMATIONAL (status note, not actionable), '
-    'TAG_NOT_IN_EDW (tag_name present but tag_id NULL), '
-    'TAG_INACTIVE (tag exists but status is Inactive/Voided/Cancelled), '
-    'TAG_NO_STATUS (tag exists but tag_status IS NULL or empty). '
-    'NULL for rows processed by Tier 1+.';
+    'Tier 0 skip reason: INFORMATIONAL, TAG_NOT_IN_EDW, TAG_INACTIVE, '
+    'TAG_NO_STATUS, TAG_OBJECT_INACTIVE. NULL for Tier 1–3 classified rows.';
 
 COMMENT ON TABLE "audit_core"."crs_validation_query" IS
     'Registry of SQL validation queries used in Phase 2 CRS comment processing. '

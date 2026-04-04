@@ -5,6 +5,7 @@ Deterministically skips ~5-10% of comments that don't need classification:
   1. Informational phrases ("For information", "See attached", "FYI", etc.)
   2. tag_name set but tag_id is NULL (tag not in EDW)
   3. Tag has a non-active status (Inactive, VOID, VOIDED, VOIDD, CANCELLED)
+     or tag.object_status = Inactive (tag deactivated in EDW)
 
 Speed: ~500k records/sec (pure Python + single batch DB prefetch).
 No LLM calls. No per-row queries.
@@ -29,6 +30,7 @@ SKIP_REASON_INFORMATIONAL = "INFORMATIONAL"
 SKIP_REASON_TAG_NOT_IN_EDW = "TAG_NOT_IN_EDW"
 SKIP_REASON_TAG_INACTIVE = "TAG_INACTIVE"
 SKIP_REASON_TAG_NO_STATUS = "TAG_NO_STATUS"
+SKIP_REASON_TAG_OBJECT_INACTIVE = "TAG_OBJECT_INACTIVE"
 
 # ---------------------------------------------------------------------------
 # Informational phrase pattern
@@ -82,13 +84,13 @@ _SKIP_STATUSES: frozenset[str] = frozenset({
 
 def should_skip(
     comment: dict[str, Any],
-    tag_status_lookup: dict[str, str],
+    tag_status_lookup: dict[str, dict],
 ) -> tuple[bool, str | None]:
     """Determine if a single comment should be skipped.
 
     Args:
         comment: Dict with keys from crs_comment row.
-        tag_status_lookup: Pre-fetched {tag_name: tag_status} dict.
+        tag_status_lookup: Pre-fetched {tag_name: {"tag_status": ..., "object_status": ...}} dict.
 
     Returns:
         (True, reason) if should skip; (False, None) otherwise.
@@ -121,18 +123,26 @@ def should_skip(
     if tag_name and not tag_id:
         return True, SKIP_REASON_TAG_NOT_IN_EDW
 
-    # 3. Tag has inactive/scrapped status or no status set
+    # 3. Tag has inactive/scrapped status, deactivated object_status, or no status set
     if tag_name:
-        raw_status = tag_status_lookup.get(tag_name)  # None = tag not in prefetch result
-        if raw_status is not None:
-            # Tag found in project_core.tag — check its status
+        tag_info = tag_status_lookup.get(tag_name)  # None = not in project_core.tag
+
+        if tag_info is not None:
+            # Check object_status first — deactivated tag trumps tag_status
+            obj_status = (tag_info.get("object_status") or "").strip().lower()
+            if obj_status == "inactive":
+                return True, SKIP_REASON_TAG_OBJECT_INACTIVE
+
+            # Check tag_status
+            raw_status = tag_info.get("tag_status")
             status_norm = raw_status.strip().lower() if raw_status else ""
             if not status_norm:
                 # tag_status IS NULL or empty — tag not finalised, skip classification
                 return True, SKIP_REASON_TAG_NO_STATUS
             if status_norm in _SKIP_STATUSES:
                 return True, SKIP_REASON_TAG_INACTIVE
-        # raw_status is None → tag_name not in prefetch result
+
+        # tag_info is None → tag_name not in prefetch result
         # (already handled above by the tag_id IS NULL check)
 
     return False, None
@@ -165,7 +175,7 @@ def run_tier0(
 
     # Single batch query for all tag names in this batch
     tag_names = [c["tag_name"] for c in comments if c.get("tag_name")]
-    tag_status_lookup = prefetch_tag_statuses(tag_names, engine)
+    tag_status_lookup: dict[str, dict] = prefetch_tag_statuses(tag_names, engine)
 
     to_process: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -187,12 +197,13 @@ def run_tier0(
 
     logger.info(
         "Tier 0: %d skipped (informational=%d, not_in_edw=%d, "
-        "inactive=%d, no_status=%d), %d passed through.",
+        "inactive=%d, no_status=%d, obj_inactive=%d), %d passed through.",
         len(skipped),
         sum(1 for s in skipped if s["skip_reason"] == SKIP_REASON_INFORMATIONAL),
         sum(1 for s in skipped if s["skip_reason"] == SKIP_REASON_TAG_NOT_IN_EDW),
         sum(1 for s in skipped if s["skip_reason"] == SKIP_REASON_TAG_INACTIVE),
         sum(1 for s in skipped if s["skip_reason"] == SKIP_REASON_TAG_NO_STATUS),
+        sum(1 for s in skipped if s["skip_reason"] == SKIP_REASON_TAG_OBJECT_INACTIVE),
         len(to_process),
     )
     return to_process, skipped

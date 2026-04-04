@@ -80,6 +80,13 @@ def load_received_comments(
 
     Returns:
         List of row dicts with all crs_comment columns.
+
+    Note on object_status:
+        No object_status filter is applied. scripts/import_crs_data.py (Phase 1)
+        sets object_status = 'Active' for every row and never sets 'Inactive' —
+        there is no soft-delete mechanism on crs_comment. Filtering by object_status
+        here would silently exclude nothing while implying otherwise. If a
+        soft-delete mechanism is added to Phase 1 in future, revisit this query.
     """
     revision_clause = "AND revision = :revision" if revision_filter else ""
     limit_clause = "LIMIT :lim" if limit > 0 else ""
@@ -102,7 +109,6 @@ def load_received_comments(
             row_hash
         FROM audit_core.crs_comment
         WHERE status = 'RECEIVED'
-          AND object_status = 'Active'
           {revision_clause}
         ORDER BY crs_doc_number, id
         {limit_clause}
@@ -126,16 +132,17 @@ def load_received_comments(
 def prefetch_tag_statuses(
     tag_names: list[str],
     engine: Engine,
-) -> dict[str, str]:
-    """Batch-fetch tag_status for a list of tag_names.
+) -> dict[str, dict]:
+    """Batch-fetch tag_status and object_status for a list of tag_names.
 
     Args:
         tag_names: List of tag names to look up.
         engine: SQLAlchemy engine.
 
     Returns:
-        Dict mapping tag_name → tag_status string, or None if tag_status IS NULL.
-        Missing tags are absent from the dict (not in project_core.tag).
+        Dict mapping tag_name → {"tag_status": str|None, "object_status": str}.
+        Tags absent from project_core.tag are not present in the dict at all
+        (used by Tier 0 as the TAG_NOT_IN_EDW signal).
     """
     if not tag_names:
         return {}
@@ -150,9 +157,12 @@ def prefetch_tag_statuses(
     with engine.connect() as conn:
         rows = conn.execute(sql, {"names": unique_names}).fetchall()
 
-    result: dict[str, str] = {}
+    result: dict[str, dict] = {}
     for row in rows:
-        result[row.tag_name] = row.tag_status  # may be None for unset tag_status
+        result[row.tag_name] = {
+            "tag_status":    row.tag_status,      # may be None
+            "object_status": row.object_status,   # default 'Active'
+        }
     return result
 
 
