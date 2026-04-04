@@ -445,12 +445,21 @@ def _build_prompt(
     params: dict[str, str | None],
     sql_result: list[dict[str, Any]],
     categories_line: str,
-    max_category: str = "CRS-C050",
 ) -> tuple[str, str]:
     """Returns (system_prompt, user_prompt) tuple for ChatOpenAI messages list."""
+    import re as _re  # local — avoids shadowing module-level re
+
     text_val = comment.get("comment") or comment.get("group_comment") or ""
     sheet = comment.get("detail_sheet") or "unknown"
     result_str = json.dumps(sql_result[:3], default=str)
+
+    # Dynamically derive min/max CRS-C### from the categories_line passed in.
+    # Falls back to "see list below" if parsing fails (empty line, no matches).
+    _cat_nums = [int(m) for m in _re.findall(r"CRS-C(\d+)", categories_line)]
+    if _cat_nums:
+        _cat_range = f"CRS-C{min(_cat_nums):03d} through CRS-C{max(_cat_nums):03d}"
+    else:
+        _cat_range = "see list below"
 
     system_msg = (
         "You are an engineering data classification system. "
@@ -467,7 +476,7 @@ def _build_prompt(
         f"Sheet: {sheet}\n"
         f"Comment: {text_val}\n"
         f"DB check: {result_str}\n\n"
-        f"Valid categories: CRS-C001 through {max_category}\n"
+        f"Valid categories: {_cat_range}\n"
         f"({categories_line})\n\n"
         f'OUTPUT (JSON only): {{"category":"CRS-C???","confidence":0.0,"response":"one sentence max"}}'
     )
@@ -760,11 +769,6 @@ def run_tier3_llm(
             for cat, desc in _FALLBACK_CATEGORIES.items()
         ]
 
-    max_category = max(
-        (t.get("category") or "CRS-C001" for t in crs_templates),
-        default="CRS-C050",
-    )
-
     # Group by generalised pattern — classify once per unique template (M << N)
     groups = group_by_generalized(comments)
 
@@ -814,7 +818,7 @@ def run_tier3_llm(
             categories_pass1 = _build_categories_line(crs_templates, domain=None)
 
         unique_keys.append(key)
-        unique_prompts.append(_build_prompt(rep, params, sql_result, categories_pass1, max_category=max_category))
+        unique_prompts.append(_build_prompt(rep, params, sql_result, categories_pass1))
         unique_domains.append(domain)
         unique_params.append(params)
         unique_sql_results.append(sql_result)
@@ -865,8 +869,7 @@ def run_tier3_llm(
                     _build_prompt(unique_reps[batch_start + i],
                                   unique_params[batch_start + i],
                                   unique_sql_results[batch_start + i],
-                                  categories_full,
-                                  max_category=max_category)
+                                  categories_full)
                     for i in retry_local
                 ]
                 retry_outputs = _call_llm_batch(

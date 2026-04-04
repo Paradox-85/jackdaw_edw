@@ -23,6 +23,7 @@ import os
 os.environ.setdefault("PREFECT_API_URL", "")
 os.environ.setdefault("DO_NOT_TRACK", "1")
 os.environ.setdefault("PREFECT_SERVER_ANALYTICS_ENABLED", "false")
+os.environ.setdefault("PREFECT_LOGGING_TO_API_WHEN_MISSING_FLOW", "ignore")
 
 import argparse
 import logging
@@ -164,12 +165,46 @@ def _log_tier_results(
 # Tier 3 debug runner
 # ---------------------------------------------------------------------------
 
+def _truncate_categories_for_log(user_msg: str) -> str:
+    """Return user_msg with the categories list line summarised for log readability.
+
+    The full categories list (229+ entries) floods the console. This replaces
+    the long parenthesised line with a head+tail summary — the actual prompt
+    passed to the LLM is never modified.
+
+    Args:
+        user_msg: Full user prompt string.
+
+    Returns:
+        Modified string with categories line replaced by a summary,
+        or the original string if no categories line is found.
+    """
+    lines = user_msg.splitlines()
+    result_lines = []
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith("(CRS-C") or (stripped.startswith("(") and "CRS-C" in stripped):
+            # Parse out individual category entries: "CRS-Cxxx=..."
+            import re as _re
+            entries = _re.findall(r"CRS-C\d+=[^,)]+", line)
+            count = len(entries)
+            if count > 6:
+                head = ", ".join(entries[:3])
+                tail = ", ".join(entries[-3:])
+                result_lines.append(f"({head}, ... {tail} [{count} total categories])")
+            else:
+                result_lines.append(line)
+        else:
+            result_lines.append(line)
+    return "\n".join(result_lines)
+
+
 def _run_tier3_debug(
     comments: list[dict[str, Any]],
     engine: Any,
     args: argparse.Namespace,
     log: logging.Logger,
-) -> None:
+) -> list[dict[str, Any]]:
     """Run Tier 3 LLM classification with verbose per-group debug output.
 
     Calls internal functions directly — does NOT call run_tier3_llm() (Prefect task).
@@ -180,6 +215,9 @@ def _run_tier3_debug(
         engine: SQLAlchemy engine.
         args: Parsed CLI args (for verbose flag).
         log: Logger instance.
+
+    Returns:
+        List of result dicts for summary table, one per unique group processed.
     """
     from etl.tasks.crs_tier3_llm_classifier import (  # noqa: PLC0415
         _build_prompt,
@@ -211,8 +249,12 @@ def _run_tier3_debug(
     if not queries:
         log.warning("Tier 3: no active validation queries in DB — SQL verification skipped.")
 
+    from etl.tasks.crs_tier0_prefilter import is_multi_comment_group  # noqa: PLC0415
+
     groups = group_by_generalized(comments)
     total  = len(groups)
+
+    tier3_results: list[dict[str, Any]] = []
 
     for idx, (key, rows) in enumerate(groups.items(), start=1):
         # Prefer row with specific comment (differs from group_comment sheet header).
@@ -222,15 +264,17 @@ def _run_tier3_debug(
             rows[0],
         )
         raw_text = rep.get("comment") or rep.get("group_comment") or ""
+        is_multi = is_multi_comment_group(rep)
 
         # ── A. Normalised comment ──────────────────────────────────────────
         normalised = generalize_comment(raw_text)
         log.info(
-            "\n%s\n[Group %d/%d]  (%d row%s)\n"
+            "\n%s\n[Group %d/%d]  (%d row%s)  multi=%s\n"
             "  raw:        %s\n"
             "  normalised: %s",
             "=" * 70, idx, total,
             len(rows), "" if len(rows) == 1 else "s",
+            "Y" if is_multi else "N",
             raw_text, normalised,
         )
 
@@ -265,14 +309,15 @@ def _run_tier3_debug(
         cat_count       = categories_line.count("CRS-C")
         log.info("  domain:     %s  |  categories_in_prompt=%d", domain, cat_count)
 
-        # ── D. Full prompt (always shown — verbose adds no extra here) ─────
+        # ── D. Full prompt (categories list truncated in log to avoid flooding)
         system_msg, user_msg = _build_prompt(rep, params, sql_result, categories_line)
         log.info(
             "\n  ── PROMPT ──\n"
             "  [SYSTEM] %s\n"
             "  [USER]\n%s\n"
             "  ── END PROMPT ──",
-            system_msg, user_msg,
+            system_msg,
+            _truncate_categories_for_log(user_msg),  # log only; LLM receives full user_msg
         )
 
         # ── E. LLM call ───────────────────────────────────────────────────
@@ -292,6 +337,17 @@ def _run_tier3_debug(
 
         if result["error"]:
             log.error("  LLM ERROR: %s", result["error"])
+            tier3_results.append({
+                "group_key":   key[:60],
+                "raw_text":    raw_text[:80],
+                "is_multi":    is_multi,
+                "row_count":   len(rows),
+                "tier":        3,
+                "status":      "ERROR",
+                "category":    "ERROR",
+                "template":    "N/A",
+                "llm_response": result["error"][:80],
+            })
             continue
 
         # ── F. LLM response ───────────────────────────────────────────────
@@ -314,6 +370,11 @@ def _run_tier3_debug(
             (t for t in templates if t.get("category") == result["category"]), None
         )
         assigned_status = "IN_REVIEW" if result["confidence"] >= 0.7 else "DEFERRED"
+        template_text = (
+            matched_template.get("short_template_text")
+            if matched_template
+            else "NOT FOUND in templates"
+        )
         log.info(
             "\n  ── RESULT ──\n"
             "  category:  %s\n"
@@ -322,10 +383,24 @@ def _run_tier3_debug(
             "  status:    %s\n"
             "  ── END RESULT ──",
             result["category"],
-            matched_template.get("short_template_text") if matched_template else "NOT FOUND in templates",
+            template_text,
             result["response"],
             assigned_status,
         )
+
+        tier3_results.append({
+            "group_key":   key[:60],
+            "raw_text":    raw_text[:80],
+            "is_multi":    is_multi,
+            "row_count":   len(rows),
+            "tier":        3,
+            "status":      assigned_status,
+            "category":    result["category"],
+            "template":    (template_text or "")[:60],
+            "llm_response": result["response"][:80],
+        })
+
+    return tier3_results
 
 
 # ---------------------------------------------------------------------------
@@ -418,18 +493,70 @@ def main() -> None:
         _log_tier_results(log, 2, t2)
         log.info("Tier 2: %d classified, %d remaining.", len(t2), len(remaining))
 
+    tier3_summary: list[dict[str, Any]] = []
     if run_tier in ("3", "all"):
         if remaining:
             log.info("── Tier 3: LLM classifier ──  (%d comments remaining)", len(remaining))
-            _run_tier3_debug(remaining, engine, args, log)
+            tier3_summary = _run_tier3_debug(remaining, engine, args, log)
         else:
             log.info("── Tier 3: skipped (no comments remaining after earlier tiers).")
 
-    # ── 5. Summary ────────────────────────────────────────────────────────
+    # ── 5. Summary table ──────────────────────────────────────────────────
+    # Build rows: Tier 0 skipped + Tier 1/2 classified + Tier 3 results
+    summary_rows: list[dict[str, Any]] = []
+
+    # Tiers 0-2: extract from classified list
+    from etl.tasks.crs_text_generalizer import group_by_generalized as _gbg  # noqa: PLC0415
+    from etl.tasks.crs_tier0_prefilter import is_multi_comment_group as _imc  # noqa: PLC0415
+    for grp_key, grp_rows in _gbg(classified).items():
+        rep = grp_rows[0]
+        raw = rep.get("comment") or rep.get("group_comment") or ""
+        summary_rows.append({
+            "group_key":  grp_key[:60],
+            "raw_text":   raw[:80],
+            "is_multi":   _imc(rep),
+            "row_count":  len(grp_rows),
+            "tier":       rep.get("classification_tier") or 0,
+            "status":     rep.get("status", "?"),
+            "category":   rep.get("category_code") or rep.get("llm_category") or "N/A",
+            "template":   "",
+            "llm_response": "",
+        })
+
+    # Tier 3 results appended after
+    summary_rows.extend(tier3_summary)
+
+    # Count stats
+    total_loaded   = len(comments)
+    total_groups   = len(_gbg(comments))
+    n_deferred     = sum(1 for r in summary_rows if r["status"] == "DEFERRED")
+    n_classified   = sum(1 for r in summary_rows if r["status"] not in ("DEFERRED", "ERROR", "?"))
+
+    sep  = "═" * 78
+    line = "─" * 78
+    hdr  = f"{'#':>3}  {'Tier':>4}  {'Status':<10}  {'Category':<10}  {'Rows':>5}  {'M':>1}  {'Comment (truncated)'}"
+    print(f"\n{sep}")
+    print("CLASSIFICATION SUMMARY")
+    print(line)
+    print(hdr)
+    print(line)
+    for i, r in enumerate(summary_rows, start=1):
+        comment_col = r["raw_text"][:50].replace("\n", " ")
+        print(
+            f"{i:>3}  {r['tier']:>4}  {r['status']:<10}  {r['category']:<10}"
+            f"  {r['row_count']:>5}  {'Y' if r['is_multi'] else 'N':>1}  {comment_col}"
+        )
+    print(line)
+    print(
+        f"TOTAL: {total_loaded} loaded → {total_groups} unique groups selected"
+        f" → {n_deferred} DEFERRED → {n_classified} classified by LLM"
+    )
+    print(f"{sep}\n")
+
     log.info(
-        "%s\nDONE.  %d total input comments → %d classified by Tiers 0-2"
-        "  |  %d passed to Tier 3  |  %d not processed (--tier=%s).",
-        "=" * 70, len(comments), len(classified), len(remaining), 0, args.tier,
+        "DONE.  %d total input comments → %d classified"
+        "  |  %d DEFERRED  |  --tier=%s",
+        total_loaded, n_classified, n_deferred, args.tier,
     )
 
 
