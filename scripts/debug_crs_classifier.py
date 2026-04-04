@@ -338,15 +338,16 @@ def _run_tier3_debug(
         if result["error"]:
             log.error("  LLM ERROR: %s", result["error"])
             tier3_results.append({
-                "group_key":   key[:60],
-                "raw_text":    raw_text[:80],
-                "is_multi":    is_multi,
-                "row_count":   len(rows),
-                "tier":        3,
-                "status":      "ERROR",
-                "category":    "ERROR",
-                "template":    "N/A",
-                "llm_response": result["error"][:80],
+                "group_key":     key[:60],
+                "raw_text":      raw_text[:80],
+                "is_multi":      is_multi,
+                "row_count":     len(rows),
+                "tier":          3,
+                "status":        "ERROR",
+                "category":      "ERROR",
+                "template":      "N/A",
+                "llm_response":  result["error"][:80],
+                "deferred_reason": "",
             })
             continue
 
@@ -389,15 +390,16 @@ def _run_tier3_debug(
         )
 
         tier3_results.append({
-            "group_key":   key[:60],
-            "raw_text":    raw_text[:80],
-            "is_multi":    is_multi,
-            "row_count":   len(rows),
-            "tier":        3,
-            "status":      assigned_status,
-            "category":    result["category"],
-            "template":    (template_text or "")[:60],
-            "llm_response": result["response"][:80],
+            "group_key":     key[:60],
+            "raw_text":      raw_text[:80],
+            "is_multi":      is_multi,
+            "row_count":     len(rows),
+            "tier":          3,
+            "status":        assigned_status,
+            "category":      result["category"],
+            "template":      (template_text or "")[:60],
+            "llm_response":  result["response"][:80],
+            "deferred_reason": "",
         })
 
     return tier3_results
@@ -512,15 +514,16 @@ def main() -> None:
         rep = grp_rows[0]
         raw = rep.get("comment") or rep.get("group_comment") or ""
         summary_rows.append({
-            "group_key":  grp_key[:60],
-            "raw_text":   raw[:80],
-            "is_multi":   _imc(rep),
-            "row_count":  len(grp_rows),
-            "tier":       rep.get("classification_tier") or 0,
-            "status":     rep.get("status", "?"),
-            "category":   rep.get("category_code") or rep.get("llm_category") or "N/A",
-            "template":   "",
-            "llm_response": "",
+            "group_key":     grp_key[:60],
+            "raw_text":      raw[:80],
+            "is_multi":      _imc(rep),
+            "row_count":     len(grp_rows),
+            "tier":          rep.get("classification_tier") or 0,
+            "status":        rep.get("status", "?"),
+            "category":      rep.get("category_code") or rep.get("llm_category") or "N/A",
+            "template":      "",
+            "llm_response":  "",
+            "deferred_reason": rep.get("skip_reason") or rep.get("deferred_reason") or "",
         })
 
     # Tier 3 results appended after
@@ -532,18 +535,56 @@ def main() -> None:
     n_deferred     = sum(1 for r in summary_rows if r["status"] == "DEFERRED")
     n_classified   = sum(1 for r in summary_rows if r["status"] not in ("DEFERRED", "ERROR", "?"))
 
-    sep  = "═" * 78
-    line = "─" * 78
-    hdr  = f"{'#':>3}  {'Tier':>4}  {'Status':<10}  {'Category':<10}  {'Rows':>5}  {'M':>1}  {'Comment (truncated)'}"
+    # Build category → short description lookup (DB first, fallback to hardcoded)
+    cat_desc: dict[str, str] = {}
+    try:
+        from etl.tasks.crs_tier3_llm_classifier import (  # noqa: PLC0415
+            _load_crs_templates,
+            _FALLBACK_CATEGORIES,
+        )
+        db_templates = _load_crs_templates(engine)
+        for t in db_templates:
+            cat = t.get("category")
+            txt = t.get("short_template_text")
+            if cat and txt:
+                cat_desc[cat] = txt
+        for cat, desc in _FALLBACK_CATEGORIES.items():
+            if cat not in cat_desc:
+                cat_desc[cat] = desc
+    except Exception as e:
+        log.warning("Could not load category descriptions: %s", e)
+
+    sep  = "═" * 90
+    line = "─" * 90
+    hdr  = (
+        f"{'#':>3}  {'Tier':>4}  {'Status':<10}  {'Category':<26}  "
+        f"{'Rows':>5}  {'M':>1}  {'Comment (truncated)'}"
+    )
     print(f"\n{sep}")
     print("CLASSIFICATION SUMMARY")
     print(line)
     print(hdr)
     print(line)
     for i, r in enumerate(summary_rows, start=1):
-        comment_col = r["raw_text"][:50].replace("\n", " ")
+        comment_col = r["raw_text"][:45].replace("\n", " ")
+
+        if r["status"] == "DEFERRED" and r["tier"] == 0 and r.get("deferred_reason"):
+            cat_cell = f"N/A ({r['deferred_reason']})"
+        else:
+            cat_code = r["category"]
+            desc = cat_desc.get(cat_code, "")
+            if desc:
+                max_desc = 26 - len(cat_code) - 1  # 1 for space separator
+                if max_desc > 4:
+                    desc_short = desc[:max_desc - 1] + "…" if len(desc) > max_desc - 1 else desc
+                    cat_cell = f"{cat_code} {desc_short}"
+                else:
+                    cat_cell = cat_code
+            else:
+                cat_cell = cat_code
+
         print(
-            f"{i:>3}  {r['tier']:>4}  {r['status']:<10}  {r['category']:<10}"
+            f"{i:>3}  {r['tier']:>4}  {r['status']:<10}  {cat_cell:<26}"
             f"  {r['row_count']:>5}  {'Y' if r['is_multi'] else 'N':>1}  {comment_col}"
         )
     print(line)
