@@ -74,6 +74,13 @@ def parse_args() -> argparse.Namespace:
         "--revision-all", action="store_true",
         help="Load all RECEIVED comments regardless of revision.",
     )
+    parser.add_argument(
+        "--dry-run", action="store_true", dest="dry_run",
+        help=(
+            "Run full Tier 0→3 cascade and print summary table. "
+            "No DB writes. Overrides --tier (always runs all tiers)."
+        ),
+    )
     args = parser.parse_args()
     if not args.revision_all and args.revision is None:
         parser.error("--revision is required unless --revision-all is set.")
@@ -421,6 +428,10 @@ def main() -> None:
     setup_logging(args.verbose)
     log = logging.getLogger("debug_crs")
 
+    if args.dry_run:
+        args.tier = "all"
+        log.info("DRY-RUN mode: full Tier 0→3 cascade, no DB writes.")
+
     # Lazy imports \u2014 deferred until after env vars are set above, so Prefect
     # @task decorators don't trigger an API server lookup at module load time.
     log.info("Importing ETL modules\u2026")
@@ -593,8 +604,6 @@ def main() -> None:
     print(hdr)
     print(line)
     for i, r in enumerate(summary_rows, start=1):
-        # Keep original text with line breaks (do not replace with space)
-
         if r["status"] == "NEEDS_NEW_CATEGORY":
             llm_hint = (r.get("llm_response") or r.get("template") or "")[:28]
             cat_cell = f"? UNMATCHED  {llm_hint}"
@@ -613,6 +622,12 @@ def main() -> None:
             else:
                 cat_cell = cat_code
 
+        _raw = r["raw_text"].replace("\n", " ")
+        comment_col = (
+            _raw[: comment_col_width - 1] + "…"
+            if len(_raw) > comment_col_width
+            else _raw
+        )
         print(
             f"{i:>3}  {r['tier']:>4}  {r['status']:<10}  {cat_cell:<52}"
             f"  {r['row_count']:>5}  {'Y' if r['is_multi'] else 'N':>1}  {comment_col}"
@@ -631,6 +646,9 @@ def main() -> None:
         "  |  %d DEFERRED  |  --tier=%s",
         total_loaded, n_classified, n_deferred, args.tier,
     )
+
+    if args.dry_run:
+        log.info("DRY-RUN complete. No DB writes performed.")
 
 
 if __name__ == "__main__":
