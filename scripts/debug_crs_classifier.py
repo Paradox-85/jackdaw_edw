@@ -384,7 +384,14 @@ def _run_tier3_debug(
         matched_template = next(
             (t for t in templates if t.get("category") == result["category"]), None
         )
-        assigned_status = "IN_REVIEW" if result["confidence"] >= 0.7 else "DEFERRED"
+        _cat = result["category"]
+        _conf = result["confidence"]
+        if _cat == "OTHER" and _conf <= 0.30:
+            assigned_status = "NEEDS_NEW_CATEGORY"
+        elif _conf >= 0.7:
+            assigned_status = "IN_REVIEW"
+        else:
+            assigned_status = "DEFERRED"
         template_text = (
             matched_template.get("short_template_text")
             if matched_template
