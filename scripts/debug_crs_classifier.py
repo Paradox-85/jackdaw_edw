@@ -124,7 +124,7 @@ def _reset_classification(engine: Any, revision: str, log: logging.Logger) -> No
             """),
             {"rev": revision},
         )
-    log.info("Reset %d classified rows → RECEIVED for revision=%s", result.rowcount, revision)
+    log.info("Reset %d classified rows \u2192 RECEIVED for revision=%s", result.rowcount, revision)
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +138,7 @@ def _log_tier_results(
 ) -> None:
     """Log per-group summary for Tiers 0-2 (no LLM, no prompt).
 
-    Format: [Tier N] group_key='...' → category=CRS-C08 confidence=1.0 status=IN_REVIEW (N rows)
+    Format: [Tier N] group_key='...' \u2192 category=CRS-C08 confidence=1.0 status=IN_REVIEW (N rows)
     """
     from etl.tasks.crs_text_generalizer import group_by_generalized  # noqa: PLC0415
 
@@ -154,7 +154,7 @@ def _log_tier_results(
         conf = rep.get("category_confidence") or rep.get("llm_category_confidence") or 0.0
         status = rep.get("status", "RECEIVED")
         log.info(
-            "[Tier %d] group_key=%-50r → category=%-8s  confidence=%.2f  status=%-10s  (%d row%s)",
+            "[Tier %d] group_key=%-50r \u2192 category=%-8s  confidence=%.2f  status=%-10s  (%d row%s)",
             tier_num, key[:50], cat, float(conf), status,
             len(rows), "" if len(rows) == 1 else "s",
         )
@@ -169,7 +169,7 @@ def _truncate_categories_for_log(user_msg: str) -> str:
     """Return user_msg with the categories list line summarised for log readability.
 
     The full categories list (229+ entries) floods the console. This replaces
-    the long parenthesised line with a head+tail summary — the actual prompt
+    the long parenthesised line with a head+tail summary \u2014 the actual prompt
     passed to the LLM is never modified.
 
     Args:
@@ -207,7 +207,7 @@ def _run_tier3_debug(
 ) -> list[dict[str, Any]]:
     """Run Tier 3 LLM classification with verbose per-group debug output.
 
-    Calls internal functions directly — does NOT call run_tier3_llm() (Prefect task).
+    Calls internal functions directly \u2014 does NOT call run_tier3_llm() (Prefect task).
     No DB writes are performed.
 
     Args:
@@ -230,7 +230,6 @@ def _run_tier3_debug(
         extract_parameters,
         _detect_comment_domain,
         _resolve_llm_url,
-        _first_nonempty,
     )
     from etl.tasks.crs_text_generalizer import generalize_comment, group_by_generalized  # noqa: PLC0415
     from etl.tasks.common import load_config, get_llm_config  # noqa: PLC0415
@@ -246,9 +245,9 @@ def _run_tier3_debug(
     templates = _load_crs_templates(engine)
 
     if not templates:
-        log.warning("Tier 3: no active templates in DB — LLM category hints will be empty.")
+        log.warning("Tier 3: no active templates in DB \u2014 LLM category hints will be empty.")
     if not queries:
-        log.warning("Tier 3: no active validation queries in DB — SQL verification skipped.")
+        log.warning("Tier 3: no active validation queries in DB \u2014 SQL verification skipped.")
 
     from etl.tasks.crs_tier0_prefilter import is_multi_comment_group  # noqa: PLC0415
 
@@ -264,24 +263,11 @@ def _run_tier3_debug(
              if r.get("comment") and r.get("comment") != r.get("group_comment")),
             rows[0],
         )
-        # Sanity check: confirm text_val that will be passed to _build_prompt
-        _check_val = (
-            rep.get("comment")
-            or rep.get("comment_text")
-            or rep.get("group_comment")
-            or rep.get("text")
-            or ""
-        )
-        if not _check_val:
-            log.warning(
-                "Tier 3 group %d: rep has empty comment text. Keys: %s",
-                idx, list(rep.keys())[:15],
-            )
         raw_text = rep.get("comment") or rep.get("group_comment") or ""
         rep = {**rep, "comment": raw_text}   # normalise: always use "comment" key
         is_multi = is_multi_comment_group(rep)
 
-        # ── A. Normalised comment ──────────────────────────────────────────
+        # \u2500\u2500 A. Normalised comment \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
         normalised = generalize_comment(raw_text)
         log.info(
             "\n%s\n[Group %d/%d]  (%d row%s)  multi=%s\n"
@@ -293,7 +279,7 @@ def _run_tier3_debug(
             raw_text, normalised,
         )
 
-        # ── B. Parameters + SQL verification ──────────────────────────────
+        # \u2500\u2500 B. Parameters + SQL verification \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
         params = extract_parameters(raw_text)
         # Override with structured fields from DB row where available
         field_map = [
@@ -314,74 +300,28 @@ def _run_tier3_debug(
         log.info("  sql_query:  %s", vq["query_code"] if vq else "None")
         log.info("  sql_result: %s", sql_result[:2])
 
-        # ── C. Domain detection ────────────────────────────────────────────
-        # Use raw_text for domain detection — normalised text has <prop>/<tag>/<doc>
+        # \u2500\u2500 C. Domain detection \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        # Use raw_text for domain detection \u2014 normalised text has <prop>/<tag>/<doc>
         # placeholders that corrupt keyword-based domain matching.
         domain          = _detect_comment_domain(raw_text, detail_sheet=rep.get("detail_sheet") or "")
-        # Pass detected domain — mirrors production two_pass=True behaviour.
-        # Helps validate domain filtering logic during development.
         categories_line = _build_categories_line(templates, domain=domain)
         cat_count       = categories_line.count("CRS-C")
         log.info("  domain:     %s  |  categories_in_prompt=%d", domain, cat_count)
 
-        # ── D-DIAG. Deep key diagnostics — always WARNING so always visible ──
-        _v_comment       = rep.get("comment")
-        _v_group_comment = rep.get("group_comment")
-        _v_text_val      = _first_nonempty(_v_comment, _v_group_comment)
-        log.warning(
-            "\n  ── KEY DIAGNOSTICS (group %d) ──\n"
-            "  rep keys (%d total): %s\n"
-            "  rep['comment']       = %r  (type=%s, len=%s)\n"
-            "  rep['group_comment'] = %r  (type=%s, len=%s)\n"
-            "  _first_nonempty()    = %r  ← this is what _build_prompt will use\n"
-            "  raw_text (harness)   = %r\n"
-            "  MATCH: harness==prompt? %s\n"
-            "  ── END KEY DIAGNOSTICS ──",
-            idx,
-            len(rep),
-            list(rep.keys()),
-            _v_comment,
-            type(_v_comment).__name__,
-            len(_v_comment) if isinstance(_v_comment, str) else "N/A",
-            _v_group_comment,
-            type(_v_group_comment).__name__,
-            len(_v_group_comment) if isinstance(_v_group_comment, str) else "N/A",
-            _v_text_val,
-            raw_text,
-            "YES ✓" if _v_text_val == raw_text else f"NO ✗  (MISMATCH — prompt will show {_v_text_val!r})",
-        )
-
-        # ── D. Full prompt (categories list truncated in log to avoid flooding)
+        # \u2500\u2500 D. Full prompt (categories list truncated in log to avoid flooding) \u2500\u2500\u2500\u2500
         system_msg, user_msg = _build_prompt(rep, params, sql_result, categories_line)
-
-        # Post-build check: verify Comment: line is not empty in actual prompt
-        _comment_line = next(
-            (ln for ln in user_msg.splitlines() if ln.startswith("Comment:")), None
-        )
-        if _comment_line is not None and _comment_line.strip() == "Comment:":
-            log.warning(
-                "  ⚠ POST-BUILD: Comment: line is EMPTY in user_msg after _build_prompt(). "
-                "rep['comment']=%r  _first_nonempty result=%r",
-                rep.get("comment"), _v_text_val,
-            )
-        else:
-            log.warning(
-                "  ✓ POST-BUILD: Comment: line = %r",
-                _comment_line,
-            )
-
         log.info(
-            "\n  ── PROMPT ──\n"
+            "\n  \u2500\u2500 PROMPT \u2500\u2500\n"
             "  [SYSTEM] %s\n"
             "  [USER]\n%s\n"
-            "  ── END PROMPT ──",
+            "  \u2500\u2500 END PROMPT \u2500\u2500",
             system_msg,
             _truncate_categories_for_log(user_msg),  # log only; LLM receives full user_msg
         )
 
-        # ── E. LLM call ───────────────────────────────────────────────────
+        # \u2500\u2500 E. LLM call \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
         timeout_val = float(llm_cfg.get("timeout", 30.0))
-        log.info("  [%d/%d] calling LLM (timeout=%.0fs)…", idx, total, timeout_val)
+        log.info("  [%d/%d] calling LLM (timeout=%.0fs)\u2026", idx, total, timeout_val)
         _t0 = time.monotonic()
         result = _call_llm_single_debug(
             (system_msg, user_msg),
@@ -398,7 +338,7 @@ def _run_tier3_debug(
             log.error("  LLM ERROR: %s", result["error"])
             tier3_results.append({
                 "group_key":     key[:60],
-                "raw_text":      raw_text[:80],
+                "raw_text":      raw_text,
                 "is_multi":      is_multi,
                 "row_count":     len(rows),
                 "tier":          3,
@@ -410,22 +350,22 @@ def _run_tier3_debug(
             })
             continue
 
-        # ── F. LLM response ───────────────────────────────────────────────
+        # \u2500\u2500 F. LLM response \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
         raw_preview = result["raw_response"]
         if len(raw_preview) > 600:
-            raw_preview = raw_preview[:600] + "…"
+            raw_preview = raw_preview[:600] + "\u2026"
         log.info(
-            "\n  ── LLM RESPONSE ──\n"
+            "\n  \u2500\u2500 LLM RESPONSE \u2500\u2500\n"
             "  raw:     %s\n"
             "  parsed:  category=%-8s  confidence=%.2f\n"
             "  tokens:  prompt=%d  completion=%d  total=%d\n"
-            "  ── END RESPONSE ──",
+            "  \u2500\u2500 END RESPONSE \u2500\u2500",
             raw_preview,
             result["category"], result["confidence"],
             result["prompt_tokens"], result["completion_tokens"], result["total_tokens"],
         )
 
-        # ── G. Final template + assigned status ───────────────────────────
+        # \u2500\u2500 G. Final template + assigned status \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
         matched_template = next(
             (t for t in templates if t.get("category") == result["category"]), None
         )
@@ -436,12 +376,12 @@ def _run_tier3_debug(
             else "NOT FOUND in templates"
         )
         log.info(
-            "\n  ── RESULT ──\n"
+            "\n  \u2500\u2500 RESULT \u2500\u2500\n"
             "  category:  %s\n"
             "  template:  %s\n"
             "  response:  %s\n"
             "  status:    %s\n"
-            "  ── END RESULT ──",
+            "  \u2500\u2500 END RESULT \u2500\u2500",
             result["category"],
             template_text,
             result["response"],
@@ -450,7 +390,7 @@ def _run_tier3_debug(
 
         tier3_results.append({
             "group_key":     key[:60],
-            "raw_text":      raw_text[:80],
+            "raw_text":      raw_text,
             "is_multi":      is_multi,
             "row_count":     len(rows),
             "tier":          3,
@@ -474,9 +414,9 @@ def main() -> None:
     setup_logging(args.verbose)
     log = logging.getLogger("debug_crs")
 
-    # Lazy imports — deferred until after env vars are set above, so Prefect
+    # Lazy imports \u2014 deferred until after env vars are set above, so Prefect
     # @task decorators don't trigger an API server lookup at module load time.
-    log.info("Importing ETL modules…")
+    log.info("Importing ETL modules\u2026")
     from etl.tasks.crs_helpers import get_engine, load_received_comments  # noqa: PLC0415
     from etl.tasks.crs_text_generalizer import group_by_generalized  # noqa: PLC0415
     from etl.tasks.crs_tier0_prefilter import run_tier0  # noqa: PLC0415
@@ -488,14 +428,14 @@ def main() -> None:
 
     engine = get_engine()
 
-    # ── 1. Optional reset ─────────────────────────────────────────────────
+    # \u2500\u2500 1. Optional reset \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     if args.reset:
         if args.revision_all:
             log.error("--reset requires --revision (cannot reset all revisions at once).")
             sys.exit(1)
         _reset_classification(engine, args.revision, log)
 
-    # ── 2. Load comments ──────────────────────────────────────────────────
+    # \u2500\u2500 2. Load comments \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     revision_label = "ALL" if args.revision_all else args.revision
     comments = load_received_comments(
         limit=0,   # load all; slice after dedup below
@@ -505,10 +445,10 @@ def main() -> None:
     log.info("Loaded %d RECEIVED comments  (revision=%s)", len(comments), revision_label)
 
     if not comments:
-        log.warning("No RECEIVED comments found — nothing to process.")
+        log.warning("No RECEIVED comments found \u2014 nothing to process.")
         return
 
-    # ── 3. Deduplicate to unique generalised groups ───────────────────────
+    # \u2500\u2500 3. Deduplicate to unique generalised groups \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     groups     = group_by_generalized(comments)
     unique_keys = list(groups.keys())
     log.info(
@@ -527,28 +467,28 @@ def main() -> None:
             len(unique_keys), len(comments),
         )
 
-    # ── 4. Run tiers ──────────────────────────────────────────────────────
+    # \u2500\u2500 4. Run tiers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     remaining: list[dict[str, Any]] = list(comments)
     classified: list[dict[str, Any]] = []
     run_tier = args.tier.lower()
 
-    # Tier 0 always runs — mandatory pre-filter regardless of --tier flag.
+    # Tier 0 always runs \u2014 mandatory pre-filter regardless of --tier flag.
     # Mirrors production flow where Tier 0 always precedes all other tiers.
-    log.info("── Tier 0: pre-filter ──  (%d comments)", len(remaining))
+    log.info("\u2500\u2500 Tier 0: pre-filter \u2500\u2500  (%d comments)", len(remaining))
     remaining, t0 = run_tier0(remaining, engine)
     classified.extend(t0)
     _log_tier_results(log, 0, t0)
     log.info("Tier 0: %d handled, %d remaining.", len(t0), len(remaining))
 
     if run_tier in ("1", "2", "all"):
-        log.info("── Tier 1: template KB match ──  (%d comments)", len(remaining))
+        log.info("\u2500\u2500 Tier 1: template KB match \u2500\u2500  (%d comments)", len(remaining))
         remaining, t1 = run_tier1(remaining, engine)
         classified.extend(t1)
         _log_tier_results(log, 1, t1)
         log.info("Tier 1: %d classified, %d remaining.", len(t1), len(remaining))
 
     if run_tier in ("2", "all"):
-        log.info("── Tier 2: keyword classifier ──  (%d comments)", len(remaining))
+        log.info("\u2500\u2500 Tier 2: keyword classifier \u2500\u2500  (%d comments)", len(remaining))
         remaining, t2 = run_tier2(remaining)
         classified.extend(t2)
         _log_tier_results(log, 2, t2)
@@ -557,12 +497,12 @@ def main() -> None:
     tier3_summary: list[dict[str, Any]] = []
     if run_tier in ("3", "all"):
         if remaining:
-            log.info("── Tier 3: LLM classifier ──  (%d comments remaining)", len(remaining))
+            log.info("\u2500\u2500 Tier 3: LLM classifier \u2500\u2500  (%d comments remaining)", len(remaining))
             tier3_summary = _run_tier3_debug(remaining, engine, args, log)
         else:
-            log.info("── Tier 3: skipped (no comments remaining after earlier tiers).")
+            log.info("\u2500\u2500 Tier 3: skipped (no comments remaining after earlier tiers).")
 
-    # ── 5. Summary table ──────────────────────────────────────────────────
+    # \u2500\u2500 5. Summary table \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     # Build rows: Tier 0 skipped + Tier 1/2 classified + Tier 3 results
     summary_rows: list[dict[str, Any]] = []
 
@@ -574,7 +514,7 @@ def main() -> None:
         raw = rep.get("comment") or rep.get("group_comment") or ""
         summary_rows.append({
             "group_key":     grp_key[:60],
-            "raw_text":      raw[:80],
+            "raw_text":      raw,
             "is_multi":      _imc(rep),
             "row_count":     len(grp_rows),
             "tier":          rep.get("classification_tier") or 0,
@@ -596,7 +536,7 @@ def main() -> None:
     n_classified   = sum(1 for r in summary_rows
                          if r["status"] not in ("DEFERRED", "NEEDS_NEW_CATEGORY", "ERROR", "?"))
 
-    # Build category → short description lookup (DB first, fallback to hardcoded)
+    # Build category \u2192 short description lookup (DB first, fallback to hardcoded)
     cat_desc: dict[str, str] = {}
     try:
         from etl.tasks.crs_tier3_llm_classifier import (  # noqa: PLC0415
@@ -615,11 +555,30 @@ def main() -> None:
     except Exception as e:
         log.warning("Could not load category descriptions: %s", e)
 
-    sep  = "═" * 116
-    line = "─" * 116
+    # \u2500\u2500 Dynamic comment column width \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    # Calculate width based on the longest comment in result set.
+    # Floor=30 so short comments still look reasonable.
+    # Cap=120 to avoid wrapping on standard 200-char terminals.
+    _COMMENT_COL_MIN  = 30
+    _COMMENT_COL_MAX  = 120
+    comment_col_width = max(
+        _COMMENT_COL_MIN,
+        min(
+            _COMMENT_COL_MAX,
+            max((len(r["raw_text"].replace("\n", " ")) for r in summary_rows), default=_COMMENT_COL_MIN),
+        ),
+    )
+
+    # Fixed columns: '#'(3) + Tier(4) + Status(10) + Category(52) + Rows(5) + M(1)
+    # Separators: 2sp*6 = 12.  Total fixed = 3+4+10+52+5+1+12 = 87
+    _FIXED_WIDTH = 87
+    total_width  = _FIXED_WIDTH + comment_col_width
+
+    sep  = "\u2550" * total_width
+    line = "\u2500" * total_width
     hdr  = (
         f"{'#':>3}  {'Tier':>4}  {'Status':<10}  {'Category':<52}  "
-        f"{'Rows':>5}  {'M':>1}  {'Comment (truncated)'}"
+        f"{'Rows':>5}  {'M':>1}  {'Comment':<{comment_col_width}}"
     )
     print(f"\n{sep}")
     print("CLASSIFICATION SUMMARY")
@@ -627,7 +586,7 @@ def main() -> None:
     print(hdr)
     print(line)
     for i, r in enumerate(summary_rows, start=1):
-        comment_col = r["raw_text"][:45].replace("\n", " ")
+        comment_col = r["raw_text"].replace("\n", " ")
 
         if r["status"] == "NEEDS_NEW_CATEGORY":
             llm_hint = (r.get("llm_response") or r.get("template") or "")[:28]
@@ -640,7 +599,7 @@ def main() -> None:
             if desc:
                 max_desc = 52 - len(cat_code) - 1  # 1 for space separator
                 if max_desc > 4:
-                    desc_short = desc[:max_desc - 1] + "…" if len(desc) > max_desc - 1 else desc
+                    desc_short = desc[:max_desc - 1] + "\u2026" if len(desc) > max_desc - 1 else desc
                     cat_cell = f"{cat_code} {desc_short}"
                 else:
                     cat_cell = cat_code
@@ -653,15 +612,15 @@ def main() -> None:
         )
     print(line)
     print(
-        f"TOTAL: {total_loaded} loaded → {total_groups} unique groups selected"
-        f" → {n_deferred} DEFERRED"
-        f" → {n_needs_new} NEEDS_NEW_CATEGORY"
-        f" → {n_classified} classified by LLM"
+        f"TOTAL: {total_loaded} loaded \u2192 {total_groups} unique groups selected"
+        f" \u2192 {n_deferred} DEFERRED"
+        f" \u2192 {n_needs_new} NEEDS_NEW_CATEGORY"
+        f" \u2192 {n_classified} classified by LLM"
     )
     print(f"{sep}\n")
 
     log.info(
-        "DONE.  %d total input comments → %d classified"
+        "DONE.  %d total input comments \u2192 %d classified"
         "  |  %d DEFERRED  |  --tier=%s",
         total_loaded, n_classified, n_deferred, args.tier,
     )
