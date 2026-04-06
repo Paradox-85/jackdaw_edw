@@ -277,6 +277,7 @@ def _run_tier3_debug(
                 idx, list(rep.keys())[:15],
             )
         raw_text = rep.get("comment") or rep.get("group_comment") or ""
+        rep = {**rep, "comment": raw_text}   # normalise: always use "comment" key
         is_multi = is_multi_comment_group(rep)
 
         # ── A. Normalised comment ──────────────────────────────────────────
