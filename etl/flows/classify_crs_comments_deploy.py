@@ -90,6 +90,33 @@ def classify_crs_comments_cascade(
     run_id = str(uuid.uuid4())
 
     fetch_limit = limit if limit > 0 else 9_999_999
+
+    # Handle --reset flag before loading comments
+    if args.reset:
+        if not args.revision:
+            print("ERROR: --reset requires --revision (cannot reset all revisions at once).")
+            return {"tier0": 0, "tier1": 0, "tier2": 0, "tier3": 0, "saved": 0, "total": 0}
+        from sqlalchemy import text
+        with engine.begin() as conn:
+            result = conn.execute(
+                text("""
+                    UPDATE audit_core.crs_comment
+                    SET status               = 'RECEIVED',
+                        category_code        = NULL,
+                        category_confidence  = NULL,
+                        classification_tier  = NULL,
+                        llm_category         = NULL,
+                        llm_category_confidence = NULL,
+                        llm_response         = NULL,
+                        llm_model_used       = NULL
+                    WHERE revision = :rev
+                      AND status != 'RECEIVED'
+                """),
+                {"rev": args.revision},
+            )
+        print(f"Reset {result.rowcount} rows → RECEIVED for revision={args.revision}")
+        return {"tier0": 0, "tier1": 0, "tier2": 0, "tier3": 0, "saved": 0, "total": 0}
+
     logger.info(
         "CRS Cascade Classifier starting — run_id=%s, revision=%s, limit=%s, "
         "batch_size=%d, check_type=%s, sheet=%s, dry_run=%s, tier3_only=%s, "
@@ -220,6 +247,9 @@ def classify_crs_comments_cascade(
     pct = lambda n: f"{100 * n / classified_total:.1f}%" if classified_total else "0%"  # noqa: E731
 
     logger.info("=" * 60)
+    if args.dry_run:
+        logger.info("DRY-RUN complete. No DB writes performed.")
+        return stats
     logger.info("CRS CASCADE CLASSIFICATION COMPLETE")
     logger.info("  Revision scope:       %s", revision_filter or "ALL")
     logger.info("  Total comments:       %d", total)
@@ -300,8 +330,21 @@ if __name__ == "__main__":
             "Default (no flag): single-pass with full category list."
         ),
     )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help=(
+            "Reset existing classification results for a given --revision "
+            "back to RECEIVED before running. "
+            "Requires --revision; cannot be used with --revision omitted (ALL)."
+        ),
+    )
 
     args = parser.parse_args()
+
+    if args.dry_run:
+        args.tier = "all"  # Force full Tier 0→3 cascade in dry-run mode
+        logger.info("DRY-RUN mode: full Tier 0→3 cascade, no DB writes.")
 
     if args.run:
         result = classify_crs_comments_cascade(

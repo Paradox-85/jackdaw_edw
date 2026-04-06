@@ -593,7 +593,7 @@ def main() -> None:
     print(hdr)
     print(line)
     for i, r in enumerate(summary_rows, start=1):
-        comment_col = r["raw_text"].replace("\n", " ")
+        # Keep original text with line breaks (do not replace with space)
 
         if r["status"] == "NEEDS_NEW_CATEGORY":
             llm_hint = (r.get("llm_response") or r.get("template") or "")[:28]
