@@ -440,6 +440,25 @@ def _run_verification(
 # LLM inference (Qwen3 via Ollama)
 # ---------------------------------------------------------------------------
 
+
+def _first_nonempty(*values: str | None) -> str:
+    """Return first non-empty, non-None value, stripping whitespace.
+
+    Empty string "" is treated as empty (falsy in Python but valid DB value).
+    This fixes the bug where `or` chains fail silently on empty strings.
+
+    Args:
+        *values: Values to check in order.
+
+    Returns:
+        First non-empty value stripped of whitespace, or "" if all empty/None.
+    """
+    for v in values:
+        if v is not None and str(v).strip():
+            return str(v).strip()
+    return ""
+
+
 def _build_prompt(
     comment: dict[str, Any],
     params: dict[str, str | None],
@@ -449,21 +468,10 @@ def _build_prompt(
     """Returns (system_prompt, user_prompt) tuple for ChatOpenAI messages list."""
     import re as _re  # local — avoids shadowing module-level re
 
-    text_val = (
-        comment.get("comment")
-        or comment.get("comment_text")
-        or comment.get("group_comment")
-        or comment.get("text")
-        or ""
+    text_val = _first_nonempty(
+        comment.get("comment"),
+        comment.get("group_comment"),
     )
-
-    # Warn if comment text is empty — helps diagnose key name mismatches
-    if not text_val:
-        import logging as _logging
-        _logging.getLogger(__name__).warning(
-            "_build_prompt: text_val is empty for comment keys=%s",
-            list(comment.keys())[:15],
-        )
     sheet = comment.get("detail_sheet") or "unknown"
     result_str = json.dumps(sql_result[:3], default=str)
 
@@ -829,6 +837,10 @@ def run_tier3_llm(
             rows[0],
         )
         text_val = rep.get("comment") or rep.get("group_comment") or ""
+
+        # Normalise: always use "comment" key for _build_prompt()
+        # This ensures _build_prompt() finds text via comment.get("comment")
+        rep = {**rep, "comment": text_val}
 
         params = extract_parameters(text_val)
         if rep.get("from_tag"):
