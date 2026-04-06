@@ -1,0 +1,144 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // ─── Default models ──────────────────────────────────────────────────────────
+  // Primary: ZAI coding plan (cloud)
+  // To switch to local Qwen: "model": "local-qwen/qwen3-27b"
+  "model": "zai-coding-plan/glm-5-turbo",
+  "small_model": "zai-coding-plan/glm-4.7-flash",
+
+  // ─── Custom providers ─────────────────────────────────────────────────────────
+  "provider": {
+    "local-qwen": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Local Qwen (adzv-pt)",
+      "options": {
+        "baseURL": "https://llm.adzv-pt.dev/v1",
+        // apiKey used as Bearer token — read from env, never hardcoded
+        "apiKey": "{env:LOCAL_LLM_BEARER_TOKEN}"
+      },
+      "models": {
+        "qwen3-27b": {
+          "name": "Qwen 3.5 27B (local)",
+          "limit": {
+            "context": 32768,
+            "output": 8192
+          }
+        }
+      }
+    }
+  },
+
+  // ─── Formatter ────────────────────────────────────────────────────────────────
+  "formatter": {
+	  "python": {
+		"command": ["ruff", "format", "--stdin-filename", "{file}"],
+		"extensions": [".py"]
+	  },
+	  "sql": {
+		"command": [
+		  "sqlfluff", "format",
+		  "--dialect", "postgres",
+		  "--stdin-filename", "{file}",
+		  "-"
+		],
+		"extensions": [".sql"]
+	  }
+  },
+
+  // ─── Instructions ─────────────────────────────────────────────────────────────
+  "instructions": [
+    "AGENTS.md",
+    "schema.sql",
+    ".opencode/context/**/*.md"
+  ],
+
+  // ─── Agents ───────────────────────────────────────────────────────────────────
+  "agent": {
+    "plan": {
+      // Cloud model for planning: read-only, no edits
+      "model": "zai-coding-plan/glm-5-turbo",
+      "temperature": 0.1,
+      "max_steps": 20,
+      "prompt": ".opencode/prompts/plan-system.md",
+      "permissions": {
+        "edit": "deny",
+        "bash": "deny",
+        "webfetch": "allow",
+        "task": "allow"
+      }
+    },
+    "build": {
+      // Cloud model for building: full permissions
+      "model": "zai-coding-plan/glm-4.7",
+      "temperature": 0.3,
+      "max_steps": 50,
+      "prompt": ".opencode/prompts/build-system.md",
+      "permissions": {
+        "edit": "allow",
+        "bash": "allow",
+        "webfetch": "allow",
+        "task": "allow"
+      }
+    },
+    "local": {
+      // Local Qwen agent: use for offline/sensitive tasks
+      "model": "local-qwen/qwen3-27b",
+      "temperature": 0.2,
+      "max_steps": 30,
+      "prompt": ".opencode/prompts/build-system.md",
+      "permissions": {
+        "edit": "allow",
+        "bash": "allow",
+        "webfetch": "deny",
+        "task": "allow"
+      }
+    }
+  },
+
+  // ─── MCP servers ──────────────────────────────────────────────────────────────
+  "mcp": {
+    // Context7: local npx, command must be ARRAY
+    "context7": {
+      "type": "local",
+      "command": ["npx", "-y", "@upstash/context7-mcp@latest"]
+    },
+    // pgEdge: remote HTTP/SSE, Bearer from env
+    "pgedge": {
+      "type": "remote",
+      "url": "https://ai-db.adzv-pt.dev/mcp/v1",
+      "headers": {
+        "Authorization": "Bearer {env:PGEDGE_BEARER_TOKEN}"
+      },
+      "oauth": false
+    },
+    // Playwright: local npx, pinned version
+    "playwright": {
+      "type": "local",
+      "command": ["npx", "-y", "@playwright/mcp@0.0.68"]
+    }
+  },
+
+  // ─── Plugins ──────────────────────────────────────────────────────────────────
+  "plugin": ["@tarquinen/opencode-dcp"],
+
+  // ─── Context compaction ───────────────────────────────────────────────────────
+  "compaction": {
+    "auto": true,
+    "prune": true,
+    "reserved": 8192
+  },
+
+  // ─── Snapshots & watcher ──────────────────────────────────────────────────────
+  "snapshot": true,
+
+  "watcher": {
+    "ignore": [
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/logs/**",
+      "**/.git/**",
+      "**/migrations/versions/**"
+    ]
+  }
+}

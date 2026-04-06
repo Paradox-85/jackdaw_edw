@@ -31,3 +31,7 @@ Thumbs.db
 
 # --- Claude ---
 CLAUDE.local.md
+
+# --- Runs & links ---
+*.bat
+*.ps1
