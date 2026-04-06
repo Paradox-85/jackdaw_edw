@@ -139,7 +139,7 @@ CREATE TABLE "reference_core"."po_package" (
   CONSTRAINT "po_package_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "po_package_code_key" UNIQUE ("code")
 );
-CREATE TABLE "audit_core"."crs_validation_query" ( 
+CREATE TABLE "audit_core"."crs_validation_query" (
   "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
   "query_code" TEXT NOT NULL,
   "query_name" TEXT NOT NULL,
@@ -149,13 +149,16 @@ CREATE TABLE "audit_core"."crs_validation_query" (
   "sql_query" TEXT NOT NULL,
   "expected_result" TEXT NULL,
   "has_parameters" BOOLEAN NOT NULL DEFAULT false ,
-  "parameter_names" ARRAY NULL,
+  "parameter_names" TEXT[] NULL,
   "is_active" BOOLEAN NOT NULL DEFAULT true ,
   "created_at" TIMESTAMP NOT NULL DEFAULT now() ,
   "updated_at" TIMESTAMP NOT NULL DEFAULT now() ,
   "created_by" TEXT NULL,
   "notes" TEXT NULL,
   "object_status" TEXT NOT NULL DEFAULT 'Active'::text ,
+  "evaluation_strategy" TEXT NULL,
+  "group_by_field" TEXT NULL,
+  "response_template" TEXT NULL,
   CONSTRAINT "crs_validation_query_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "crs_validation_query_code_key" UNIQUE ("query_code")
 );
@@ -578,10 +581,15 @@ CREATE INDEX "idx_crs_query_is_active"
 ON "audit_core"."crs_validation_query" (
   "is_active" ASC
 );
-CREATE INDEX "idx_crs_query_category" 
+CREATE INDEX "idx_crs_query_category"
 ON "audit_core"."crs_validation_query" (
   "category" ASC
 );
+CREATE INDEX "idx_crs_query_evaluation_strategy"
+ON "audit_core"."crs_validation_query" (
+  "evaluation_strategy" ASC
+)
+WHERE "evaluation_strategy" IS NOT NULL;
 CREATE INDEX "idx_tag_plant_id" 
 ON "project_core"."tag" (
   "plant_id" ASC
@@ -632,6 +640,41 @@ ON "audit_core"."crs_comment" ("document_number")
 WHERE "document_number" IS NOT NULL AND "document_number" != 'Not Applicable';
 
 -- =============================================================================
+-- VIEWS
+-- =============================================================================
+
+CREATE OR REPLACE VIEW "audit_core"."v_crs_resolution_report" AS
+SELECT
+    cc.id                        AS comment_id,
+    cc.comment_id                AS comment_ref,
+    cc.revision,
+    cc.tag_name,
+    cc.status                    AS comment_status,
+    cc.category_code,
+    cc.classification_tier,
+    cc.deferred_reason,
+    cc.formal_response,
+    cc.response_author,
+    cc.response_approval_date,
+    cv.validation_status,
+    cv.validation_result_json,
+    cv.validation_error,
+    cv.validation_timestamp,
+    cv.run_id                    AS validation_run_id,
+    vq.query_code,
+    vq.query_name,
+    vq.category                  AS query_category,
+    vq.evaluation_strategy,
+    vq.response_template,
+    vq.group_by_field
+FROM "audit_core"."crs_comment" cc
+LEFT JOIN "audit_core"."crs_comment_validation" cv
+       ON cv.comment_id = cc.id
+LEFT JOIN "audit_core"."crs_validation_query"   vq
+       ON vq.id = cv.validation_query_id
+WHERE cc.object_status = 'Active';
+
+-- =============================================================================
 -- COMMENT ON: audit_core CRS tables
 -- =============================================================================
 
@@ -659,8 +702,9 @@ COMMENT ON COLUMN "audit_core"."crs_comment"."deferred_reason" IS
     'TAG_NO_STATUS, TAG_OBJECT_INACTIVE. NULL for Tier 1–3 classified rows.';
 
 COMMENT ON TABLE "audit_core"."crs_validation_query" IS
-    'Registry of SQL validation queries used in Phase 2 CRS comment processing. '
-    'Each query validates a specific aspect of the EDW data referenced in a CRS comment.';
+    'Registry of SQL validation queries for CRS comment processing. '
+    'query_code format: CRS-C001..CRS-C229 (matches crs_comment_template.category). '
+    'Phase 3: added evaluation_strategy, group_by_field, response_template columns.';
 
 COMMENT ON TABLE "audit_core"."crs_comment_validation" IS
     'M2M: one comment may have multiple validation queries. '
