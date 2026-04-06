@@ -49,8 +49,9 @@
   // ─── Instructions ─────────────────────────────────────────────────────────────
   "instructions": [
     "AGENTS.md",
-    "schema.sql",
-    ".opencode/context/**/*.md"
+    "sql/schema/schema.sql",
+    ".claude/rules/**/*.md",
+	".opencode/context/**/*.md"
   ],
 
   // ─── Agents ───────────────────────────────────────────────────────────────────
@@ -62,7 +63,7 @@
       "max_steps": 20,
       "prompt": ".opencode/prompts/plan-system.md",
       "permissions": {
-        "edit": "deny",
+        "edit": "allow",
         "bash": "deny",
         "webfetch": "allow",
         "task": "allow"

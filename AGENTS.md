@@ -1,143 +1,86 @@
 # AGENTS.md — Jackdaw EDW
 
-**Stack:** Prefect 3.0 · PostgreSQL (async) · Neo4j · Qdrant · Ollama  
-**Python:** 3.10+ · SQLAlchemy 2.x · async/await  
-**Hardware:** Ryzen 7 7700 · RTX 3090 (Ollama GPU)  
-**Data:** `./data/` → symlinks to `/mnt/shared-data/`  
-**GitHub:** https://github.com/Paradox-85/jackdaw_edw
+## Stack
+Prefect 3.0 | PostgreSQL async | Neo4j | Qdrant | Ollama
+Python 3.10+ | SQLAlchemy 2.x | Pandas | Ruff | mypy
+
+**References:** `docs/architecture.md` · `docs/file-specification.md` · `schema.sql`
+**MCP:** `pgedge` (live DB) · `context7` (tech docs) · `playwright` (browser)
 
 ---
 
-## Non-Negotiable Rules
+## Critical rules
 
-1. Never invent DB columns, config keys, or lib params — query pgedge MCP or ask
-2. Schema changes → validate via pgedge MCP first, update `schema.sql` in same commit
-3. All code, SQL, YAML, comments, docs — **English only**
-4. Secrets via `os.getenv()` or `.env` — never hardcode, never commit
-5. FK failures → use `.get()` + preserve raw value in `_raw` column + log warning
-6. `get_run_logger()` for errors — never `print()`
+1. **Never invent** DB columns, config keys, or library params — query pgedge MCP or ask
+2. **Before ANY schema change** — validate against live DB via pgedge MCP
+3. **After ANY schema change** — update `schema.sql` same commit
+4. **Language** — ENGLISH: all code, SQL, comments, YAML, docs
+5. **User responses** — RUSSIAN only
+6. **Secrets** — `os.getenv()` only, never hardcode
 
 ---
 
-## Dev Environment
+## Context on demand
 
-```bash
-pip install -r requirements.txt
-cp .env.example .env
+| Keywords | Load |
+|----------|------|
+| hash, SCD, sync_status, upsert, tag_history | `.opencode/context/etl-logic.md` |
+| python, async, type hint, docstring | `.opencode/context/python-standards.md` |
+| SQL, schema, UPSERT, CREATE TABLE, FK | `.opencode/context/sql-standards.md` |
+| audit, log_entry, tag_status_history | `.opencode/context/audit-rules.md` |
+| component, tsx, React, TanStack, shadcn | `.opencode/context/ui-standards.md` |
+| EIS, export, seq | `.opencode/context/export-eis.md` |
 
-# Symlinks
-ln -s /mnt/shared-data/raw ./data/raw
-ln -s /mnt/shared-data/processed ./data/processed
+---
 
-# Services
-docker-compose up -d
+## Agents
 
-# Schema
-psql -U edw_user -d edw_db < sql/schema.sql
+| Agent | Use for |
+|-------|---------|
+| `plan` | Analysis, spec writing, pgedge schema validation. Read-only. |
+| `build` | Cloud execution (ZAI GLM). Token-conscious. ≤50 steps. |
+| `local` | Local Qwen. Bulk generation, large files, no token pressure. |
 
-# Prefect
-prefect server start
-prefect deploy --entrypoint etl/flows/tag_sync.py:main_pipeline --name "tag-sync-master"
+**Subagents** (invoke via `@name`):
+- `@etl-reviewer` — after any ETL task/flow file change
+- `@schema-validator` — before/after schema changes
+- `@etl-orchestrator` — complex multi-step tasks (new source, migration)
+
+---
+
+## Situation → action
+
+| Situation | Action |
+|-----------|--------|
+| New data source | Plan agent → `@etl-orchestrator` |
+| Schema change | Plan agent → `@schema-validator` → build/local |
+| ETL file modified | Always invoke `@etl-reviewer` |
+| Context > 70% | `/compact` then continue in new session |
+| Large bulk generation | Switch to `local` agent |
+| Architecture decision | Plan agent + pgedge MCP + `/model opus` |
+
+---
+
+## Code checklist
+
+- [ ] Type hints + async/await on all functions
+- [ ] SQL: schema-prefixed (`project_core.*`)
+- [ ] FK: `.get(value) if value else None` + `_raw` + warning log
+- [ ] SCD2 → `audit_core.tag_status_history` (old/new JSONB)
+- [ ] Audit → `audit_core.sync_run_stats`
+- [ ] `schema.sql` updated same commit
+- [ ] No secrets in code
+- [ ] DataFrame: `dtype=str, na_filter=False` · NaT→None before insert
+- [ ] Errors: `get_run_logger()` not `print()`
+
+---
+
+## File layout
+
 ```
 
----
-
-## Testing
-
-```bash
-pytest etl/ -v                          # all unit tests
-pytest tests/integration/ -v           # integration tests
-pytest etl/ --cov=etl --cov-report=html
-
-black etl/ && ruff check --fix etl/ && mypy etl/ --strict
-pre-commit run --all-files
-```
-
-**Before any commit:** all tests green · `schema.sql` updated · no secrets in diff.
-
----
-
-## Code Standards
-
-### Python
-```python
-async def sync_tags(session: AsyncSession, tags: list[dict]) -> int:
-    """Sync tags with hash comparison for SCD tracking."""
-    ...
-```
-- Type hints mandatory · Black (line 100) · Ruff strict · single quotes · parameterized SQL
-
-### SQL
-```sql
--- Always schema-prefixed, never bare table names
-INSERT INTO project_core.tag_history (id, tag_id, old_value, new_value, status, created_at)
-VALUES (gen_random_uuid(), $1, $2, $3, 'Updated', CURRENT_TIMESTAMP);
-```
-- UUID PKs · `TIMESTAMP WITH TIME ZONE` always · schema prefix always
-
-### SCD Type 2
-- Hash-based UPSERT: write only if MD5 differs
-- Every tag change → `audit_core.tag_status_history` (old/new JSONB)
-- Hierarchy sync AFTER main sync completes
-
----
-
-## Commit Format
+etl/flows/     etl/tasks/     sql/schema.sql (canonical)
+config/        docs/          docs/plans/    (agent specs)
+.opencode/agents/   .opencode/context/   .opencode/prompts/
 
 ```
-[module] Brief description (50 chars max)
-
-- What changed
-- Why it changed
-- Breaking changes (if any)
-```
-
-Modules: `etl/tasks` · `etl/flows` · `sql/schema` · `infra/docker` · `docs`
-
----
-
-## Skills (load on demand)
-
-| Keywords | Skill |
-|----------|-------|
-| hash, SCD, upsert, tag_history | `.claude/skills/scd2-rules/` |
-| prefect, flow, task, deploy | `.claude/skills/prefect-etl-patterns/` |
-| SQL, schema, FK, CREATE TABLE | `.claude/skills/edw-sql-schema/` |
-| tsx, React, TanStack, shadcn | `.claude/skills/ui-react/` |
-| component, design, Tailwind | `.claude/skills/frontend-design/` |
-
----
-
-## MCP Usage
-
-| Need | Tool |
-|------|------|
-| DB schema, cardinality, data quality | `pgedge` → `query_database` / `get_schema_info` |
-| Tech docs, lib API, framework | `context7` (auto on keywords) |
-| Architecture decision | pgedge first → context7 → Opus + ultrathink |
-
-**Never use curl for DB queries** — pgedge MCP only.
-
----
-
-## Debugging
-
-```bash
-# Prefect
-tail -f logs/prefect.log | grep ERROR
-prefect flow-run inspect <run-id>
-
-# PostgreSQL
-psql -U edw_user -d edw_db -c "SELECT * FROM pg_stat_activity;"
-
-# Qdrant
-curl http://localhost:6333/collections
-
-# Ollama / GPU
-ollama list && nvidia-smi
-```
-
-**Common issues:**
-- `TooManyConnectionsError` → reduce `pool_size` or enable pgbouncer
-- CUDA OOM → switch to smaller Ollama model (`neural-chat` not `llama2-70b`)
-- Neo4j slow traversals → `CREATE INDEX ON :Tag(id)`
