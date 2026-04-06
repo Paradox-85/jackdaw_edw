@@ -230,6 +230,7 @@ def _run_tier3_debug(
         extract_parameters,
         _detect_comment_domain,
         _resolve_llm_url,
+        _first_nonempty,
     )
     from etl.tasks.crs_text_generalizer import generalize_comment, group_by_generalized  # noqa: PLC0415
     from etl.tasks.common import load_config, get_llm_config  # noqa: PLC0415
@@ -323,8 +324,52 @@ def _run_tier3_debug(
         cat_count       = categories_line.count("CRS-C")
         log.info("  domain:     %s  |  categories_in_prompt=%d", domain, cat_count)
 
+        # ── D-DIAG. Deep key diagnostics — always WARNING so always visible ──
+        _v_comment       = rep.get("comment")
+        _v_group_comment = rep.get("group_comment")
+        _v_text_val      = _first_nonempty(_v_comment, _v_group_comment)
+        log.warning(
+            "\n  ── KEY DIAGNOSTICS (group %d) ──\n"
+            "  rep keys (%d total): %s\n"
+            "  rep['comment']       = %r  (type=%s, len=%s)\n"
+            "  rep['group_comment'] = %r  (type=%s, len=%s)\n"
+            "  _first_nonempty()    = %r  ← this is what _build_prompt will use\n"
+            "  raw_text (harness)   = %r\n"
+            "  MATCH: harness==prompt? %s\n"
+            "  ── END KEY DIAGNOSTICS ──",
+            idx,
+            len(rep),
+            list(rep.keys()),
+            _v_comment,
+            type(_v_comment).__name__,
+            len(_v_comment) if isinstance(_v_comment, str) else "N/A",
+            _v_group_comment,
+            type(_v_group_comment).__name__,
+            len(_v_group_comment) if isinstance(_v_group_comment, str) else "N/A",
+            _v_text_val,
+            raw_text,
+            "YES ✓" if _v_text_val == raw_text else f"NO ✗  (MISMATCH — prompt will show {_v_text_val!r})",
+        )
+
         # ── D. Full prompt (categories list truncated in log to avoid flooding)
         system_msg, user_msg = _build_prompt(rep, params, sql_result, categories_line)
+
+        # Post-build check: verify Comment: line is not empty in actual prompt
+        _comment_line = next(
+            (ln for ln in user_msg.splitlines() if ln.startswith("Comment:")), None
+        )
+        if _comment_line is not None and _comment_line.strip() == "Comment:":
+            log.warning(
+                "  ⚠ POST-BUILD: Comment: line is EMPTY in user_msg after _build_prompt(). "
+                "rep['comment']=%r  _first_nonempty result=%r",
+                rep.get("comment"), _v_text_val,
+            )
+        else:
+            log.warning(
+                "  ✓ POST-BUILD: Comment: line = %r",
+                _comment_line,
+            )
+
         log.info(
             "\n  ── PROMPT ──\n"
             "  [SYSTEM] %s\n"
