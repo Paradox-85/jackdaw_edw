@@ -263,6 +263,19 @@ def _run_tier3_debug(
              if r.get("comment") and r.get("comment") != r.get("group_comment")),
             rows[0],
         )
+        # Sanity check: confirm text_val that will be passed to _build_prompt
+        _check_val = (
+            rep.get("comment")
+            or rep.get("comment_text")
+            or rep.get("group_comment")
+            or rep.get("text")
+            or ""
+        )
+        if not _check_val:
+            log.warning(
+                "Tier 3 group %d: rep has empty comment text. Keys: %s",
+                idx, list(rep.keys())[:15],
+            )
         raw_text = rep.get("comment") or rep.get("group_comment") or ""
         is_multi = is_multi_comment_group(rep)
 

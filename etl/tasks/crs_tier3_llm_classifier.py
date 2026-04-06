@@ -449,7 +449,21 @@ def _build_prompt(
     """Returns (system_prompt, user_prompt) tuple for ChatOpenAI messages list."""
     import re as _re  # local — avoids shadowing module-level re
 
-    text_val = comment.get("comment") or comment.get("group_comment") or ""
+    text_val = (
+        comment.get("comment")
+        or comment.get("comment_text")
+        or comment.get("group_comment")
+        or comment.get("text")
+        or ""
+    )
+
+    # Warn if comment text is empty — helps diagnose key name mismatches
+    if not text_val:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "_build_prompt: text_val is empty for comment keys=%s",
+            list(comment.keys())[:15],
+        )
     sheet = comment.get("detail_sheet") or "unknown"
     result_str = json.dumps(sql_result[:3], default=str)
 
