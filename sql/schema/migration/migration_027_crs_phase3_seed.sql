@@ -31,6 +31,10 @@ Changes :
               C046 rewritten to doc-inactive check per validation_queries,
               C050 sort fixed (depth DESC not TEXT), C037 TRIM(date) removed,
               C049 notes updated (not covered in vq reference).
+  2026-04-07  Iteration 4: C028 tautology fixed (blank tag_name check),
+              C016/C039 TEXT sort fixed (COUNT(*) DESC),
+              C022 empty-value gap closed (property_value != ''),
+              C046 is_resolved simplified to literal FALSE.
 */
 
 BEGIN;
@@ -450,7 +454,7 @@ FROM project_core.tag
 WHERE object_status = 'Active'
 GROUP BY tag_name
 HAVING COUNT(*) > 1
-ORDER BY actual_value DESC;
+ORDER BY COUNT(*) DESC;
     $sql_c016$,
     'No violating rows (empty result = pass)', false,
     'EIS-file: 003. mapping_presence: Mandatory', true, 'COUNT_ZERO'
@@ -628,6 +632,8 @@ WHERE t.object_status  = 'Active'
       WHERE pv.tag_id = t.id
         AND pv.property_code_raw = p.code
         AND pv.object_status = 'Active'
+        AND pv.property_value IS NOT NULL
+        AND TRIM(pv.property_value) != ''
   )
 ORDER BY t.tag_name, p.code;
     $sql_c022$,
@@ -781,27 +787,27 @@ INSERT INTO audit_core.crs_validation_query (
     'EQUIPMENT', 'Equipment register checks in project_core.tag',
     $sql_c028$
 SELECT
-  t.equip_no           AS object_key,
-  'tag_name_in_mtr'    AS check_field,
-  t.tag_name           AS actual_value,
-  (EXISTS (
-    SELECT 1 FROM project_core.tag ref
-    WHERE ref.tag_name = t.tag_name
-      AND ref.object_status = 'Active'
-  ))                   AS is_resolved
-FROM project_core.tag t
-WHERE t.equip_no IS NOT NULL
-  AND t.object_status = 'Active'
+    e.equip_no              AS object_key,
+    'tag_name_in_mtr'       AS check_field,
+    e.tag_name              AS actual_value,
+    FALSE                   AS is_resolved
+FROM project_core.tag e
+WHERE e.equip_no IS NOT NULL
+  AND e.object_status = 'Active'
   AND NOT EXISTS (
-    SELECT 1 FROM project_core.tag ref
-    WHERE ref.id = t.id
-      AND ref.object_status = 'Active'
-      AND ref.equip_no IS NOT NULL
+      SELECT 1
+      FROM project_core.tag mtr
+      WHERE mtr.tag_name     = e.tag_name
+        AND mtr.object_status = 'Active'
+        AND mtr.id            != e.id
   )
-ORDER BY t.equip_no;
+  AND (e.tag_name IS NULL OR TRIM(e.tag_name) = '')
+ORDER BY e.equip_no;
     $sql_c028$,
     'No violating rows (empty result = pass)', false,
-    'EIS-file: 004', true, 'COUNT_ZERO'
+    'EIS-file: 004. NOTE: CRS-C028 checks equipment rows with equip_no but
+missing/blank tag_name. Logically this should be 0 rows in a clean dataset.
+Cross-reference: validation_queries CRS-C028 / CRS-C106.', true, 'COUNT_ZERO'
 ) ON CONFLICT (query_code) DO NOTHING;
 
 -- CRS-C029 — PLANT_CODE invalid or missing
@@ -1093,7 +1099,7 @@ WHERE object_status = 'Active'
   AND to_tag_raw IS NOT NULL
 GROUP BY from_tag_raw, to_tag_raw
 HAVING COUNT(*) > 1
-ORDER BY actual_value DESC;
+ORDER BY COUNT(*) DESC;
     $sql_c039$,
     'No violating rows (empty result = pass)', false,
     'EIS-file: 006', true, 'COUNT_ZERO'
@@ -1283,13 +1289,7 @@ SELECT
     d.doc_number || '(' || COALESCE(d.object_status,'NULL') || ')',
     '; ' ORDER BY d.doc_number
   )                        AS actual_value,
-  (NOT EXISTS (
-    SELECT 1 FROM mapping.tag_document td2
-    JOIN project_core.document d2 ON d2.id = td2.document_id
-    WHERE td2.tag_id = t.id
-      AND td2.mapping_status = 'Active'
-      AND d2.object_status != 'Active'
-  ))                       AS is_resolved
+  FALSE                    AS is_resolved
 FROM project_core.tag t
 LEFT JOIN mapping.tag_document td ON td.tag_id = t.id
   AND td.mapping_status = 'Active'
