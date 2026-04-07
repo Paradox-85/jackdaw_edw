@@ -39,6 +39,14 @@ Changes :
               C037 po_date::TEXT cast added, C038 NULL::TEXT explicit cast,
               C045 UNION ALL column alias unified, C046 STRING_AGG NULL guard,
               C043/C049 notes clarified per VQ coverage gaps.
+  2026-04-07  Iteration 6: C038 po_code alias (ORDER BY fix), C050 ORDER BY
+              depth→actual_value, C003 ORDER BY expression, C017/C018/C019
+              object_key contract aligned, C039 ORDER BY stabilized,
+              C049 ARRAY_AGG→COUNT TEXT.
+  2026-04-07  Iteration 7: C038 po_code alias verified/re-applied,
+              C049 ORDER BY cnt→actual_value::BIGINT, C017 ORDER BY numeric cast,
+              C037 GROUP BY tautology removed + COALESCE(po_date::TEXT,'NULL'),
+              C046 actual_value bracket format for clarity.
 */
 
 BEGIN;
@@ -486,7 +494,7 @@ WHERE pv.object_status = 'Active'
       OR t.object_status != 'Active'
   )
 GROUP BY pv.tag_name_raw, t.object_status
-ORDER BY property_rows DESC;
+ORDER BY property_rows::BIGINT DESC;
     $sql_c017$,
     'No violating rows (empty result = pass)', false,
     'EIS-file: 010. mapping_presence: Mandatory', true, 'COUNT_ZERO'
@@ -1034,14 +1042,14 @@ INSERT INTO audit_core.crs_validation_query (
     'REFERENCE', 'Reference data integrity checks',
     $sql_c037$
 SELECT
-    po.code       AS po_code,
-    po.po_date::TEXT AS po_date,
-    COUNT(t.id)   AS tags_linked
+    po.code                              AS po_code,
+    COALESCE(po.po_date::TEXT, 'NULL')   AS po_date,
+    COUNT(t.id)                          AS tags_linked
 FROM reference_core.purchase_order po
 LEFT JOIN project_core.tag t ON t.po_id = po.id AND t.object_status = 'Active'
 WHERE po.object_status = 'Active'
   AND po.po_date IS NULL
-GROUP BY po.code, po.po_date
+GROUP BY po.code
 ORDER BY tags_linked DESC;
     $sql_c037$,
     'No violating rows (empty result = pass)', false,
@@ -1289,7 +1297,7 @@ SELECT
   'doc_is_active'          AS check_field,
   COALESCE(
     STRING_AGG(
-      COALESCE(d.doc_number,'?') || '(' || COALESCE(d.object_status,'NULL') || ')',
+      COALESCE(d.doc_number,'?') || ' [' || COALESCE(d.object_status,'NULL') || ']',
       '; ' ORDER BY d.doc_number
     ),
     'NULL'
@@ -1396,7 +1404,7 @@ FROM project_core.document
 WHERE object_status = 'Active'
 GROUP BY doc_number
 HAVING COUNT(*) > 1
-ORDER BY cnt DESC;
+ORDER BY actual_value::BIGINT DESC;
     $sql_c049$,
     'No violating rows (empty result = pass)', false,
     'EIS-file: 014. NOT COVERED in crs_phase3_validation_queries.sql.
