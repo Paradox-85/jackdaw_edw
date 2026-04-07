@@ -502,6 +502,38 @@ def _build_prompt(
         "Match to a category whose description covers invalid or non-matching values. "
         "Example: 'Area code is NA' → category for invalid/non-matching area code. "
         "Apply this distinction to ALL field types, not just specific ones. "
+        "Domain glossary (mandatory context — use this to interpret abbreviations): "
+        "TNC = Tag Naming Convention: official project standard for naming tags and instruments. "
+        "ISM = AVEVA ISM (Information Standards Management): software tool used to create and "
+        "manage project RDL (Reference Data Library) and tag class definitions. "
+        "EIS = Engineering Information Specification: governing project document defining data "
+        "requirements, file naming rules, Excel templates, and containing RDL as an appendix. "
+        "MTR = Master Tag Register: master register of all tags. "
+        "RDL = Reference Data Library: catalogue of approved tag classes, UOMs, and codes. "
+        "DMS = Document Management System (also called EDMS). "
+        "CIS = Commissioning Information Submission: data package submitted per revision. "
+        "PBS = Plant Breakdown Structure: hierarchy of plant areas and process units. "
+        "PDMS = Plant Design Management System:3D CAD tool for piping and structural design. "
+        "PEFS = Process Engineering Flow Scheme (also called P&ID or PID): piping and "
+        "instrumentation diagram. "
+        "AFC = Approved for Construction: document revision status. "
+        "NYI = Not Yet Issued: document status indicating document exists in DMS but not yet issued. "
+        "1ooN = One-out-of-N voting logic notation used in safety/instrumented systems "
+        "(e.g. 1oo2 = one-out-of-two). This notation appears in tag descriptions — "
+        "a comment asking 'what is 1oo2?' is a QUESTION about notation, not a data error. "
+        "CP = Control Panel (appears in tag names). "
+        "SP = Speciality Piping (a TNC category code). "
+        "NRV = Non-Return Valve. "
+        "SECE = Safety Critical Element. "
+        "EPC = Engineering, Procurement and Construction (contractor type). "
+        "Interpretation rules for abbreviations: "
+        "(a) If a comment mentions TNC, it is asking about tag naming convention compliance. "
+        "A TNC question without an explicit data error (missing/wrong field value) is "
+        "ADVISORY — classify as OTHER with confidence <= 0.30. "
+        "(b) If a comment contains 1ooN notation (1oo2, 1oo4, 1oo7, etc.) as a question, "
+        "it is asking about instrument voting logic — classify as OTHER with confidence <= 0.30. "
+        "(c) If a comment combines a known data error WITH a TNC/1ooN question, "
+        "the combined comment is MULTI-TOPIC — classify as OTHER with confidence <= 0.30. "
         "Confidence rules (CRITICAL — follow exactly): "
         "Set confidence >= 0.85 ONLY when the ENTIRE comment clearly and "
         "unambiguously maps to a single category description. "
@@ -516,6 +548,9 @@ def _build_prompt(
         "(e) you are uncertain or guessing. "
         "Never force a category match when none fits — a confident wrong answer is "
         "worse than an honest low-confidence OTHER. "
+        "CRITICAL OVERRIDE: If your confidence value is 0.30 or lower, you MUST set "
+        "category to 'OTHER'. Outputting any specific CRS-Cxxx code with confidence "
+        "<= 0.30 is a logical contradiction and is strictly forbidden. "
         'Respond ONLY with: {"category":"CRS-C???","confidence":0.0,"response":"one sentence max"}'
     )
     user_msg = (
@@ -599,6 +634,12 @@ def _call_llm_batch(
             parsed = _extract_json_from_response(raw)
             if parsed is not None:
                 cat = parsed.get("category", "OTHER")
+                # Guard: LLM returning a specific category with confidence <= 0.30 is a
+                # logical contradiction (model admits it cannot classify but picks a code).
+                # Force OTHER so status mapping correctly routes to NEEDS_NEW_CATEGORY.
+                _conf_raw = float(parsed.get("confidence", 0.7))
+                if _conf_raw <= 0.30 and cat != "OTHER":
+                    cat = "OTHER"
                 # UNCLASSIFIED is internal error sentinel — LLM returning it maps to OTHER
                 if cat not in _VALID_CATEGORIES:
                     cat = "OTHER"
@@ -701,6 +742,12 @@ def _call_llm_single_debug(
         parsed = _extract_json_from_response(raw)
         if parsed:
             cat = parsed.get("category", "OTHER")
+            # Guard: LLM returning a specific category with confidence <=0.30 is a
+            # logical contradiction (model admits it cannot classify but picks a code).
+            # Force OTHER so status mapping correctly routes to NEEDS_NEW_CATEGORY.
+            _conf_raw = float(parsed.get("confidence",0.7))
+            if _conf_raw <= 0.30 and cat != "OTHER":
+                cat = "OTHER"
             if cat not in _VALID_CATEGORIES and cat != "UNCLASSIFIED":
                 cat = "OTHER"
             resp = (parsed.get("response") or "").strip()

@@ -440,6 +440,7 @@ def main() -> None:
     from etl.tasks.crs_tier0_prefilter import run_tier0  # noqa: PLC0415
     from etl.tasks.crs_tier1_template_matcher import run_tier1  # noqa: PLC0415
     from etl.tasks.crs_tier2_keyword_classifier import run_tier2  # noqa: PLC0415
+    from etl.tasks.crs_tier25_benchmark_matcher import run_tier25_benchmark  # noqa: PLC0415
     log.info("ETL modules loaded.")
 
     log.info("Starting CRS debug classifier with args: %s", args)
@@ -511,6 +512,13 @@ def main() -> None:
         classified.extend(t2)
         _log_tier_results(log, 2, t2)
         log.info("Tier 2: %d classified, %d remaining.", len(t2), len(remaining))
+
+    if run_tier in ("2", "all"):
+        log.info("\u2500\u2500 Tier 2.5: benchmark matcher \u2500\u2500  (%d comments)", len(remaining))
+        t25_classified, remaining = run_tier25_benchmark(remaining, engine)
+        classified.extend(t25_classified)
+        _log_tier_results(log, 2, t25_classified)  # reuse existing helper, tier label shown as 2
+        log.info("Tier 2.5: %d classified, %d remaining.", len(t25_classified), len(remaining))
 
     tier3_summary: list[dict[str, Any]] = []
     if run_tier in ("3", "all"):
