@@ -47,6 +47,13 @@ Changes :
               C049 ORDER BY cnt→actual_value::BIGINT, C017 ORDER BY numeric cast,
               C037 GROUP BY tautology removed + COALESCE(po_date::TEXT,'NULL'),
               C046 actual_value bracket format for clarity.
+  2026-04-07  Iteration 8: Added Group D — promotes ~120 DEFERRED stubs to active.
+              D1 aliases (39 codes) reuse Group A SQL via UPDATE...FROM.
+              D2 unique codes (72 codes) use canonical SQL from
+              crs_phase3_validation_queries.sql with DO UPDATE SET.
+              Genuinely DEFERRED remain: SEMANTIC/LLM (~9), external DMS (~30),
+              process-only/advisory (~14), no EDW data (C053/C055/C056),
+              C043 (alias-conflict semantic mismatch), C114 (not in reference file).
 */
 
 BEGIN;
@@ -1574,6 +1581,2815 @@ WHERE ct.object_status = 'Active'
   -- Exclude CRS-C168 (Group B — already inserted)
   AND ct.category != 'CRS-C168'
 ON CONFLICT (query_code) DO NOTHING;
+
+-- ---------------------------------------------------------------------------
+-- Group D — Promote DEFERRED stubs to active (idempotent on every re-run)
+-- Source: crs_phase3_validation_queries.sql
+-- Strategy:
+--   Part D1 — Alias codes: reuse Group A SQL via UPDATE...FROM (39 codes).
+--             evaluation_strategy = COUNT_ZERO, has_parameters = false.
+--   Part D2 — Unique codes: canonical 4-column-contract SQL via INSERT...DO UPDATE (72 codes).
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- Part D1 — Alias codes: reuse Group A SQL (batch UPDATE per source code)
+-- ---------------------------------------------------------------------------
+
+-- D1.01: CRS-C051, CRS-C052, CRS-C177 → CRS-C007 (area_code FK/NA check)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C007: area_code_raw invalid, literal NA, or contains comma',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C007'
+  AND d.query_code IN ('CRS-C051', 'CRS-C052', 'CRS-C177');
+
+-- D1.02: CRS-C060 → CRS-C034 (doc-area code missing)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C034: documents linked to tags without area_id',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C034'
+  AND d.query_code = 'CRS-C060';
+
+-- D1.03: CRS-C062, CRS-C080 → CRS-C040 (equipment without doc mapping)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C040: equipment tags with no active tag_document mapping',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C040'
+  AND d.query_code IN ('CRS-C062', 'CRS-C080');
+
+-- D1.04: CRS-C071 → CRS-C035 (doc-PU missing)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C035: documents linked to tags without process_unit_id',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C035'
+  AND d.query_code = 'CRS-C071';
+
+-- D1.05: CRS-C074 → CRS-C032 (doc in mapping not in DocMaster)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C032: doc_number_raw in tag_document not found in project_core.document',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C032'
+  AND d.query_code = 'CRS-C074';
+
+-- D1.06: CRS-C075 → CRS-C033 (tag in mapping not in MTR)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C033: tag_name_raw in tag_document not found in project_core.tag',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C033'
+  AND d.query_code = 'CRS-C075';
+
+-- D1.07: CRS-C077, CRS-C078 → CRS-C030 (doc NYI/CAN status)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C030: document with NYI/CAN status or NULL status',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C030'
+  AND d.query_code IN ('CRS-C077', 'CRS-C078');
+
+-- D1.08: CRS-C086 → CRS-C031 (tag without doc reference)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C031: active tag with no active entry in mapping.tag_document',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C031'
+  AND d.query_code = 'CRS-C086';
+
+-- D1.09: CRS-C091, CRS-C092 → CRS-C023 (equipment class not in RDL)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C023: equipment class_id NULL but tag_class_raw provided',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C023'
+  AND d.query_code IN ('CRS-C091', 'CRS-C092');
+
+-- D1.10: CRS-C096 → CRS-C024 (equipment description blank)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C024: equipment tag with NULL or empty description',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C024'
+  AND d.query_code = 'CRS-C096';
+
+-- D1.11: CRS-C106 → CRS-C028 (equipment tag_name not in MTR)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C028: equipment row with equip_no that is inactive or has no tag_name',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C028'
+  AND d.query_code = 'CRS-C106';
+
+-- D1.12: CRS-C110 → CRS-C025 (manufacturer serial blank/NA)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C025: manufacturer serial_no blank, NULL, or literal NA',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C025'
+  AND d.query_code = 'CRS-C110';
+
+-- D1.13: CRS-C112 → CRS-C027 (manufacturer company blank)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C027: manufacturer_id NULL and manufacturer_company_raw blank',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C027'
+  AND d.query_code = 'CRS-C112';
+
+-- D1.14: CRS-C126, CRS-C127 → CRS-C026 (model part blank)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C026: model_id NULL and model_part_raw blank',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C026'
+  AND d.query_code IN ('CRS-C126', 'CRS-C127');
+
+-- D1.15: CRS-C138 → CRS-C036 (PO code not in register)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C036: po_code_raw provided but po_id not resolved',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C036'
+  AND d.query_code = 'CRS-C138';
+
+-- D1.16: CRS-C139 → CRS-C037 (PO date missing)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C037: active purchase orders without po_date',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C037'
+  AND d.query_code = 'CRS-C139';
+
+-- D1.17: CRS-C141 → CRS-C038 (company name missing for PO / receiver company missing)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C038: PO without issuer company or equipment without manufacturer',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C038'
+  AND d.query_code = 'CRS-C141';
+
+-- D1.18: CRS-C163 → CRS-C010 (parent tag missing for physical)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C010: physical tags (valve/pipe/pump/…) without parent_tag',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C010'
+  AND d.query_code = 'CRS-C163';
+
+-- D1.19: CRS-C164 → CRS-C011 (parent tag not in MTR)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C011: parent_tag_raw provided but parent_tag_id not resolved',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C011'
+  AND d.query_code = 'CRS-C164';
+
+-- D1.20: CRS-C166 → CRS-C012 (pipe parent is pipe)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C012: pipe tag with pipe parent (both class names contain ''pipe'')',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C012'
+  AND d.query_code = 'CRS-C166';
+
+-- D1.21: CRS-C170 → CRS-C015 (production critical blank)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C015: production_critical_item NULL or blank',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C015'
+  AND d.query_code = 'CRS-C170';
+
+-- D1.22: CRS-C171 → CRS-C013 (safety critical invalid)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C013: safety_critical_item blank or not in (YES/NO/Y/N)',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C013'
+  AND d.query_code = 'CRS-C171';
+
+-- D1.23: CRS-C174 → CRS-C014 (safety critical reason missing)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C014: SECE/YES tags without safety_critical_item_reason_awarded',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C014'
+  AND d.query_code = 'CRS-C174';
+
+-- D1.24: CRS-C176 → CRS-C006 (area code blank)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C006: area_id is NULL (area code blank or not submitted)',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C006'
+  AND d.query_code = 'CRS-C176';
+
+-- D1.25: CRS-C178, CRS-C180 → CRS-C004 (tag class not in ISM/RDL)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C004: class_id NULL while tag_class_raw provided — not in ontology_core.class',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C004'
+  AND d.query_code IN ('CRS-C178', 'CRS-C180');
+
+-- D1.26: CRS-C182 → CRS-C002 (tag description blank)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C002: active tags with NULL or empty description',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C002'
+  AND d.query_code = 'CRS-C182';
+
+-- D1.27: CRS-C184 → CRS-C003 (tag description too long > 255 chars)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C003: tag description length > 255 characters',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C003'
+  AND d.query_code = 'CRS-C184';
+
+-- D1.28: CRS-C196 → CRS-C029 (plant code invalid)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C029: plant_raw provided but plant_id not resolved',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C029'
+  AND d.query_code = 'CRS-C196';
+
+-- D1.29: CRS-C197, CRS-C199 → CRS-C009 (process unit not in register or is NA)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C009: process_unit_raw provided but not resolved or is literal NA',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C009'
+  AND d.query_code IN ('CRS-C197', 'CRS-C199');
+
+-- D1.30: CRS-C198 → CRS-C008 (process unit missing)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C008: process_unit_id is NULL (mandatory field not submitted)',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C008'
+  AND d.query_code = 'CRS-C198';
+
+-- D1.31: CRS-C202 → CRS-C005 (TNC violated)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C005: tag name not starting with JDA- (TNC violation)',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C005'
+  AND d.query_code = 'CRS-C202';
+
+-- D1.32: CRS-C206 → CRS-C039 (duplicate physical connections)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C039: duplicate from_tag_raw/to_tag_raw connection pairs',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C039'
+  AND d.query_code = 'CRS-C206';
+
+-- D1.33: CRS-C208 → CRS-C045 (FROM/TO tag not in MTR)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C045: from_tag_raw or to_tag_raw not resolved to tag FK',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C045'
+  AND d.query_code = 'CRS-C208';
+
+-- D1.34: CRS-C221 → CRS-C017 (tag property orphan — property rows with inactive/missing tag)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C017: property_value rows referencing tags that are inactive or missing',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C017'
+  AND d.query_code = 'CRS-C221';
+
+-- D1.35: CRS-C222 → CRS-C022 (mandatory property missing)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C022: mandatory class properties not submitted per RDL class_property',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C022'
+  AND d.query_code = 'CRS-C222';
+
+-- D1.36: CRS-C223 → CRS-C020 (property class mapping mismatch)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C020: property_code_raw not in allowed set for tag class',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C020'
+  AND d.query_code = 'CRS-C223';
+
+-- D1.37: CRS-C224 → CRS-C021 (tag without any properties)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C021: active tags with no property_value records',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C021'
+  AND d.query_code = 'CRS-C224';
+
+-- D1.38: CRS-C227 → CRS-C019 (property value is zero)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C019: property value is exact string "0"',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C019'
+  AND d.query_code = 'CRS-C227';
+
+-- D1.39: CRS-C229 → CRS-C018 (property UOM present when value is NA)
+UPDATE audit_core.crs_validation_query d
+SET sql_query           = a.sql_query,
+    is_active           = true,
+    evaluation_strategy = 'COUNT_ZERO',
+    has_parameters      = false,
+    parameter_names     = NULL,
+    notes               = 'Alias for CRS-C018: property value is NA/N/A but property_uom_raw is non-empty',
+    updated_at          = now()
+FROM audit_core.crs_validation_query a
+WHERE a.query_code = 'CRS-C018'
+  AND d.query_code = 'CRS-C229';
+
+-- ---------------------------------------------------------------------------
+-- Part D2 — Unique codes: canonical SQL from crs_phase3_validation_queries.sql
+-- Output contract: object_key TEXT, check_field TEXT, actual_value TEXT, is_resolved BOOL
+-- ---------------------------------------------------------------------------
+
+-- ── TAG DOMAIN ──────────────────────────────────────────────────────────────
+
+-- CRS-C142: abstract tag class used (is_abstract = TRUE)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C142',
+    'Abstract tag class used',
+    'Tags whose assigned class has is_abstract = TRUE in ontology_core.class',
+    'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
+    $sql_c142$
+SELECT
+  t.tag_name AS object_key,
+  'class_is_abstract' AS check_field,
+  COALESCE(c.name || ' (abstract=' || c.is_abstract::TEXT || ')', 'NULL') AS actual_value,
+  (c.is_abstract IS NULL OR c.is_abstract = FALSE) AS is_resolved
+FROM project_core.tag t
+LEFT JOIN ontology_core.class c ON c.id = t.class_id
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c142$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 003. Abstract ontology classes must not be used on physical tags.',
+    true, 'VALUE_MATCH'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C144: comma instead of point in tag name
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C144',
+    'Comma in tag_name',
+    'Tag names containing a comma character (should use period/dot as separator)',
+    'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
+    $sql_c144$
+SELECT
+  t.tag_name AS object_key,
+  'tag_name_comma' AS check_field,
+  t.tag_name AS actual_value,
+  (t.tag_name NOT LIKE '%,%') AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c144$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 003. Tag name must not contain commas.',
+    true, 'REGEX'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C145: design company FK not resolved (designed_by_company_name)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C145',
+    'DESIGNED_BY_COMPANY not in register',
+    'Tags where design_company_name_raw provided but design_company_id not resolved',
+    'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
+    $sql_c145$
+SELECT
+  t.tag_name AS object_key,
+  'design_company' AS check_field,
+  COALESCE(co.name, t.design_company_name_raw, 'NULL') AS actual_value,
+  (t.design_company_id IS NOT NULL) AS is_resolved
+FROM project_core.tag t
+LEFT JOIN reference_core.company co ON co.id = t.design_company_id
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c145$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 003. design_company_name_raw must resolve to reference_core.company.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C146: same check — design company FK (broader category scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C146',
+    'DESIGNED_BY_COMPANY not in register (C146)',
+    'Tags where design_company_name_raw provided but design_company_id not resolved',
+    'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
+    $sql_c146$
+SELECT
+  t.tag_name AS object_key,
+  'design_company' AS check_field,
+  COALESCE(co.name, t.design_company_name_raw, 'NULL') AS actual_value,
+  (t.design_company_id IS NOT NULL) AS is_resolved
+FROM project_core.tag t
+LEFT JOIN reference_core.company co ON co.id = t.design_company_id
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c146$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C145. EIS-file: 003.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C147: same check — design company FK
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C147',
+    'DESIGNED_BY_COMPANY not in register (C147)',
+    'Tags where design_company_name_raw provided but design_company_id not resolved',
+    'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
+    $sql_c147$
+SELECT
+  t.tag_name AS object_key,
+  'design_company' AS check_field,
+  COALESCE(co.name, t.design_company_name_raw, 'NULL') AS actual_value,
+  (t.design_company_id IS NOT NULL) AS is_resolved
+FROM project_core.tag t
+LEFT JOIN reference_core.company co ON co.id = t.design_company_id
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c147$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C145. EIS-file: 003.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C148: same check — design company FK
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C148',
+    'DESIGNED_BY_COMPANY not in register (C148)',
+    'Tags where design_company_name_raw provided but design_company_id not resolved',
+    'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
+    $sql_c148$
+SELECT
+  t.tag_name AS object_key,
+  'design_company' AS check_field,
+  COALESCE(co.name, t.design_company_name_raw, 'NULL') AS actual_value,
+  (t.design_company_id IS NOT NULL) AS is_resolved
+FROM project_core.tag t
+LEFT JOIN reference_core.company co ON co.id = t.design_company_id
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c148$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C145. EIS-file: 003.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C149: same check — design company FK
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C149',
+    'DESIGNED_BY_COMPANY not in register (C149)',
+    'Tags where design_company_name_raw provided but design_company_id not resolved',
+    'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
+    $sql_c149$
+SELECT
+  t.tag_name AS object_key,
+  'design_company' AS check_field,
+  COALESCE(co.name, t.design_company_name_raw, 'NULL') AS actual_value,
+  (t.design_company_id IS NOT NULL) AS is_resolved
+FROM project_core.tag t
+LEFT JOIN reference_core.company co ON co.id = t.design_company_id
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c149$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C145. EIS-file: 003.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C150: control panel CP prefix in tag name (TNC)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C150',
+    'CP prefix in tag name (TNC)',
+    'Tag names containing -CP- or -cp- pattern (control panel prefix check)',
+    'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
+    $sql_c150$
+SELECT
+  t.tag_name AS object_key,
+  'tag_name_cp_pattern' AS check_field,
+  t.tag_name AS actual_value,
+  (t.tag_name NOT SIMILAR TO '%-(CP|cp)-%') AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c150$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 003. Control panel CP pattern must conform to TNC.',
+    true, 'REGEX'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C152: same check — design company FK (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C152',
+    'DESIGNED_BY_COMPANY not in register (C152)',
+    'Tags where design_company_name_raw provided but design_company_id not resolved',
+    'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
+    $sql_c152$
+SELECT
+  t.tag_name AS object_key,
+  'design_company' AS check_field,
+  COALESCE(co.name, t.design_company_name_raw, 'NULL') AS actual_value,
+  (t.design_company_id IS NOT NULL) AS is_resolved
+FROM project_core.tag t
+LEFT JOIN reference_core.company co ON co.id = t.design_company_id
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c152$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C145. EIS-file: 003.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C154: SECE mapping missing for safety-critical (YES) tags
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C154',
+    'SECE mapping missing for safety-critical tags',
+    'Safety-critical (YES/Y) tags without active entry in mapping.tag_sece',
+    'SAFETY', 'Safety-critical attribute checks in project_core.tag',
+    $sql_c154$
+SELECT
+  t.tag_name AS object_key,
+  'sece_mapping' AS check_field,
+  (SELECT STRING_AGG(s.code, '; ')
+   FROM mapping.tag_sece ts
+   JOIN reference_core.sece s ON s.id = ts.sece_id
+   WHERE ts.tag_id = t.id AND ts.mapping_status = 'Active') AS actual_value,
+  EXISTS (
+    SELECT 1 FROM mapping.tag_sece ts
+    WHERE ts.tag_id = t.id AND ts.mapping_status = 'Active'
+  ) AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND UPPER(TRIM(COALESCE(t.safety_critical_item,''))) IN ('YES','Y')
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c154$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 003. SECE/YES tags must have at least one active SECE mapping.',
+    true, 'NOT_NULL'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C157: same SECE EXISTS check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C157',
+    'SECE mapping missing for safety-critical tags (C157)',
+    'Safety-critical (YES/Y) tags without active entry in mapping.tag_sece',
+    'SAFETY', 'Safety-critical attribute checks in project_core.tag',
+    $sql_c157$
+SELECT
+  t.tag_name AS object_key,
+  'sece_mapping' AS check_field,
+  (SELECT STRING_AGG(s.code, '; ')
+   FROM mapping.tag_sece ts
+   JOIN reference_core.sece s ON s.id = ts.sece_id
+   WHERE ts.tag_id = t.id AND ts.mapping_status = 'Active') AS actual_value,
+  EXISTS (
+    SELECT 1 FROM mapping.tag_sece ts
+    WHERE ts.tag_id = t.id AND ts.mapping_status = 'Active'
+  ) AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND UPPER(TRIM(COALESCE(t.safety_critical_item,''))) IN ('YES','Y')
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c157$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C154. EIS-file: 003.',
+    true, 'NOT_NULL'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C158: multiple SECE groups assigned (> 1 SECE per tag)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C158',
+    'Multiple SECE groups on one tag',
+    'Tags with more than one active SECE mapping (COUNT > 1)',
+    'SAFETY', 'Safety-critical attribute checks in project_core.tag',
+    $sql_c158$
+SELECT
+  t.tag_name AS object_key,
+  'sece_count' AS check_field,
+  COUNT(ts.id)::TEXT AS actual_value,
+  (COUNT(ts.id) <= 1) AS is_resolved
+FROM project_core.tag t
+LEFT JOIN mapping.tag_sece ts ON ts.tag_id = t.id AND ts.mapping_status = 'Active'
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names)
+GROUP BY t.id, t.tag_name;
+    $sql_c158$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 003. A tag must not belong to more than one SECE group.',
+    true, 'VALUE_MATCH'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C167: pipe tag description missing FROM-TO reference
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C167',
+    'Pipe tag description missing FROM-TO',
+    'Pipe-class tags whose description does not contain FROM/TO or dash routing reference',
+    'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
+    $sql_c167$
+SELECT
+  t.tag_name AS object_key,
+  'description_from_to' AS check_field,
+  LEFT(COALESCE(t.description,''), 100) AS actual_value,
+  (t.description ILIKE '%from%' OR t.description ILIKE '%to%'
+   OR t.description ILIKE '%-%') AS is_resolved
+FROM project_core.tag t
+JOIN ontology_core.class c ON c.id = t.class_id
+WHERE t.object_status = 'Active'
+  AND c.name ILIKE '%pipe%'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c167$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 003. Pipe tag descriptions should include from/to routing.',
+    true, 'REGEX'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C172: same SECE EXISTS check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C172',
+    'SECE mapping missing for safety-critical tags (C172)',
+    'Safety-critical (YES/Y) tags without active entry in mapping.tag_sece',
+    'SAFETY', 'Safety-critical attribute checks in project_core.tag',
+    $sql_c172$
+SELECT
+  t.tag_name AS object_key,
+  'sece_mapping' AS check_field,
+  (SELECT STRING_AGG(s.code, '; ')
+   FROM mapping.tag_sece ts
+   JOIN reference_core.sece s ON s.id = ts.sece_id
+   WHERE ts.tag_id = t.id AND ts.mapping_status = 'Active') AS actual_value,
+  EXISTS (
+    SELECT 1 FROM mapping.tag_sece ts
+    WHERE ts.tag_id = t.id AND ts.mapping_status = 'Active'
+  ) AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND UPPER(TRIM(COALESCE(t.safety_critical_item,''))) IN ('YES','Y')
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c172$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C154. EIS-file: 003.',
+    true, 'NOT_NULL'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C173: same SECE EXISTS check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C173',
+    'SECE mapping missing for safety-critical tags (C173)',
+    'Safety-critical (YES/Y) tags without active entry in mapping.tag_sece',
+    'SAFETY', 'Safety-critical attribute checks in project_core.tag',
+    $sql_c173$
+SELECT
+  t.tag_name AS object_key,
+  'sece_mapping' AS check_field,
+  (SELECT STRING_AGG(s.code, '; ')
+   FROM mapping.tag_sece ts
+   JOIN reference_core.sece s ON s.id = ts.sece_id
+   WHERE ts.tag_id = t.id AND ts.mapping_status = 'Active') AS actual_value,
+  EXISTS (
+    SELECT 1 FROM mapping.tag_sece ts
+    WHERE ts.tag_id = t.id AND ts.mapping_status = 'Active'
+  ) AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND UPPER(TRIM(COALESCE(t.safety_critical_item,''))) IN ('YES','Y')
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c173$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C154. EIS-file: 003.',
+    true, 'NOT_NULL'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C175: supplier/vendor company not in register
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C175',
+    'Vendor/supplier company not in register',
+    'Tags where vendor_company_raw provided but vendor_id not resolved',
+    'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
+    $sql_c175$
+SELECT
+  t.tag_name AS object_key,
+  'vendor_company' AS check_field,
+  COALESCE(co.name, t.vendor_company_raw, 'NULL') AS actual_value,
+  (t.vendor_id IS NOT NULL OR t.vendor_company_raw IS NULL) AS is_resolved
+FROM project_core.tag t
+LEFT JOIN reference_core.company co ON co.id = t.vendor_id
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c175$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 003. vendor_company_raw must resolve to reference_core.company.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C183: description format issues (starts/ends with dash or has NA suffix)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C183',
+    'Description format issue (dash/NA pattern)',
+    'Tags where description starts with dash, ends with dash, or ends with ", NA"',
+    'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
+    $sql_c183$
+SELECT
+  t.tag_name AS object_key,
+  'description_format' AS check_field,
+  LEFT(COALESCE(t.description,''), 50) AS actual_value,
+  (t.description IS NOT NULL
+    AND NOT TRIM(t.description) ~ '^-'
+    AND NOT TRIM(t.description) ~ '-$'
+    AND NOT t.description ILIKE '%, NA'
+    AND t.tag_name NOT LIKE '%-') AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c183$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 003. Description must not start/end with dash or use NA suffix format.',
+    true, 'REGEX'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C185: double spaces in description
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C185',
+    'Double spaces in description',
+    'Tags where description contains two or more consecutive spaces',
+    'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
+    $sql_c185$
+SELECT
+  t.tag_name AS object_key,
+  'description_spaces' AS check_field,
+  LEFT(COALESCE(t.description,''), 80) AS actual_value,
+  (t.description IS NULL OR t.description NOT LIKE '%  %') AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c185$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 003. Description must not contain consecutive double spaces.',
+    true, 'REGEX'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C189: same description format check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C189',
+    'Description format issue (dash/NA pattern) (C189)',
+    'Tags where description starts with dash, ends with dash, or ends with ", NA"',
+    'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
+    $sql_c189$
+SELECT
+  t.tag_name AS object_key,
+  'description_format' AS check_field,
+  LEFT(COALESCE(t.description,''), 50) AS actual_value,
+  (t.description IS NOT NULL
+    AND NOT TRIM(t.description) ~ '^-'
+    AND NOT TRIM(t.description) ~ '-$'
+    AND NOT t.description ILIKE '%, NA'
+    AND t.tag_name NOT LIKE '%-') AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c189$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C183. EIS-file: 003.',
+    true, 'REGEX'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C191: same description format check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C191',
+    'Description format issue (dash/NA pattern) (C191)',
+    'Tags where description starts with dash, ends with dash, or ends with ", NA"',
+    'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
+    $sql_c191$
+SELECT
+  t.tag_name AS object_key,
+  'description_format' AS check_field,
+  LEFT(COALESCE(t.description,''), 50) AS actual_value,
+  (t.description IS NOT NULL
+    AND NOT TRIM(t.description) ~ '^-'
+    AND NOT TRIM(t.description) ~ '-$'
+    AND NOT t.description ILIKE '%, NA'
+    AND t.tag_name NOT LIKE '%-') AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c191$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C183. EIS-file: 003.',
+    true, 'REGEX'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C193: tag is its own parent (self-referential parent_tag_id)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C193',
+    'Tag is own parent (self-loop)',
+    'Tags where parent_tag_id = id (self-referential parent)',
+    'TOPOLOGY', 'Topology and physical connection checks',
+    $sql_c193$
+SELECT
+  t.tag_name AS object_key,
+  'self_parent' AS check_field,
+  COALESCE(t.parent_tag_raw, 'NULL') AS actual_value,
+  (t.parent_tag_id IS NULL OR t.parent_tag_id != t.id) AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c193$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 003. A tag must not reference itself as parent.',
+    true, 'VALUE_MATCH'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C194: same description format check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C194',
+    'Description format issue (dash/NA pattern) (C194)',
+    'Tags where description starts with dash, ends with dash, or ends with ", NA"',
+    'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
+    $sql_c194$
+SELECT
+  t.tag_name AS object_key,
+  'description_format' AS check_field,
+  LEFT(COALESCE(t.description,''), 50) AS actual_value,
+  (t.description IS NOT NULL
+    AND NOT TRIM(t.description) ~ '^-'
+    AND NOT TRIM(t.description) ~ '-$'
+    AND NOT t.description ILIKE '%, NA'
+    AND t.tag_name NOT LIKE '%-') AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c194$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C183. EIS-file: 003.',
+    true, 'REGEX'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C200: tag not matched with any doc-tag mapping
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C200',
+    'Tag not matched with doc-tag reference',
+    'Active tags with no active document link in mapping.tag_document',
+    'DOCUMENT', 'Document master and cross-reference checks',
+    $sql_c200$
+SELECT
+  t.tag_name AS object_key,
+  'doc_tag_mapping_exists' AS check_field,
+  COALESCE(STRING_AGG(d.doc_number, '; '), 'NULL') AS actual_value,
+  EXISTS (
+    SELECT 1 FROM mapping.tag_document td
+    WHERE td.tag_id = t.id AND td.mapping_status = 'Active'
+  ) AS is_resolved
+FROM project_core.tag t
+LEFT JOIN mapping.tag_document td ON td.tag_id = t.id AND td.mapping_status = 'Active'
+LEFT JOIN project_core.document d ON d.id = td.document_id
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names)
+GROUP BY t.id, t.tag_name;
+    $sql_c200$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 016. Every active tag should have at least one document link.',
+    true, 'NOT_NULL'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- ── TAG_PROPERTY DOMAIN ─────────────────────────────────────────────────────
+
+-- CRS-C215: property value has invalid format (digit-G-digit or double-space pattern)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C215',
+    'Property value invalid format (encoding/spacing)',
+    'Property values matching digit-G-digit pattern or containing double spaces',
+    'PROPERTY', 'Property value integrity checks in project_core.property_value',
+    $sql_c215$
+SELECT
+  pv.tag_name_raw || '.' || pv.property_code_raw AS object_key,
+  'property_value_format' AS check_field,
+  COALESCE(pv.property_value,'NULL') AS actual_value,
+  (pv.property_value IS NULL
+   OR (pv.property_value NOT SIMILAR TO '.*[0-9]+G[0-9]+.*'
+       AND pv.property_value NOT SIMILAR TO '.*\s{2,}.*')) AS is_resolved
+FROM project_core.property_value pv
+WHERE pv.object_status = 'Active'
+  AND pv.tag_name_raw = ANY(:tag_names);
+    $sql_c215$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 010/011. Property values must not contain encoding artefacts or double spaces.',
+    true, 'REGEX'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C217: duplicate tag property entries (AGGREGATE — no params)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C217',
+    'Duplicate tag property entries',
+    'Property rows with duplicate (tag_name_raw, property_code_raw) combinations',
+    'PROPERTY', 'Property value integrity checks in project_core.property_value',
+    $sql_c217$
+SELECT
+  tag_name_raw || '.' || property_code_raw AS object_key,
+  'property_duplicate' AS check_field,
+  COUNT(*)::TEXT AS actual_value,
+  (COUNT(*) = 1) AS is_resolved
+FROM project_core.property_value
+WHERE object_status = 'Active'
+GROUP BY tag_name_raw, property_code_raw
+HAVING COUNT(*) > 1;
+    $sql_c217$,
+    'No violating rows (empty result = pass)', false, NULL,
+    'EIS-file: 010. AGGREGATE check — no :tag_names filter needed.',
+    true, 'COUNT_ZERO'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C218: same property value format check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C218',
+    'Property value invalid format (encoding/spacing) (C218)',
+    'Property values matching digit-G-digit pattern or containing double spaces',
+    'PROPERTY', 'Property value integrity checks in project_core.property_value',
+    $sql_c218$
+SELECT
+  pv.tag_name_raw || '.' || pv.property_code_raw AS object_key,
+  'property_value_format' AS check_field,
+  COALESCE(pv.property_value,'NULL') AS actual_value,
+  (pv.property_value IS NULL
+   OR (pv.property_value NOT SIMILAR TO '.*[0-9]+G[0-9]+.*'
+       AND pv.property_value NOT SIMILAR TO '.*\s{2,}.*')) AS is_resolved
+FROM project_core.property_value pv
+WHERE pv.object_status = 'Active'
+  AND pv.tag_name_raw = ANY(:tag_names);
+    $sql_c218$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C215. EIS-file: 010/011.',
+    true, 'REGEX'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C226: property value blank
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C226',
+    'Property value blank',
+    'Property rows where property_value is NULL or empty string',
+    'PROPERTY', 'Property value integrity checks in project_core.property_value',
+    $sql_c226$
+SELECT
+  pv.tag_name_raw || '.' || pv.property_code_raw AS object_key,
+  'property_value_blank' AS check_field,
+  COALESCE(pv.property_value, 'NULL') AS actual_value,
+  (pv.property_value IS NOT NULL AND TRIM(pv.property_value) != '') AS is_resolved
+FROM project_core.property_value pv
+WHERE pv.object_status = 'Active'
+  AND pv.tag_name_raw = ANY(:tag_names);
+    $sql_c226$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 010/011. Property value must not be NULL or blank.',
+    true, 'NOT_NULL'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C228: UOM missing for numeric property value
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C228',
+    'UOM missing for numeric property value',
+    'Property rows where value starts with a digit but property_uom_raw is NULL or blank',
+    'PROPERTY', 'Property value integrity checks in project_core.property_value',
+    $sql_c228$
+SELECT
+  pv.tag_name_raw || '.' || pv.property_code_raw AS object_key,
+  'uom_for_numeric' AS check_field,
+  COALESCE(pv.property_uom_raw, 'NULL') AS actual_value,
+  (pv.property_value IS NULL
+   OR NOT pv.property_value ~ '^[0-9]'
+   OR (pv.property_uom_raw IS NOT NULL AND TRIM(pv.property_uom_raw) != '')) AS is_resolved
+FROM project_core.property_value pv
+WHERE pv.object_status = 'Active'
+  AND pv.tag_name_raw = ANY(:tag_names);
+    $sql_c228$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 010/011. Numeric property values must have a unit of measure.',
+    true, 'NOT_NULL'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- ── EQUIPMENT DOMAIN ─────────────────────────────────────────────────────────
+
+-- CRS-C094: equipment description duplicated (AGGREGATE — no params)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C094',
+    'Duplicate equipment descriptions',
+    'Multiple equipment tags sharing identical description text',
+    'EQUIPMENT', 'Equipment register checks in project_core.tag',
+    $sql_c094$
+SELECT
+  t.description AS object_key,
+  'description_duplicate' AS check_field,
+  COUNT(*)::TEXT AS actual_value,
+  (COUNT(*) = 1) AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND t.equip_no IS NOT NULL
+  AND t.description IS NOT NULL
+  AND t.description != ''
+GROUP BY t.description
+HAVING COUNT(*) > 1;
+    $sql_c094$,
+    'No violating rows (empty result = pass)', false, NULL,
+    'EIS-file: 004. AGGREGATE check — no :tag_names filter.',
+    true, 'COUNT_ZERO'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C095: equipment description starts or ends with dash
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C095',
+    'Equipment description starts/ends with dash',
+    'Equipment tags where TRIM(description) starts or ends with a dash character',
+    'EQUIPMENT', 'Equipment register checks in project_core.tag',
+    $sql_c095$
+SELECT
+  t.equip_no AS object_key,
+  'description_dash_format' AS check_field,
+  LEFT(COALESCE(t.description,''), 50) AS actual_value,
+  (t.description IS NULL
+   OR (NOT TRIM(t.description) ~ '^-' AND NOT TRIM(t.description) ~ '-$')) AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND t.equip_no IS NOT NULL
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c095$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 004. Equipment descriptions must not start or end with a dash.',
+    true, 'REGEX'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C098: same dash check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C098',
+    'Equipment description starts/ends with dash (C098)',
+    'Equipment tags where TRIM(description) starts or ends with a dash character',
+    'EQUIPMENT', 'Equipment register checks in project_core.tag',
+    $sql_c098$
+SELECT
+  t.equip_no AS object_key,
+  'description_dash_format' AS check_field,
+  LEFT(COALESCE(t.description,''), 50) AS actual_value,
+  (t.description IS NULL
+   OR (NOT TRIM(t.description) ~ '^-' AND NOT TRIM(t.description) ~ '-$')) AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND t.equip_no IS NOT NULL
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c098$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C095. EIS-file: 004.',
+    true, 'REGEX'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C100: equipment has no document references
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C100',
+    'Equipment has no document references',
+    'Equipment tags with no active entry in mapping.tag_document',
+    'EQUIPMENT', 'Equipment register checks in project_core.tag',
+    $sql_c100$
+SELECT
+  t.equip_no AS object_key,
+  'equip_doc_mapping' AS check_field,
+  COALESCE(STRING_AGG(d.doc_number, '; '), 'NULL') AS actual_value,
+  EXISTS (
+    SELECT 1 FROM mapping.tag_document td
+    WHERE td.tag_id = t.id AND td.mapping_status = 'Active'
+  ) AS is_resolved
+FROM project_core.tag t
+LEFT JOIN mapping.tag_document td ON td.tag_id = t.id AND td.mapping_status = 'Active'
+LEFT JOIN project_core.document d ON d.id = td.document_id
+WHERE t.object_status = 'Active'
+  AND t.equip_no IS NOT NULL
+  AND t.tag_name = ANY(:tag_names)
+GROUP BY t.id, t.equip_no;
+    $sql_c100$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 019. Every equipment tag should have at least one document link.',
+    true, 'NOT_NULL'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C101: equipment is its own parent (self-loop)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C101',
+    'Equipment is own parent (self-loop)',
+    'Equipment tags where parent_tag_id = id (self-referential)',
+    'TOPOLOGY', 'Topology and physical connection checks',
+    $sql_c101$
+SELECT
+  t.equip_no AS object_key,
+  'self_parent_equip' AS check_field,
+  COALESCE(t.parent_tag_raw, 'NULL') AS actual_value,
+  (t.parent_tag_id IS NULL OR t.parent_tag_id != t.id) AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND t.equip_no IS NOT NULL
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c101$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 004. Equipment must not reference itself as parent tag.',
+    true, 'VALUE_MATCH'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C103: equipment number missing plant code prefix
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C103',
+    'Equipment number missing plant prefix',
+    'Equipment tags where equip_no does not start with Equip_ or JDA',
+    'EQUIPMENT', 'Equipment register checks in project_core.tag',
+    $sql_c103$
+SELECT
+  t.equip_no AS object_key,
+  'equip_no_prefix' AS check_field,
+  COALESCE(t.equip_no, 'NULL') AS actual_value,
+  (t.equip_no LIKE 'Equip_%' OR t.equip_no LIKE 'JDA%') AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND t.equip_no IS NOT NULL
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c103$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 004. equip_no must start with Equip_ or plant prefix JDA.',
+    true, 'REGEX'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C105: equipment plant code not in register
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C105',
+    'Equipment plant code not in register',
+    'Equipment tags where plant_id is NULL (not resolved to reference_core.plant)',
+    'EQUIPMENT', 'Equipment register checks in project_core.tag',
+    $sql_c105$
+SELECT
+  t.equip_no AS object_key,
+  'plant_id_equip' AS check_field,
+  COALESCE(pl.code, t.plant_raw, 'NULL') AS actual_value,
+  (t.plant_id IS NOT NULL) AS is_resolved
+FROM project_core.tag t
+LEFT JOIN reference_core.plant pl ON pl.id = t.plant_id
+WHERE t.object_status = 'Active'
+  AND t.equip_no IS NOT NULL
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c105$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 004. plant_raw must resolve to reference_core.plant.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C107: equipment TNC non-compliance
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C107',
+    'Equipment TNC non-compliance',
+    'Equipment tags where equip_no does not match pattern Equip_JDA-',
+    'EQUIPMENT', 'Equipment register checks in project_core.tag',
+    $sql_c107$
+SELECT
+  t.equip_no AS object_key,
+  'equip_no_tnc' AS check_field,
+  COALESCE(t.equip_no, 'NULL') AS actual_value,
+  (t.equip_no LIKE 'Equip_JDA-%') AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND t.equip_no IS NOT NULL
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c107$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 004. equip_no must follow pattern Equip_JDA-<tag_name>.',
+    true, 'REGEX'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C111: manufacturer serial number is literal NA
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C111',
+    'Serial number is literal NA',
+    'Equipment tags where serial_no is "NA", "N/A", or "NOT APPLICABLE"',
+    'EQUIPMENT', 'Equipment register checks in project_core.tag',
+    $sql_c111$
+SELECT
+  t.equip_no AS object_key,
+  'serial_no_not_na' AS check_field,
+  COALESCE(t.serial_no, 'NULL') AS actual_value,
+  (t.serial_no IS NULL
+   OR UPPER(TRIM(t.serial_no)) NOT IN ('NA','N/A','NOT APPLICABLE')) AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND t.equip_no IS NOT NULL
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c111$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 004. Serial number must not be a pseudo-null NA value.',
+    true, 'VALUE_MATCH'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C113: model part FK not resolved
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C113',
+    'Model part FK not resolved',
+    'Equipment tags where model_id is NULL (model_part_raw provided but not resolved)',
+    'EQUIPMENT', 'Equipment register checks in project_core.tag',
+    $sql_c113$
+SELECT
+  t.equip_no AS object_key,
+  'model_part' AS check_field,
+  COALESCE(mp.name, t.model_part_raw, 'NULL') AS actual_value,
+  (t.model_id IS NOT NULL) AS is_resolved
+FROM project_core.tag t
+LEFT JOIN reference_core.model_part mp ON mp.id = t.model_id
+WHERE t.object_status = 'Active'
+  AND t.equip_no IS NOT NULL
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c113$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 004/005. model_part_raw must resolve to reference_core.model_part.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- ── EQUIPMENT_PROPERTY DOMAIN ────────────────────────────────────────────────
+
+-- CRS-C115: duplicate equipment property entries (filtered AGGREGATE)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C115',
+    'Duplicate equipment property entries',
+    'Equipment property rows with duplicate (tag_name_raw, property_code_raw) combinations',
+    'PROPERTY', 'Property value integrity checks in project_core.property_value',
+    $sql_c115$
+SELECT
+  tag_name_raw || '.' || property_code_raw AS object_key,
+  'equip_property_duplicate' AS check_field,
+  COUNT(*)::TEXT AS actual_value,
+  (COUNT(*) = 1) AS is_resolved
+FROM project_core.property_value
+WHERE object_status = 'Active'
+  AND tag_name_raw = ANY(:tag_names)
+GROUP BY tag_name_raw, property_code_raw
+HAVING COUNT(*) > 1;
+    $sql_c115$,
+    'No violating rows (empty result = pass)', true, ARRAY['tag_names'],
+    'EIS-file: 011. Filtered aggregate — duplicate property entries per equipment.',
+    true, 'COUNT_ZERO'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C116: equipment class-property mapping mismatch
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C116',
+    'Equipment property not in class scope',
+    'Equipment property values where property_id or mapping_id is not resolved',
+    'PROPERTY', 'Property value integrity checks in project_core.property_value',
+    $sql_c116$
+SELECT
+  pv.tag_name_raw || '.' || pv.property_code_raw AS object_key,
+  'equip_property_class_scope' AS check_field,
+  COALESCE(pv.property_code_raw,'NULL') AS actual_value,
+  (pv.property_id IS NOT NULL AND pv.mapping_id IS NOT NULL) AS is_resolved
+FROM project_core.property_value pv
+JOIN project_core.tag t ON t.tag_name = pv.tag_name_raw AND t.object_status = 'Active'
+WHERE pv.object_status = 'Active'
+  AND t.equip_no IS NOT NULL
+  AND pv.tag_name_raw = ANY(:tag_names);
+    $sql_c116$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 011. Equipment property must exist in class_property mapping.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C117: equipment has no properties (filtered COUNT_ZERO)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C117',
+    'Equipment has no property values',
+    'Equipment tags with no active property_value records',
+    'PROPERTY', 'Property value integrity checks in project_core.property_value',
+    $sql_c117$
+SELECT
+  t.equip_no AS object_key,
+  'equip_has_properties' AS check_field,
+  COUNT(pv.id)::TEXT AS actual_value,
+  EXISTS (
+    SELECT 1 FROM project_core.property_value pv2
+    WHERE pv2.tag_id = t.id AND pv2.object_status = 'Active'
+  ) AS is_resolved
+FROM project_core.tag t
+LEFT JOIN project_core.property_value pv ON pv.tag_id = t.id AND pv.object_status = 'Active'
+WHERE t.object_status = 'Active'
+  AND t.equip_no IS NOT NULL
+  AND t.tag_name = ANY(:tag_names)
+GROUP BY t.id, t.equip_no;
+    $sql_c117$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 011. Every equipment tag should have at least one property record.',
+    true, 'COUNT_ZERO'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C118: equipment property register orphan
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C118',
+    'Equipment property orphan (tag not in register)',
+    'Property rows for tags that have no equip_no or are not in project_core.tag',
+    'PROPERTY', 'Property value integrity checks in project_core.property_value',
+    $sql_c118$
+SELECT
+  pv.tag_name_raw AS object_key,
+  'equip_in_register' AS check_field,
+  COALESCE(t.equip_no, 'NOT_IN_REGISTER') AS actual_value,
+  (t.id IS NOT NULL AND t.equip_no IS NOT NULL) AS is_resolved
+FROM project_core.property_value pv
+LEFT JOIN project_core.tag t ON t.tag_name = pv.tag_name_raw AND t.object_status = 'Active'
+WHERE pv.object_status = 'Active'
+  AND pv.tag_name_raw = ANY(:tag_names);
+    $sql_c118$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 011. Equipment property rows must reference a tag with equip_no.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C119: same equipment property orphan check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C119',
+    'Equipment property orphan (tag not in register) (C119)',
+    'Property rows for tags that have no equip_no or are not in project_core.tag',
+    'PROPERTY', 'Property value integrity checks in project_core.property_value',
+    $sql_c119$
+SELECT
+  pv.tag_name_raw AS object_key,
+  'equip_in_register' AS check_field,
+  COALESCE(t.equip_no, 'NOT_IN_REGISTER') AS actual_value,
+  (t.id IS NOT NULL AND t.equip_no IS NOT NULL) AS is_resolved
+FROM project_core.property_value pv
+LEFT JOIN project_core.tag t ON t.tag_name = pv.tag_name_raw AND t.object_status = 'Active'
+WHERE pv.object_status = 'Active'
+  AND pv.tag_name_raw = ANY(:tag_names);
+    $sql_c119$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C118. EIS-file: 011.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C121: equipment property value issues (blank/zero/NA+UOM)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C121',
+    'Equipment property value issue (blank/zero/NA+UOM)',
+    'Equipment property rows where value is blank, zero, or NA with non-empty UOM',
+    'PROPERTY', 'Property value integrity checks in project_core.property_value',
+    $sql_c121$
+SELECT
+  pv.tag_name_raw || '.' || pv.property_code_raw AS object_key,
+  'equip_property_value' AS check_field,
+  COALESCE(pv.property_value,'NULL') || ' | ' || COALESCE(pv.property_uom_raw,'') AS actual_value,
+  (pv.property_value IS NOT NULL
+   AND TRIM(pv.property_value) != ''
+   AND TRIM(COALESCE(pv.property_value,'')) != '0'
+   AND NOT (UPPER(TRIM(COALESCE(pv.property_value,''))) IN ('NA','N/A')
+            AND pv.property_uom_raw IS NOT NULL
+            AND TRIM(pv.property_uom_raw) != '')) AS is_resolved
+FROM project_core.property_value pv
+JOIN project_core.tag t ON t.tag_name = pv.tag_name_raw AND t.object_status = 'Active'
+WHERE pv.object_status = 'Active'
+  AND t.equip_no IS NOT NULL
+  AND pv.tag_name_raw = ANY(:tag_names);
+    $sql_c121$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 011. Equipment property value must be non-blank, non-zero, and not NA with UOM.',
+    true, 'VALUE_MATCH'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C122: same equipment property value check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C122',
+    'Equipment property value issue (blank/zero/NA+UOM) (C122)',
+    'Equipment property rows where value is blank, zero, or NA with non-empty UOM',
+    'PROPERTY', 'Property value integrity checks in project_core.property_value',
+    $sql_c122$
+SELECT
+  pv.tag_name_raw || '.' || pv.property_code_raw AS object_key,
+  'equip_property_value' AS check_field,
+  COALESCE(pv.property_value,'NULL') || ' | ' || COALESCE(pv.property_uom_raw,'') AS actual_value,
+  (pv.property_value IS NOT NULL
+   AND TRIM(pv.property_value) != ''
+   AND TRIM(COALESCE(pv.property_value,'')) != '0'
+   AND NOT (UPPER(TRIM(COALESCE(pv.property_value,''))) IN ('NA','N/A')
+            AND pv.property_uom_raw IS NOT NULL
+            AND TRIM(pv.property_uom_raw) != '')) AS is_resolved
+FROM project_core.property_value pv
+JOIN project_core.tag t ON t.tag_name = pv.tag_name_raw AND t.object_status = 'Active'
+WHERE pv.object_status = 'Active'
+  AND t.equip_no IS NOT NULL
+  AND pv.tag_name_raw = ANY(:tag_names);
+    $sql_c122$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C121. EIS-file: 011.',
+    true, 'VALUE_MATCH'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C123: same equipment class-property scope check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C123',
+    'Equipment property not in class scope (C123)',
+    'Equipment property values where property_id or mapping_id is not resolved',
+    'PROPERTY', 'Property value integrity checks in project_core.property_value',
+    $sql_c123$
+SELECT
+  pv.tag_name_raw || '.' || pv.property_code_raw AS object_key,
+  'equip_property_class_scope' AS check_field,
+  COALESCE(pv.property_code_raw,'NULL') AS actual_value,
+  (pv.property_id IS NOT NULL AND pv.mapping_id IS NOT NULL) AS is_resolved
+FROM project_core.property_value pv
+JOIN project_core.tag t ON t.tag_name = pv.tag_name_raw AND t.object_status = 'Active'
+WHERE pv.object_status = 'Active'
+  AND t.equip_no IS NOT NULL
+  AND pv.tag_name_raw = ANY(:tag_names);
+    $sql_c123$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C116. EIS-file: 011.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C124: same equipment property value check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C124',
+    'Equipment property value issue (blank/zero/NA+UOM) (C124)',
+    'Equipment property rows where value is blank, zero, or NA with non-empty UOM',
+    'PROPERTY', 'Property value integrity checks in project_core.property_value',
+    $sql_c124$
+SELECT
+  pv.tag_name_raw || '.' || pv.property_code_raw AS object_key,
+  'equip_property_value' AS check_field,
+  COALESCE(pv.property_value,'NULL') || ' | ' || COALESCE(pv.property_uom_raw,'') AS actual_value,
+  (pv.property_value IS NOT NULL
+   AND TRIM(pv.property_value) != ''
+   AND TRIM(COALESCE(pv.property_value,'')) != '0'
+   AND NOT (UPPER(TRIM(COALESCE(pv.property_value,''))) IN ('NA','N/A')
+            AND pv.property_uom_raw IS NOT NULL
+            AND TRIM(pv.property_uom_raw) != '')) AS is_resolved
+FROM project_core.property_value pv
+JOIN project_core.tag t ON t.tag_name = pv.tag_name_raw AND t.object_status = 'Active'
+WHERE pv.object_status = 'Active'
+  AND t.equip_no IS NOT NULL
+  AND pv.tag_name_raw = ANY(:tag_names);
+    $sql_c124$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C121. EIS-file: 011.',
+    true, 'VALUE_MATCH'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- ── DOCUMENT DOMAIN ──────────────────────────────────────────────────────────
+
+-- CRS-C058: PO company (issuer) in doc-PO not in company register
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C058',
+    'Doc-PO issuer company not in register',
+    'Documents where the PO issuer company is not found in reference_core.company',
+    'DOCUMENT', 'Document master and cross-reference checks',
+    $sql_c058$
+SELECT
+  d.doc_number AS object_key,
+  'po_company_in_register' AS check_field,
+  COALESCE(co.name, 'NOT_IN_REGISTER') AS actual_value,
+  (co.id IS NOT NULL) AS is_resolved
+FROM project_core.document d
+JOIN mapping.document_po dpo ON dpo.document_id = d.id AND dpo.mapping_status = 'Active'
+JOIN reference_core.purchase_order po ON po.id = dpo.po_id
+LEFT JOIN reference_core.company co ON co.id = po.issuer_id
+WHERE d.object_status = 'Active'
+  AND d.doc_number = ANY(:doc_numbers);
+    $sql_c058$,
+    'is_resolved = true for all rows', true, ARRAY['doc_numbers'],
+    'EIS-file: 022. PO issuer must resolve to reference_core.company.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C059: doc in docmaster (active status)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C059',
+    'Document not active in DocMaster',
+    'Documents where object_status != Active in project_core.document',
+    'DOCUMENT', 'Document master and cross-reference checks',
+    $sql_c059$
+SELECT
+  d.doc_number AS object_key,
+  'doc_in_docmaster' AS check_field,
+  d.doc_number AS actual_value,
+  (d.object_status = 'Active') AS is_resolved
+FROM project_core.document d
+WHERE d.doc_number = ANY(:doc_numbers);
+    $sql_c059$,
+    'is_resolved = true for all rows', true, ARRAY['doc_numbers'],
+    'EIS-file: 014. Document must be active in project_core.document.',
+    true, 'VALUE_MATCH'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C061: same doc active status check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C061',
+    'Document not active in DocMaster (C061)',
+    'Documents where object_status != Active in project_core.document',
+    'DOCUMENT', 'Document master and cross-reference checks',
+    $sql_c061$
+SELECT
+  d.doc_number AS object_key,
+  'doc_in_docmaster' AS check_field,
+  d.doc_number AS actual_value,
+  (d.object_status = 'Active') AS is_resolved
+FROM project_core.document d
+WHERE d.doc_number = ANY(:doc_numbers);
+    $sql_c061$,
+    'is_resolved = true for all rows', true, ARRAY['doc_numbers'],
+    'Alias scope of CRS-C059. EIS-file: 014.',
+    true, 'VALUE_MATCH'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C065: same doc active status check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C065',
+    'Document not active in DocMaster (C065)',
+    'Documents where object_status != Active in project_core.document',
+    'DOCUMENT', 'Document master and cross-reference checks',
+    $sql_c065$
+SELECT
+  d.doc_number AS object_key,
+  'doc_in_docmaster' AS check_field,
+  d.doc_number AS actual_value,
+  (d.object_status = 'Active') AS is_resolved
+FROM project_core.document d
+WHERE d.doc_number = ANY(:doc_numbers);
+    $sql_c065$,
+    'is_resolved = true for all rows', true, ARRAY['doc_numbers'],
+    'Alias scope of CRS-C059. EIS-file: 014.',
+    true, 'VALUE_MATCH'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C066: PO in doc-PO mapping is void or inactive
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C066',
+    'Doc-PO link to void/inactive PO',
+    'Documents linked to PO records that are not active or not found',
+    'DOCUMENT', 'Document master and cross-reference checks',
+    $sql_c066$
+SELECT
+  d.doc_number AS object_key,
+  'doc_po_link' AS check_field,
+  COALESCE(STRING_AGG(po.code, '; '), 'NULL') AS actual_value,
+  NOT EXISTS (
+    SELECT 1 FROM mapping.document_po dpo
+    JOIN reference_core.purchase_order po2 ON po2.id = dpo.po_id
+    WHERE dpo.document_id = d.id
+      AND dpo.mapping_status = 'Active'
+      AND (po2.id IS NULL OR po2.object_status != 'Active')
+  ) AS is_resolved
+FROM project_core.document d
+LEFT JOIN mapping.document_po dpo ON dpo.document_id = d.id AND dpo.mapping_status = 'Active'
+LEFT JOIN reference_core.purchase_order po ON po.id = dpo.po_id
+WHERE d.object_status = 'Active'
+  AND d.doc_number = ANY(:doc_numbers)
+GROUP BY d.id, d.doc_number;
+    $sql_c066$,
+    'is_resolved = true for all rows', true, ARRAY['doc_numbers'],
+    'EIS-file: 022. All POs linked to documents must be active.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C067: same doc active status check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C067',
+    'Document not active in DocMaster (C067)',
+    'Documents where object_status != Active in project_core.document',
+    'DOCUMENT', 'Document master and cross-reference checks',
+    $sql_c067$
+SELECT
+  d.doc_number AS object_key,
+  'doc_in_docmaster' AS check_field,
+  d.doc_number AS actual_value,
+  (d.object_status = 'Active') AS is_resolved
+FROM project_core.document d
+WHERE d.doc_number = ANY(:doc_numbers);
+    $sql_c067$,
+    'is_resolved = true for all rows', true, ARRAY['doc_numbers'],
+    'Alias scope of CRS-C059. EIS-file: 014.',
+    true, 'VALUE_MATCH'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C068: same doc active status check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C068',
+    'Document not active in DocMaster (C068)',
+    'Documents where object_status != Active in project_core.document',
+    'DOCUMENT', 'Document master and cross-reference checks',
+    $sql_c068$
+SELECT
+  d.doc_number AS object_key,
+  'doc_in_docmaster' AS check_field,
+  d.doc_number AS actual_value,
+  (d.object_status = 'Active') AS is_resolved
+FROM project_core.document d
+WHERE d.doc_number = ANY(:doc_numbers);
+    $sql_c068$,
+    'is_resolved = true for all rows', true, ARRAY['doc_numbers'],
+    'Alias scope of CRS-C059. EIS-file: 014.',
+    true, 'VALUE_MATCH'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C069: document plant code not in register
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C069',
+    'Document plant code not in register',
+    'Documents where plant_id is NULL (not resolved to reference_core.plant)',
+    'DOCUMENT', 'Document master and cross-reference checks',
+    $sql_c069$
+SELECT
+  d.doc_number AS object_key,
+  'doc_plant_id' AS check_field,
+  COALESCE(pl.code, 'NULL') AS actual_value,
+  (d.plant_id IS NOT NULL) AS is_resolved
+FROM project_core.document d
+LEFT JOIN reference_core.plant pl ON pl.id = d.plant_id
+WHERE d.object_status = 'Active'
+  AND d.doc_number = ANY(:doc_numbers);
+    $sql_c069$,
+    'is_resolved = true for all rows', true, ARRAY['doc_numbers'],
+    'EIS-file: 023. Document must reference a valid plant.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C070: document process unit not in register (via linked tags)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C070',
+    'Document process unit not in register',
+    'Documents where no linked tag has a resolved process_unit_id',
+    'DOCUMENT', 'Document master and cross-reference checks',
+    $sql_c070$
+SELECT
+  d.doc_number AS object_key,
+  'doc_pu_in_register' AS check_field,
+  COALESCE(STRING_AGG(DISTINCT pu.code, '; '), 'NULL') AS actual_value,
+  EXISTS (
+    SELECT 1 FROM mapping.tag_document td
+    JOIN project_core.tag t ON t.id = td.tag_id
+    JOIN reference_core.process_unit pu2 ON pu2.id = t.process_unit_id
+    WHERE td.document_id = d.id AND td.mapping_status = 'Active'
+  ) AS is_resolved
+FROM project_core.document d
+LEFT JOIN mapping.tag_document td ON td.document_id = d.id AND td.mapping_status = 'Active'
+LEFT JOIN project_core.tag t ON t.id = td.tag_id
+LEFT JOIN reference_core.process_unit pu ON pu.id = t.process_unit_id
+WHERE d.object_status = 'Active'
+  AND d.doc_number = ANY(:doc_numbers)
+GROUP BY d.id, d.doc_number;
+    $sql_c070$,
+    'is_resolved = true for all rows', true, ARRAY['doc_numbers'],
+    'EIS-file: 018. Document must link to at least one tag with a process unit.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C073: same doc active status check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C073',
+    'Document not active in DocMaster (C073)',
+    'Documents where object_status != Active in project_core.document',
+    'DOCUMENT', 'Document master and cross-reference checks',
+    $sql_c073$
+SELECT
+  d.doc_number AS object_key,
+  'doc_in_docmaster' AS check_field,
+  d.doc_number AS actual_value,
+  (d.object_status = 'Active') AS is_resolved
+FROM project_core.document d
+WHERE d.doc_number = ANY(:doc_numbers);
+    $sql_c073$,
+    'is_resolved = true for all rows', true, ARRAY['doc_numbers'],
+    'Alias scope of CRS-C059. EIS-file: 014.',
+    true, 'VALUE_MATCH'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C079: duplicate document records (AGGREGATE — no params)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C079',
+    'Duplicate document records',
+    'Multiple active rows for the same doc_number in project_core.document',
+    'DOCUMENT', 'Document master and cross-reference checks',
+    $sql_c079$
+SELECT
+  doc_number AS object_key,
+  'doc_number_unique' AS check_field,
+  COUNT(*)::TEXT AS actual_value,
+  (COUNT(*) = 1) AS is_resolved
+FROM project_core.document
+WHERE object_status = 'Active'
+GROUP BY doc_number
+HAVING COUNT(*) > 1;
+    $sql_c079$,
+    'No violating rows (empty result = pass)', false, NULL,
+    'EIS-file: 014. AGGREGATE check — no :doc_numbers filter.',
+    true, 'COUNT_ZERO'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C087: same doc-PO link to void/inactive PO (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C087',
+    'Doc-PO link to void/inactive PO (C087)',
+    'Documents linked to PO records that are not active or not found',
+    'DOCUMENT', 'Document master and cross-reference checks',
+    $sql_c087$
+SELECT
+  d.doc_number AS object_key,
+  'doc_po_link' AS check_field,
+  COALESCE(STRING_AGG(po.code, '; '), 'NULL') AS actual_value,
+  NOT EXISTS (
+    SELECT 1 FROM mapping.document_po dpo
+    JOIN reference_core.purchase_order po2 ON po2.id = dpo.po_id
+    WHERE dpo.document_id = d.id
+      AND dpo.mapping_status = 'Active'
+      AND (po2.id IS NULL OR po2.object_status != 'Active')
+  ) AS is_resolved
+FROM project_core.document d
+LEFT JOIN mapping.document_po dpo ON dpo.document_id = d.id AND dpo.mapping_status = 'Active'
+LEFT JOIN reference_core.purchase_order po ON po.id = dpo.po_id
+WHERE d.object_status = 'Active'
+  AND d.doc_number = ANY(:doc_numbers)
+GROUP BY d.id, d.doc_number;
+    $sql_c087$,
+    'is_resolved = true for all rows', true, ARRAY['doc_numbers'],
+    'Alias scope of CRS-C066. EIS-file: 022.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- ── PURCHASE_ORDER DOMAIN ───────────────────────────────────────────────────
+
+-- CRS-C128: model part code has invalid characters (model_part domain)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C128',
+    'Model part code has invalid characters',
+    'Model part codes containing special characters: < > = & " '' %',
+    'REFERENCE', 'Reference data integrity checks',
+    $sql_c128$
+SELECT
+  mp.code AS object_key,
+  'model_part_code_chars' AS check_field,
+  mp.code AS actual_value,
+  (mp.code NOT SIMILAR TO '.*[<>=&"''%].*') AS is_resolved
+FROM reference_core.model_part mp
+WHERE mp.object_status = 'Active'
+  AND mp.code = ANY(:tag_names);
+    $sql_c128$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 005. model_part.code must not contain special characters.',
+    true, 'REGEX'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C130: process unit description blank
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C130',
+    'Process unit description blank',
+    'Process unit records where name is NULL or empty',
+    'REFERENCE', 'Reference data integrity checks',
+    $sql_c130$
+SELECT
+  pu.code AS object_key,
+  'pu_name' AS check_field,
+  COALESCE(pu.name, 'NULL') AS actual_value,
+  (pu.name IS NOT NULL AND TRIM(pu.name) != '') AS is_resolved
+FROM reference_core.process_unit pu
+WHERE pu.object_status = 'Active'
+  AND pu.code = ANY(:tag_names);
+    $sql_c130$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 018. Process unit must have a non-blank name.',
+    true, 'NOT_NULL'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C132: process unit plant FK not resolved
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C132',
+    'Process unit plant FK not resolved',
+    'Process units where plant_id is NULL or plant is not in reference_core.plant',
+    'REFERENCE', 'Reference data integrity checks',
+    $sql_c132$
+SELECT
+  pu.code AS object_key,
+  'pu_plant_match' AS check_field,
+  COALESCE(pl.code, 'NULL') AS actual_value,
+  (pu.plant_id IS NOT NULL AND pl.id IS NOT NULL) AS is_resolved
+FROM reference_core.process_unit pu
+LEFT JOIN reference_core.plant pl ON pl.id = pu.plant_id
+WHERE pu.object_status = 'Active'
+  AND pu.code = ANY(:tag_names);
+    $sql_c132$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 018. Process unit must reference a valid plant.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C134: process unit plant code not in standard list
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C134',
+    'Process unit plant not in standard list',
+    'Process units where plant_id is NULL (not linked to any registered plant)',
+    'REFERENCE', 'Reference data integrity checks',
+    $sql_c134$
+SELECT
+  pu.code AS object_key,
+  'pu_plant_in_register' AS check_field,
+  COALESCE(pl.code, 'NULL') AS actual_value,
+  (pu.plant_id IS NOT NULL) AS is_resolved
+FROM reference_core.process_unit pu
+LEFT JOIN reference_core.plant pl ON pl.id = pu.plant_id
+WHERE pu.object_status = 'Active'
+  AND pu.code = ANY(:tag_names);
+    $sql_c134$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 018. Process unit must be assigned to a plant in reference_core.plant.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C135: multiple PO codes for same equipment
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C135',
+    'Multiple PO codes for same equipment',
+    'Equipment tags sharing equip_no but linked to different purchase orders',
+    'REFERENCE', 'Reference data integrity checks',
+    $sql_c135$
+SELECT
+  t.equip_no AS object_key,
+  'po_count_per_equip' AS check_field,
+  COUNT(DISTINCT t.po_id)::TEXT AS actual_value,
+  (COUNT(DISTINCT t.po_id) <= 1) AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND t.equip_no IS NOT NULL
+  AND t.tag_name = ANY(:tag_names)
+GROUP BY t.equip_no;
+    $sql_c135$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 004/008. An equipment must not be linked to multiple POs.',
+    true, 'COUNT_ZERO'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C136: PO code is void
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C136',
+    'PO code is void',
+    'Tags where po_code_raw contains -VOID or VOID- pattern',
+    'REFERENCE', 'Reference data integrity checks',
+    $sql_c136$
+SELECT
+  t.tag_name AS object_key,
+  'po_not_void' AS check_field,
+  COALESCE(t.po_code_raw, po.code, 'NULL') AS actual_value,
+  (t.po_code_raw IS NULL
+   OR (t.po_code_raw NOT ILIKE '%-VOID%'
+       AND t.po_code_raw NOT ILIKE '%VOID-%')) AS is_resolved
+FROM project_core.tag t
+LEFT JOIN reference_core.purchase_order po ON po.id = t.po_id
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c136$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 003/008. Tags must not reference void PO codes.',
+    true, 'VALUE_MATCH'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C137: PO code missing for physical tags
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C137',
+    'PO code missing for physical tags',
+    'Physical-concept tags where po_id is NULL',
+    'REFERENCE', 'Reference data integrity checks',
+    $sql_c137$
+SELECT
+  t.tag_name AS object_key,
+  'po_for_physical_tag' AS check_field,
+  COALESCE(po.code, t.po_code_raw, 'NULL') AS actual_value,
+  (t.po_id IS NOT NULL) AS is_resolved
+FROM project_core.tag t
+LEFT JOIN reference_core.purchase_order po ON po.id = t.po_id
+JOIN ontology_core.class c ON c.id = t.class_id
+WHERE t.object_status = 'Active'
+  AND c.concept ILIKE '%Physical%'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c137$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 003/008. Physical concept tags must have a PO code.',
+    true, 'NOT_NULL'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C140: PO description contains invalid characters
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C140',
+    'PO description contains invalid characters',
+    'Purchase orders where name contains commas or double-quotes',
+    'REFERENCE', 'Reference data integrity checks',
+    $sql_c140$
+SELECT
+  po.code AS object_key,
+  'po_name_characters' AS check_field,
+  COALESCE(po.name, 'NULL') AS actual_value,
+  (po.name IS NULL
+   OR (po.name NOT LIKE '%,%' AND po.name NOT LIKE '%""%')) AS is_resolved
+FROM reference_core.purchase_order po
+WHERE po.object_status = 'Active'
+  AND po.code = ANY(:po_codes);
+    $sql_c140$,
+    'is_resolved = true for all rows', true, ARRAY['po_codes'],
+    'EIS-file: 008. PO name must not contain commas or double-quotes. Param: :po_codes.',
+    true, 'REGEX'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- ── TAG_CONNECTION DOMAIN ────────────────────────────────────────────────────
+
+-- CRS-C207: from_tag equals to_tag (self-loop connection)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C207',
+    'FROM_TAG equals TO_TAG (self-loop)',
+    'Tags where from_tag_raw = to_tag_raw (cable loops back to same tag)',
+    'TOPOLOGY', 'Topology and physical connection checks',
+    $sql_c207$
+SELECT
+  t.tag_name AS object_key,
+  'from_to_not_equal' AS check_field,
+  COALESCE(t.from_tag_raw,'') || '->' || COALESCE(t.to_tag_raw,'') AS actual_value,
+  (t.from_tag_raw IS NULL
+   OR t.to_tag_raw IS NULL
+   OR t.from_tag_raw != t.to_tag_raw) AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c207$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 006. A connection must not have FROM_TAG = TO_TAG.',
+    true, 'VALUE_MATCH'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C213: TO_TAG not in MTR
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C213',
+    'TO_TAG not in MTR',
+    'Tags with to_tag_raw that could not be resolved to a tag FK',
+    'TOPOLOGY', 'Topology and physical connection checks',
+    $sql_c213$
+SELECT
+  t.tag_name AS object_key,
+  'to_tag_in_mtr' AS check_field,
+  COALESCE(t.to_tag_raw, 'NULL') AS actual_value,
+  (t.to_tag_raw IS NULL
+   OR t.to_tag_raw = ''
+   OR t.to_tag_id IS NOT NULL) AS is_resolved
+FROM project_core.tag t
+WHERE t.object_status = 'Active'
+  AND t.to_tag_raw IS NOT NULL
+  AND t.tag_name = ANY(:tag_names);
+    $sql_c213$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 006. to_tag_raw must resolve to a tag in project_core.tag.',
+    true, 'FK_RESOLVED'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- ── TAG_CLASS_PROPERTY DOMAIN ────────────────────────────────────────────────
+
+-- CRS-C203: tag class properties ISM coverage check
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C203',
+    'Tag class has no ISM properties',
+    'Classes in ontology_core.class with no active class_property mappings',
+    'REFERENCE', 'Reference data integrity checks',
+    $sql_c203$
+SELECT
+  c.name AS object_key,
+  'class_property_coverage' AS check_field,
+  COUNT(cp.id)::TEXT AS actual_value,
+  (COUNT(cp.id) > 0) AS is_resolved
+FROM ontology_core.class c
+LEFT JOIN ontology_core.class_property cp
+  ON cp.class_id = c.id AND cp.mapping_status = 'Active'
+WHERE c.object_status = 'Active'
+  AND c.name = ANY(:tag_names)
+GROUP BY c.id, c.name;
+    $sql_c203$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'EIS-file: 009. Every active class must have at least one property mapping.',
+    true, 'NOT_NULL'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C204: same class property coverage check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C204',
+    'Tag class has no ISM properties (C204)',
+    'Classes in ontology_core.class with no active class_property mappings',
+    'REFERENCE', 'Reference data integrity checks',
+    $sql_c204$
+SELECT
+  c.name AS object_key,
+  'class_property_coverage' AS check_field,
+  COUNT(cp.id)::TEXT AS actual_value,
+  (COUNT(cp.id) > 0) AS is_resolved
+FROM ontology_core.class c
+LEFT JOIN ontology_core.class_property cp
+  ON cp.class_id = c.id AND cp.mapping_status = 'Active'
+WHERE c.object_status = 'Active'
+  AND c.name = ANY(:tag_names)
+GROUP BY c.id, c.name;
+    $sql_c204$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C203. EIS-file: 009.',
+    true, 'NOT_NULL'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
+
+-- CRS-C205: same class property coverage check (broader scope)
+INSERT INTO audit_core.crs_validation_query (
+    query_code, query_name, description, category, category_description,
+    sql_query, expected_result, has_parameters, parameter_names,
+    notes, is_active, evaluation_strategy
+) VALUES (
+    'CRS-C205',
+    'Tag class has no ISM properties (C205)',
+    'Classes in ontology_core.class with no active class_property mappings',
+    'REFERENCE', 'Reference data integrity checks',
+    $sql_c205$
+SELECT
+  c.name AS object_key,
+  'class_property_coverage' AS check_field,
+  COUNT(cp.id)::TEXT AS actual_value,
+  (COUNT(cp.id) > 0) AS is_resolved
+FROM ontology_core.class c
+LEFT JOIN ontology_core.class_property cp
+  ON cp.class_id = c.id AND cp.mapping_status = 'Active'
+WHERE c.object_status = 'Active'
+  AND c.name = ANY(:tag_names)
+GROUP BY c.id, c.name;
+    $sql_c205$,
+    'is_resolved = true for all rows', true, ARRAY['tag_names'],
+    'Alias scope of CRS-C203. EIS-file: 009.',
+    true, 'NOT_NULL'
+) ON CONFLICT (query_code) DO UPDATE SET
+    sql_query = EXCLUDED.sql_query, is_active = EXCLUDED.is_active,
+    evaluation_strategy = EXCLUDED.evaluation_strategy,
+    has_parameters = EXCLUDED.has_parameters, parameter_names = EXCLUDED.parameter_names,
+    notes = EXCLUDED.notes, updated_at = now();
 
 -- ---------------------------------------------------------------------------
 -- Verification summary
