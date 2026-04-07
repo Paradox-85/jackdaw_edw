@@ -123,7 +123,7 @@ FROM project_core.tag t
 WHERE t.object_status = 'Active'
   AND t.description IS NOT NULL
   AND LENGTH(t.description) > 255
-ORDER BY desc_length DESC;
+ORDER BY LENGTH(t.description) DESC;
     $sql_c003$,
     'No violating rows (empty result = pass)', false,
     'EIS-file: 003. mapping_presence: Mandatory', true, 'COUNT_ZERO'
@@ -458,7 +458,7 @@ FROM project_core.tag
 WHERE object_status = 'Active'
 GROUP BY tag_name
 HAVING COUNT(*) > 1
-ORDER BY COUNT(*) DESC;
+ORDER BY COUNT(*) DESC, object_key;
     $sql_c016$,
     'No violating rows (empty result = pass)', false,
     'EIS-file: 003. mapping_presence: Mandatory', true, 'COUNT_ZERO'
@@ -475,9 +475,9 @@ INSERT INTO audit_core.crs_validation_query (
     'PROPERTY', 'Property value integrity checks in project_core.property_value',
     $sql_c017$
 SELECT
-    pv.tag_name_raw,
-    t.object_status,
-    COUNT(pv.id) AS property_rows
+    pv.tag_name_raw                           AS object_key,
+    COALESCE(t.object_status, 'NOT_IN_MTR')   AS actual_value,
+    COUNT(pv.id)::TEXT                        AS property_rows
 FROM project_core.property_value pv
 LEFT JOIN project_core.tag t ON t.id = pv.tag_id
 WHERE pv.object_status = 'Active'
@@ -503,10 +503,10 @@ INSERT INTO audit_core.crs_validation_query (
     'PROPERTY', 'Property value integrity checks in project_core.property_value',
     $sql_c018$
 SELECT
-    t.tag_name,
-    pv.property_code_raw   AS property_code,
-    pv.property_value,
-    pv.property_uom_raw    AS uom
+    pv.tag_name_raw || '.' || pv.property_code_raw AS object_key,
+    'uom_when_na'                                   AS check_field,
+    pv.property_value || ' | ' || pv.property_uom_raw AS actual_value,
+    FALSE                                           AS is_resolved
 FROM project_core.property_value pv
 JOIN project_core.tag t ON t.id = pv.tag_id
 WHERE t.object_status  = 'Active'
@@ -531,10 +531,10 @@ INSERT INTO audit_core.crs_validation_query (
     'PROPERTY', 'Property value integrity checks in project_core.property_value',
     $sql_c019$
 SELECT
-    t.tag_name,
-    pv.property_code_raw AS property_code,
-    pv.property_value,
-    pv.property_uom_raw  AS uom
+    pv.tag_name_raw || '.' || pv.property_code_raw AS object_key,
+    'property_value_zero'                           AS check_field,
+    COALESCE(pv.property_value, 'NULL')             AS actual_value,
+    FALSE                                           AS is_resolved
 FROM project_core.property_value pv
 JOIN project_core.tag t ON t.id = pv.tag_id
 WHERE t.object_status  = 'Active'
@@ -1058,7 +1058,7 @@ INSERT INTO audit_core.crs_validation_query (
     'POs without issuer company, or equipment without manufacturer',
     'REFERENCE', 'Reference data integrity checks',
     $sql_c038$
-SELECT po.code, NULL::TEXT AS tag_name, 'ISSUER COMPANY MISSING' AS issue
+SELECT po.code AS po_code, NULL::TEXT AS tag_name, 'ISSUER COMPANY MISSING' AS issue
 FROM reference_core.purchase_order po
 WHERE po.object_status = 'Active' AND po.issuer_id IS NULL
 
@@ -1098,7 +1098,7 @@ WHERE object_status = 'Active'
   AND to_tag_raw IS NOT NULL
 GROUP BY from_tag_raw, to_tag_raw
 HAVING COUNT(*) > 1
-ORDER BY COUNT(*) DESC;
+ORDER BY COUNT(*) DESC, object_key;
     $sql_c039$,
     'No violating rows (empty result = pass)', false,
     'EIS-file: 006', true, 'COUNT_ZERO'
@@ -1388,9 +1388,10 @@ INSERT INTO audit_core.crs_validation_query (
     'DOCUMENT', 'Document master and cross-reference checks',
     $sql_c049$
 SELECT
-    doc_number,
-    ARRAY_AGG(rev ORDER BY rev) AS revisions,
-    COUNT(*)                    AS cnt
+    doc_number                  AS object_key,
+    'doc_number_unique'         AS check_field,
+    COUNT(*)::TEXT              AS actual_value,
+    (COUNT(*) = 1)              AS is_resolved
 FROM project_core.document
 WHERE object_status = 'Active'
 GROUP BY doc_number
@@ -1446,7 +1447,7 @@ SELECT DISTINCT
     FALSE                  AS is_resolved
 FROM tag_hierarchy
 WHERE is_cycle = TRUE
-ORDER BY depth DESC, object_key;
+ORDER BY actual_value DESC, object_key;
     $sql_c050$,
     'No violating rows (empty result = pass)', false,
     'EIS-file: 003. WARNING: real cycles found (JDA-P-46001A/B)', true, 'COUNT_ZERO'
