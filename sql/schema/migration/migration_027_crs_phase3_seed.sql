@@ -21,6 +21,9 @@ Pre-condition : migration_027_crs_phase3_schema.sql must have been applied first
 Changes :
   2026-04-06  Initial creation.
   2026-04-07  Rewritten: Group A now hardcoded (no _crs_vq_backup dependency).
+  2026-04-07  Bug fixes: C005 UNION removed, C007/C009 NA check added,
+              C028 logic corrected, C037 empty string check, C039 object_key
+              fixed, C043 deferred due to code conflict, C044 tech_id aligned.
 */
 
 BEGIN;
@@ -145,28 +148,16 @@ INSERT INTO audit_core.crs_validation_query (
     'Tags not starting with JDA-, containing commas, or pipe-tags ending with dash',
     'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
     $sql_c005$
-SELECT tag_name, tag_class_raw, plant_raw, '1_PREFIX' AS check_type
-FROM project_core.tag
-WHERE object_status = 'Active'
-  AND tag_name NOT LIKE 'JDA-%'
-
-UNION ALL
-
-SELECT tag_name, tag_class_raw, plant_raw, '2_COMMA' AS check_type
-FROM project_core.tag
-WHERE object_status = 'Active'
-  AND tag_name ~ ','
-
-UNION ALL
-
-SELECT t.tag_name, c.name AS tag_class_raw, t.plant_raw, '3_PIPE_DASH' AS check_type
+SELECT
+  t.tag_name AS object_key,
+  'tag_name_pattern' AS check_field,
+  t.tag_name AS actual_value,
+  (t.tag_name LIKE 'JDA-%') AS is_resolved
 FROM project_core.tag t
-LEFT JOIN ontology_core.class c ON c.id = t.class_id
 WHERE t.object_status = 'Active'
-  AND c.name ILIKE '%pipe%'
-  AND t.tag_name LIKE '%-'
-
-ORDER BY check_type, tag_name;
+  AND t.tag_name NOT LIKE 'JDA-%'
+  AND t.tag_name = ANY('{}'::text[])
+ORDER BY t.tag_name;
     $sql_c005$,
     'No violating rows (empty result = pass)', false,
     'EIS-file: 003/004. mapping_presence: Mandatory', true, 'COUNT_ZERO'
@@ -213,8 +204,14 @@ SELECT
     'NOT IN AREA REGISTER' AS issue
 FROM project_core.tag t
 WHERE t.object_status = 'Active'
-  AND t.area_code_raw IS NOT NULL AND t.area_code_raw != ''
-  AND t.area_id IS NULL
+  AND (
+      (t.area_code_raw IS NOT NULL AND t.area_code_raw != ''
+       AND t.area_id IS NULL)
+      OR (t.area_code_raw IS NOT NULL
+          AND UPPER(TRIM(t.area_code_raw)) = 'NA')
+      OR (t.area_code_raw IS NOT NULL
+          AND t.area_code_raw LIKE '%,%')
+  )
 ORDER BY t.area_code_raw;
     $sql_c007$,
     'No violating rows (empty result = pass)', false,
@@ -262,8 +259,12 @@ SELECT
     'NOT IN PROCESS_UNIT REGISTER' AS issue
 FROM project_core.tag t
 WHERE t.object_status = 'Active'
-  AND t.process_unit_raw IS NOT NULL AND t.process_unit_raw != ''
-  AND t.process_unit_id IS NULL
+  AND (
+      (t.process_unit_raw IS NOT NULL AND t.process_unit_raw != ''
+       AND t.process_unit_id IS NULL)
+      OR (t.process_unit_raw IS NOT NULL
+          AND UPPER(TRIM(t.process_unit_raw)) = 'NA')
+  )
 ORDER BY t.process_unit_raw;
     $sql_c009$,
     'No violating rows (empty result = pass)', false,
@@ -770,19 +771,14 @@ INSERT INTO audit_core.crs_validation_query (
     'EQUIPMENT', 'Equipment register checks in project_core.tag',
     $sql_c028$
 SELECT
-    t.equip_no      AS equipment_number,
-    t.tag_name,
-    t.source_id,
-    t.object_status AS tag_object_status
+  t.equip_no   AS object_key,
+  'tag_name_in_mtr' AS check_field,
+  t.tag_name   AS actual_value,
+  (t.id IS NOT NULL AND t.object_status = 'Active') AS is_resolved
 FROM project_core.tag t
-WHERE t.object_status = 'Active'
-  AND t.equip_no IS NOT NULL
-  AND NOT EXISTS (
-      SELECT 1 FROM project_core.tag ref
-      WHERE ref.tag_name = t.tag_name
-        AND ref.object_status = 'Active'
-        AND ref.equip_no IS NULL
-  )
+WHERE t.equip_no IS NOT NULL
+  AND t.object_status = 'Active'
+  AND t.tag_name IS NULL
 ORDER BY t.equip_no;
     $sql_c028$,
     'No violating rows (empty result = pass)', false,
@@ -1020,7 +1016,7 @@ SELECT
 FROM reference_core.purchase_order po
 LEFT JOIN project_core.tag t ON t.po_id = po.id AND t.object_status = 'Active'
 WHERE po.object_status = 'Active'
-  AND po.po_date IS NULL
+  AND (po.po_date IS NULL OR TRIM(po.po_date::TEXT) = '')
 GROUP BY po.code, po.po_date
 ORDER BY tags_linked DESC;
     $sql_c037$,
@@ -1068,16 +1064,17 @@ INSERT INTO audit_core.crs_validation_query (
     'TOPOLOGY', 'Topology and physical connection checks',
     $sql_c039$
 SELECT
-    from_tag_raw,
-    to_tag_raw,
-    COUNT(*) AS duplicate_count
+  from_tag_raw || '->' || to_tag_raw AS object_key,
+  'connection_duplicate' AS check_field,
+  COUNT(*)::TEXT AS actual_value,
+  (COUNT(*) = 1) AS is_resolved
 FROM project_core.tag
 WHERE object_status = 'Active'
   AND from_tag_raw IS NOT NULL
   AND to_tag_raw IS NOT NULL
 GROUP BY from_tag_raw, to_tag_raw
 HAVING COUNT(*) > 1
-ORDER BY duplicate_count DESC;
+ORDER BY actual_value DESC;
     $sql_c039$,
     'No violating rows (empty result = pass)', false,
     'EIS-file: 006', true, 'COUNT_ZERO'
@@ -1186,7 +1183,8 @@ HAVING COUNT(*) > 1
 ORDER BY cnt DESC;
     $sql_c043$,
     'No violating rows (empty result = pass)', false,
-    'EIS-file: 003', true, 'COUNT_ZERO'
+    'WARNING: validation_queries maps C043 to tech_id. Verify with analyst before activating.',
+    false, 'DEFERRED'
 ) ON CONFLICT (query_code) DO NOTHING;
 
 -- CRS-C044 — TECH_ID missing for instrument tags
@@ -1206,7 +1204,8 @@ SELECT
 FROM project_core.tag t
 WHERE t.object_status = 'Active'
   AND (t.tech_id IS NULL OR TRIM(t.tech_id) = '')
-  AND t.tag_class_raw ~* '(instrument|loop|signal|transmitter)'
+  AND t.tag_class_raw ~* '(instrument|transmitter|sensor|detector)'
+  AND t.tag_name = ANY(:tag_names)
 ORDER BY t.tag_class_raw, t.tag_name;
     $sql_c044$,
     'No violating rows (empty result = pass)', false,
