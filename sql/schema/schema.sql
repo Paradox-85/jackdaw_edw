@@ -159,8 +159,10 @@ CREATE TABLE "audit_core"."crs_validation_query" (
   "evaluation_strategy" TEXT NULL,
   "group_by_field" TEXT NULL,
   "response_template" TEXT NULL,
+  "query_type" TEXT NOT NULL DEFAULT 'GROUP',
   CONSTRAINT "crs_validation_query_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "crs_validation_query_code_key" UNIQUE ("query_code")
+  CONSTRAINT "crs_validation_query_code_key" UNIQUE ("query_code"),
+  CONSTRAINT "chk_crs_vq_query_type" CHECK (query_type IN ('GROUP', 'INDIVIDUAL'))
 );
 CREATE TABLE "reference_core"."project" ( 
   "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
@@ -498,6 +500,20 @@ CREATE TABLE "audit_core"."crs_comment_validation" (
   CONSTRAINT "crs_comment_validation_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "crs_comment_validation_unique" UNIQUE ("comment_id", "validation_query_id")
 );
+CREATE TABLE IF NOT EXISTS "audit_core"."crs_template_query_map" (
+  "id"            UUID      NOT NULL DEFAULT gen_random_uuid(),
+  "template_id"   UUID      NOT NULL,
+  "query_id"      UUID      NOT NULL,
+  "priority"      SMALLINT  NOT NULL DEFAULT 1,
+  "object_status" TEXT      NOT NULL DEFAULT 'Active',
+  "created_at"    TIMESTAMP NOT NULL DEFAULT now(),
+  CONSTRAINT "crs_template_query_map_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "crs_template_query_map_uq"   UNIQUE ("template_id", "query_id"),
+  CONSTRAINT "crs_tqmap_template_fkey" FOREIGN KEY ("template_id")
+      REFERENCES "audit_core"."crs_comment_template" ("id") ON DELETE CASCADE,
+  CONSTRAINT "crs_tqmap_query_fkey" FOREIGN KEY ("query_id")
+      REFERENCES "audit_core"."crs_validation_query" ("id") ON DELETE CASCADE
+);
 CREATE TABLE "mapping"."tag_sece" ( 
   "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
   "tag_id" UUID NULL,
@@ -590,6 +606,18 @@ ON "audit_core"."crs_validation_query" (
   "evaluation_strategy" ASC
 )
 WHERE "evaluation_strategy" IS NOT NULL;
+CREATE INDEX IF NOT EXISTS "idx_crs_vq_query_type"
+ON "audit_core"."crs_validation_query" (
+  "query_type" ASC
+);
+CREATE INDEX IF NOT EXISTS "idx_crs_tqmap_template"
+ON "audit_core"."crs_template_query_map" (
+  "template_id" ASC
+);
+CREATE INDEX IF NOT EXISTS "idx_crs_tqmap_query"
+ON "audit_core"."crs_template_query_map" (
+  "query_id" ASC
+);
 CREATE INDEX "idx_tag_plant_id" 
 ON "project_core"."tag" (
   "plant_id" ASC
@@ -704,7 +732,14 @@ COMMENT ON COLUMN "audit_core"."crs_comment"."deferred_reason" IS
 COMMENT ON TABLE "audit_core"."crs_validation_query" IS
     'Registry of SQL validation queries for CRS comment processing. '
     'query_code format: CRS-C001..CRS-C229 (matches crs_comment_template.category). '
-    'Phase 3: added evaluation_strategy, group_by_field, response_template columns.';
+    'Phase 3: added evaluation_strategy, group_by_field, response_template, query_type columns. '
+    'query_type=GROUP: batch via crs_template_query_map (ANY(:tag_names)). '
+    'query_type=INDIVIDUAL: ad-hoc per comment via crs_comment_validation.';
+
+COMMENT ON TABLE "audit_core"."crs_template_query_map" IS
+    'Maps comment templates to GROUP validation queries (one template → one or more queries). '
+    'Populated by category match: ct.category = vq.query_code (both in CRS-C### format). '
+    'INDIVIDUAL queries use crs_comment_validation directly — no row here.';
 
 COMMENT ON TABLE "audit_core"."crs_comment_validation" IS
     'M2M: one comment may have multiple validation queries. '
@@ -837,3 +872,33 @@ FROM project_core.tag t
 LEFT JOIN project_core.property_value pv ON pv.tag_id = t.id AND pv.object_status = 'Active'
 LEFT JOIN ontology_core.property p ON p.id = pv.property_id
 WHERE t.object_status = 'Active';
+
+-- Phase 3 CRS view (migration_028_crs_phase3_map.sql)
+CREATE OR REPLACE VIEW "audit_core"."v_template_queries" AS
+SELECT
+    ct.id                   AS template_id,
+    ct.category             AS template_category,
+    ct.check_type,
+    ct.template_text,
+    vq.id                   AS query_id,
+    vq.query_code,
+    vq.query_name,
+    vq.query_type,
+    vq.evaluation_strategy,
+    vq.has_parameters,
+    vq.parameter_names,
+    vq.sql_query,
+    vq.response_template,
+    tqm.priority
+FROM audit_core.crs_template_query_map tqm
+JOIN audit_core.crs_comment_template   ct ON ct.id = tqm.template_id
+JOIN audit_core.crs_validation_query   vq ON vq.id = tqm.query_id
+WHERE tqm.object_status = 'Active'
+  AND ct.object_status  = 'Active'
+  AND vq.is_active      = true
+  AND vq.query_type     = 'GROUP';
+
+COMMENT ON VIEW "audit_core"."v_template_queries" IS
+    'GROUP queries per template. Used by batch validation flow: '
+    'GROUP BY category → fetch all tag_names → ONE SQL call via ANY(:tag_names). '
+    'INDIVIDUAL queries are looked up directly from crs_comment_validation.';
