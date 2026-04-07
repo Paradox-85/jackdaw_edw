@@ -35,6 +35,10 @@ Changes :
               C016/C039 TEXT sort fixed (COUNT(*) DESC),
               C022 empty-value gap closed (property_value != ''),
               C046 is_resolved simplified to literal FALSE.
+  2026-04-07  Iteration 5: C028 logic rewritten (dead-code removed, equip inactive/null check),
+              C037 po_date::TEXT cast added, C038 NULL::TEXT explicit cast,
+              C045 UNION ALL column alias unified, C046 STRING_AGG NULL guard,
+              C043/C049 notes clarified per VQ coverage gaps.
 */
 
 BEGIN;
@@ -787,27 +791,22 @@ INSERT INTO audit_core.crs_validation_query (
     'EQUIPMENT', 'Equipment register checks in project_core.tag',
     $sql_c028$
 SELECT
-    e.equip_no              AS object_key,
-    'tag_name_in_mtr'       AS check_field,
-    e.tag_name              AS actual_value,
-    FALSE                   AS is_resolved
-FROM project_core.tag e
-WHERE e.equip_no IS NOT NULL
-  AND e.object_status = 'Active'
-  AND NOT EXISTS (
-      SELECT 1
-      FROM project_core.tag mtr
-      WHERE mtr.tag_name     = e.tag_name
-        AND mtr.object_status = 'Active'
-        AND mtr.id            != e.id
+    t.equip_no          AS object_key,
+    'tag_name_in_mtr'   AS check_field,
+    COALESCE(t.tag_name, 'NULL') AS actual_value,
+    FALSE               AS is_resolved
+FROM project_core.tag t
+WHERE t.equip_no IS NOT NULL
+  AND (
+      t.object_status != 'Active'
+      OR t.tag_name IS NULL
+      OR TRIM(t.tag_name) = ''
   )
-  AND (e.tag_name IS NULL OR TRIM(e.tag_name) = '')
-ORDER BY e.equip_no;
+ORDER BY t.equip_no;
     $sql_c028$,
     'No violating rows (empty result = pass)', false,
-    'EIS-file: 004. NOTE: CRS-C028 checks equipment rows with equip_no but
-missing/blank tag_name. Logically this should be 0 rows in a clean dataset.
-Cross-reference: validation_queries CRS-C028 / CRS-C106.', true, 'COUNT_ZERO'
+    'EIS-file: 004. CRS-C028/CRS-C106: equipment rows with equip_no that are
+inactive or have no tag_name. Count_zero = clean dataset.', true, 'COUNT_ZERO'
 ) ON CONFLICT (query_code) DO NOTHING;
 
 -- CRS-C029 — PLANT_CODE invalid or missing
@@ -1035,9 +1034,9 @@ INSERT INTO audit_core.crs_validation_query (
     'REFERENCE', 'Reference data integrity checks',
     $sql_c037$
 SELECT
-    po.code     AS po_code,
-    po.po_date,
-    COUNT(t.id) AS tags_linked
+    po.code       AS po_code,
+    po.po_date::TEXT AS po_date,
+    COUNT(t.id)   AS tags_linked
 FROM reference_core.purchase_order po
 LEFT JOIN project_core.tag t ON t.po_id = po.id AND t.object_status = 'Active'
 WHERE po.object_status = 'Active'
@@ -1059,13 +1058,13 @@ INSERT INTO audit_core.crs_validation_query (
     'POs without issuer company, or equipment without manufacturer',
     'REFERENCE', 'Reference data integrity checks',
     $sql_c038$
-SELECT po.code AS po_code, NULL AS tag_name, 'ISSUER COMPANY MISSING' AS issue
+SELECT po.code, NULL::TEXT AS tag_name, 'ISSUER COMPANY MISSING' AS issue
 FROM reference_core.purchase_order po
 WHERE po.object_status = 'Active' AND po.issuer_id IS NULL
 
 UNION ALL
 
-SELECT NULL AS po_code, t.tag_name, 'NO MANUFACTURER COMPANY' AS issue
+SELECT NULL::TEXT AS po_code, t.tag_name, 'NO MANUFACTURER COMPANY' AS issue
 FROM project_core.tag t
 WHERE t.object_status = 'Active'
   AND t.equip_no IS NOT NULL
@@ -1208,7 +1207,10 @@ HAVING COUNT(*) > 1
 ORDER BY cnt DESC;
     $sql_c043$,
     'No violating rows (empty result = pass)', false,
-    'WARNING: validation_queries maps C043 to tech_id. Verify with analyst before activating.',
+    'DEFERRED: validation_queries maps CRS-C043 AND CRS-C044 to tech_id field check.
+Current seed stores alias-conflict logic which is different semantics.
+Do NOT activate until analyst confirms correct mapping.
+Ref: crs_phase3_validation_queries.sql CRS-C043/CRS-C044 block.',
     false, 'DEFERRED'
 ) ON CONFLICT (query_code) DO NOTHING;
 
@@ -1248,7 +1250,7 @@ INSERT INTO audit_core.crs_validation_query (
     $sql_c045$
 SELECT
     t.tag_name,
-    t.from_tag_raw    AS declared_from,
+    t.from_tag_raw    AS unresolved_raw_ref,
     'FROM_TAG NOT IN MTR' AS issue
 FROM project_core.tag t
 WHERE t.object_status = 'Active'
@@ -1259,7 +1261,7 @@ UNION ALL
 
 SELECT
     t.tag_name,
-    t.to_tag_raw      AS declared_to,
+    t.to_tag_raw      AS unresolved_raw_ref,
     'TO_TAG NOT IN MTR' AS issue
 FROM project_core.tag t
 WHERE t.object_status = 'Active'
@@ -1285,9 +1287,12 @@ INSERT INTO audit_core.crs_validation_query (
 SELECT
   t.tag_name               AS object_key,
   'doc_is_active'          AS check_field,
-  STRING_AGG(
-    d.doc_number || '(' || COALESCE(d.object_status,'NULL') || ')',
-    '; ' ORDER BY d.doc_number
+  COALESCE(
+    STRING_AGG(
+      COALESCE(d.doc_number,'?') || '(' || COALESCE(d.object_status,'NULL') || ')',
+      '; ' ORDER BY d.doc_number
+    ),
+    'NULL'
   )                        AS actual_value,
   FALSE                    AS is_resolved
 FROM project_core.tag t
@@ -1393,7 +1398,9 @@ HAVING COUNT(*) > 1
 ORDER BY cnt DESC;
     $sql_c049$,
     'No violating rows (empty result = pass)', false,
-    'EIS-file: 014. NOTE: not covered in crs_phase3_validation_queries.sql — verify with analyst if CRS-C049 maps to CRS-C079 (doc duplicate) per validation_queries.', true, 'COUNT_ZERO'
+    'EIS-file: 014. NOT COVERED in crs_phase3_validation_queries.sql.
+Closest VQ equivalent: CRS-C079 (doc_number_unique, COUNT_ZERO, document domain).
+Analyst confirmation required before this check can be considered canonical.', true, 'COUNT_ZERO'
 ) ON CONFLICT (query_code) DO NOTHING;
 
 -- CRS-C050 — Circular parent tag hierarchy
