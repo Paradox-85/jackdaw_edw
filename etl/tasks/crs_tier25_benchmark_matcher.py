@@ -59,7 +59,7 @@ def run_tier25_benchmark(
         engine: SQLAlchemy engine for benchmark lookup.
 
     Returns:
-        (classified, unmatched) — classified have benchmark-matched results,
+        (unmatched, classified) — classified have benchmark-matched results,
         unmatched go to Tier 3 LLM.
     """
     logger = get_run_logger()
@@ -150,4 +150,4 @@ def run_tier25_benchmark(
         "Tier 2.5: %d classified, %d unmatched (benchmark table has %d active rows).",
         len(classified), len(unmatched), len(benchmarks),
     )
-    return classified, unmatched
+    return unmatched, classified

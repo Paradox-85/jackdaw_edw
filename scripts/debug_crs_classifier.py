@@ -515,7 +515,7 @@ def main() -> None:
 
     if run_tier in ("2", "all"):
         log.info("\u2500\u2500 Tier 2.5: benchmark matcher \u2500\u2500  (%d comments)", len(remaining))
-        t25_classified, remaining = run_tier25_benchmark(remaining, engine)
+        remaining, t25_classified = run_tier25_benchmark(remaining, engine)
         classified.extend(t25_classified)
         _log_tier_results(log, 2, t25_classified)  # reuse existing helper, tier label shown as 2
         log.info("Tier 2.5: %d classified, %d remaining.", len(t25_classified), len(remaining))
