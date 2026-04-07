@@ -24,6 +24,9 @@ Changes :
   2026-04-07  Bug fixes: C005 UNION removed, C007/C009 NA check added,
               C028 logic corrected, C037 empty string check, C039 object_key
               fixed, C043 deferred due to code conflict, C044 tech_id aligned.
+  2026-04-07  Iteration 2: C005 empty array removed, C016/C050 contract
+              columns added, C028 impossible NULL fixed, C044 param
+              removed, C046 filter added, C048 rewritten to UOM-RDL check.
 */
 
 BEGIN;
@@ -156,7 +159,6 @@ SELECT
 FROM project_core.tag t
 WHERE t.object_status = 'Active'
   AND t.tag_name NOT LIKE 'JDA-%'
-  AND t.tag_name = ANY('{}'::text[])
 ORDER BY t.tag_name;
     $sql_c005$,
     'No violating rows (empty result = pass)', false,
@@ -435,12 +437,16 @@ INSERT INTO audit_core.crs_validation_query (
     'Active tags with duplicate tag_name values',
     'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
     $sql_c016$
-SELECT tag_name, COUNT(*) AS cnt
+SELECT
+  tag_name         AS object_key,
+  'tag_name_uniqueness' AS check_field,
+  COUNT(*)::TEXT   AS actual_value,
+  (COUNT(*) = 1)   AS is_resolved
 FROM project_core.tag
 WHERE object_status = 'Active'
 GROUP BY tag_name
 HAVING COUNT(*) > 1
-ORDER BY cnt DESC;
+ORDER BY actual_value DESC;
     $sql_c016$,
     'No violating rows (empty result = pass)', false,
     'EIS-file: 003. mapping_presence: Mandatory', true, 'COUNT_ZERO'
@@ -771,14 +777,17 @@ INSERT INTO audit_core.crs_validation_query (
     'EQUIPMENT', 'Equipment register checks in project_core.tag',
     $sql_c028$
 SELECT
-  t.equip_no   AS object_key,
-  'tag_name_in_mtr' AS check_field,
-  t.tag_name   AS actual_value,
-  (t.id IS NOT NULL AND t.object_status = 'Active') AS is_resolved
+  t.equip_no       AS object_key,
+  'tag_in_mtr'     AS check_field,
+  t.tag_name       AS actual_value,
+  (EXISTS (
+    SELECT 1 FROM project_core.tag ref
+    WHERE ref.tag_name = t.tag_name
+      AND ref.object_status = 'Active'
+  )) AS is_resolved
 FROM project_core.tag t
 WHERE t.equip_no IS NOT NULL
-  AND t.object_status = 'Active'
-  AND t.tag_name IS NULL
+  AND t.object_status != 'Active'
 ORDER BY t.equip_no;
     $sql_c028$,
     'No violating rows (empty result = pass)', false,
@@ -1205,7 +1214,6 @@ FROM project_core.tag t
 WHERE t.object_status = 'Active'
   AND (t.tech_id IS NULL OR TRIM(t.tech_id) = '')
   AND t.tag_class_raw ~* '(instrument|transmitter|sensor|detector)'
-  AND t.tag_name = ANY(:tag_names)
 ORDER BY t.tag_class_raw, t.tag_name;
     $sql_c044$,
     'No violating rows (empty result = pass)', false,
@@ -1259,12 +1267,14 @@ INSERT INTO audit_core.crs_validation_query (
     'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
     $sql_c046$
 SELECT
-    COALESCE(tag_status, '(NULL)') AS tag_status,
-    COUNT(*) AS cnt
+  tag_name                           AS object_key,
+  'tag_status'                       AS check_field,
+  COALESCE(tag_status, 'NULL')       AS actual_value,
+  (COALESCE(tag_status,'') IN ('ACTIVE','VOID','ASB','AFC','Future')) AS is_resolved
 FROM project_core.tag
 WHERE object_status = 'Active'
-GROUP BY tag_status
-ORDER BY cnt DESC;
+  AND COALESCE(tag_status, '') NOT IN ('ACTIVE','VOID','ASB','AFC','Future')
+ORDER BY tag_status, tag_name;
     $sql_c046$,
     'No violating rows (empty result = pass)', false,
     'EIS-file: 003. ADR-011: actual values ACTIVE/VOID/ASB/AFC/Future', true, 'COUNT_ZERO'
@@ -1297,26 +1307,37 @@ ORDER BY t.tag_name;
     'EIS-file: 003', true, 'COUNT_ZERO'
 ) ON CONFLICT (query_code) DO NOTHING;
 
--- CRS-C048 — property_code_raw not in ontology
+-- CRS-C048 — Property UOM not in RDL
 INSERT INTO audit_core.crs_validation_query (
     query_code, query_name, description, category, category_description,
     sql_query, expected_result, has_parameters, notes, is_active, evaluation_strategy
 ) VALUES (
     'CRS-C048',
-    'property_code_raw not in ontology',
-    'Property values where property_id is NULL (code not found in ontology_core.property)',
+    'Property UOM not in RDL (ontology_core.uom)',
+    'Property values where property_uom_raw is not found
+  in ontology_core.uom by code or symbol',
     'PROPERTY', 'Property value integrity checks in project_core.property_value',
     $sql_c048$
 SELECT
-    pv.property_code_raw,
-    COUNT(DISTINCT pv.tag_id) AS affected_tags,
-    'UNKNOWN PROPERTY CODE'   AS issue
+  pv.tag_name_raw || '.' || pv.property_code_raw AS object_key,
+  'uom_in_rdl'                                    AS check_field,
+  COALESCE(pv.property_uom_raw, 'NULL')           AS actual_value,
+  (pv.property_uom_raw IS NULL
+   OR EXISTS (
+     SELECT 1 FROM ontology_core.uom u
+     WHERE UPPER(u.code)   = UPPER(pv.property_uom_raw)
+        OR UPPER(u.symbol) = UPPER(pv.property_uom_raw)
+   )) AS is_resolved
 FROM project_core.property_value pv
 WHERE pv.object_status = 'Active'
-  AND pv.property_id IS NULL
-  AND pv.property_code_raw IS NOT NULL AND pv.property_code_raw != ''
-GROUP BY pv.property_code_raw
-ORDER BY affected_tags DESC;
+  AND pv.property_uom_raw IS NOT NULL
+  AND TRIM(pv.property_uom_raw) != ''
+  AND NOT EXISTS (
+    SELECT 1 FROM ontology_core.uom u
+    WHERE UPPER(u.code)   = UPPER(pv.property_uom_raw)
+       OR UPPER(u.symbol) = UPPER(pv.property_uom_raw)
+  )
+ORDER BY pv.tag_name_raw, pv.property_code_raw;
     $sql_c048$,
     'No violating rows (empty result = pass)', false,
     'EIS-file: 010/011', true, 'COUNT_ZERO'
@@ -1383,11 +1404,13 @@ WITH RECURSIVE tag_hierarchy AS (
       AND th.depth < 10
 )
 SELECT DISTINCT
-    tag_name,
-    depth AS cycle_detected_at_depth
+    tag_name               AS object_key,
+    'parent_tag_cycle'     AS check_field,
+    depth::TEXT            AS actual_value,
+    FALSE                  AS is_resolved
 FROM tag_hierarchy
 WHERE is_cycle = TRUE
-ORDER BY cycle_detected_at_depth DESC, tag_name;
+ORDER BY actual_value DESC, object_key;
     $sql_c050$,
     'No violating rows (empty result = pass)', false,
     'EIS-file: 003. WARNING: real cycles found (JDA-P-46001A/B)', true, 'COUNT_ZERO'
