@@ -27,6 +27,10 @@ Changes :
   2026-04-07  Iteration 2: C005 empty array removed, C016/C050 contract
               columns added, C028 impossible NULL fixed, C044 param
               removed, C046 filter added, C048 rewritten to UOM-RDL check.
+  2026-04-07  Iteration 3: C028 logic fixed (active tags with equip_no),
+              C046 rewritten to doc-inactive check per validation_queries,
+              C050 sort fixed (depth DESC not TEXT), C037 TRIM(date) removed,
+              C049 notes updated (not covered in vq reference).
 */
 
 BEGIN;
@@ -777,17 +781,23 @@ INSERT INTO audit_core.crs_validation_query (
     'EQUIPMENT', 'Equipment register checks in project_core.tag',
     $sql_c028$
 SELECT
-  t.equip_no       AS object_key,
-  'tag_in_mtr'     AS check_field,
-  t.tag_name       AS actual_value,
+  t.equip_no           AS object_key,
+  'tag_name_in_mtr'    AS check_field,
+  t.tag_name           AS actual_value,
   (EXISTS (
     SELECT 1 FROM project_core.tag ref
     WHERE ref.tag_name = t.tag_name
       AND ref.object_status = 'Active'
-  )) AS is_resolved
+  ))                   AS is_resolved
 FROM project_core.tag t
 WHERE t.equip_no IS NOT NULL
-  AND t.object_status != 'Active'
+  AND t.object_status = 'Active'
+  AND NOT EXISTS (
+    SELECT 1 FROM project_core.tag ref
+    WHERE ref.id = t.id
+      AND ref.object_status = 'Active'
+      AND ref.equip_no IS NOT NULL
+  )
 ORDER BY t.equip_no;
     $sql_c028$,
     'No violating rows (empty result = pass)', false,
@@ -1025,7 +1035,7 @@ SELECT
 FROM reference_core.purchase_order po
 LEFT JOIN project_core.tag t ON t.po_id = po.id AND t.object_status = 'Active'
 WHERE po.object_status = 'Active'
-  AND (po.po_date IS NULL OR TRIM(po.po_date::TEXT) = '')
+  AND po.po_date IS NULL
 GROUP BY po.code, po.po_date
 ORDER BY tags_linked DESC;
     $sql_c037$,
@@ -1256,28 +1266,47 @@ ORDER BY issue, tag_name;
     'EIS-file: 006', true, 'COUNT_ZERO'
 ) ON CONFLICT (query_code) DO NOTHING;
 
--- CRS-C046 — TAG_STATUS outside allowed vocabulary
+-- CRS-C046 — Tag linked to inactive document
 INSERT INTO audit_core.crs_validation_query (
     query_code, query_name, description, category, category_description,
     sql_query, expected_result, has_parameters, notes, is_active, evaluation_strategy
 ) VALUES (
     'CRS-C046',
-    'TAG_STATUS outside allowed vocabulary',
-    'Tags with tag_status values not in EIS-allowed set (ADR-011: actual values are ACTIVE/VOID/ASB/AFC/Future)',
-    'TAG_DATA', 'Tag attribute completeness checks in project_core.tag',
+    'Tag linked to inactive document',
+    'Active tags referencing documents where object_status != Active in mapping.tag_document',
+    'DOCUMENT', 'Document master and cross-reference checks',
     $sql_c046$
 SELECT
-  tag_name                           AS object_key,
-  'tag_status'                       AS check_field,
-  COALESCE(tag_status, 'NULL')       AS actual_value,
-  (COALESCE(tag_status,'') IN ('ACTIVE','VOID','ASB','AFC','Future')) AS is_resolved
-FROM project_core.tag
-WHERE object_status = 'Active'
-  AND COALESCE(tag_status, '') NOT IN ('ACTIVE','VOID','ASB','AFC','Future')
-ORDER BY tag_status, tag_name;
+  t.tag_name               AS object_key,
+  'doc_is_active'          AS check_field,
+  STRING_AGG(
+    d.doc_number || '(' || COALESCE(d.object_status,'NULL') || ')',
+    '; ' ORDER BY d.doc_number
+  )                        AS actual_value,
+  (NOT EXISTS (
+    SELECT 1 FROM mapping.tag_document td2
+    JOIN project_core.document d2 ON d2.id = td2.document_id
+    WHERE td2.tag_id = t.id
+      AND td2.mapping_status = 'Active'
+      AND d2.object_status != 'Active'
+  ))                       AS is_resolved
+FROM project_core.tag t
+LEFT JOIN mapping.tag_document td ON td.tag_id = t.id
+  AND td.mapping_status = 'Active'
+LEFT JOIN project_core.document d ON d.id = td.document_id
+WHERE t.object_status = 'Active'
+  AND EXISTS (
+    SELECT 1 FROM mapping.tag_document td3
+    JOIN project_core.document d3 ON d3.id = td3.document_id
+    WHERE td3.tag_id = t.id
+      AND td3.mapping_status = 'Active'
+      AND d3.object_status != 'Active'
+  )
+GROUP BY t.id, t.tag_name
+ORDER BY t.tag_name;
     $sql_c046$,
     'No violating rows (empty result = pass)', false,
-    'EIS-file: 003. ADR-011: actual values ACTIVE/VOID/ASB/AFC/Future', true, 'COUNT_ZERO'
+    'EIS-file: 016. Validation: tag linked to inactive document (object_status != Active).', true, 'COUNT_ZERO'
 ) ON CONFLICT (query_code) DO NOTHING;
 
 -- CRS-C047 — Safety critical tag without SECE mapping
@@ -1364,7 +1393,7 @@ HAVING COUNT(*) > 1
 ORDER BY cnt DESC;
     $sql_c049$,
     'No violating rows (empty result = pass)', false,
-    'EIS-file: 014', true, 'COUNT_ZERO'
+    'EIS-file: 014. NOTE: not covered in crs_phase3_validation_queries.sql — verify with analyst if CRS-C049 maps to CRS-C079 (doc duplicate) per validation_queries.', true, 'COUNT_ZERO'
 ) ON CONFLICT (query_code) DO NOTHING;
 
 -- CRS-C050 — Circular parent tag hierarchy
@@ -1410,7 +1439,7 @@ SELECT DISTINCT
     FALSE                  AS is_resolved
 FROM tag_hierarchy
 WHERE is_cycle = TRUE
-ORDER BY actual_value DESC, object_key;
+ORDER BY depth DESC, object_key;
     $sql_c050$,
     'No violating rows (empty result = pass)', false,
     'EIS-file: 003. WARNING: real cycles found (JDA-P-46001A/B)', true, 'COUNT_ZERO'
