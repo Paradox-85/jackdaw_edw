@@ -160,9 +160,11 @@ def _log_tier_results(
         cat = rep.get("category_code") or rep.get("llm_category") or "?"
         conf = rep.get("category_confidence") or rep.get("llm_category_confidence") or 0.0
         status = rep.get("status", "RECEIVED")
+        skip_reason = rep.get("skip_reason") or rep.get("deferred_reason") or ""
+        reason_part = f"  reason={skip_reason}" if skip_reason else ""
         log.info(
-            "[Tier %s] group_key=%-50r → category=%-8s  confidence=%.2f  status=%-10s  (%d row%s)",
-            tier_num, key[:50], cat, float(conf), status,
+            "[Tier %s] group_key=%-50r → category=%-8s  confidence=%.2f  status=%-10s%s  (%d row%s)",
+            tier_num, key[:50], cat, float(conf), status, reason_part,
             len(rows), "" if len(rows) == 1 else "s",
         )
     log.info("[Tier %s] total: %d classified across %d unique groups.", tier_num, len(classified), len(groups))
@@ -393,6 +395,16 @@ def _run_tier3_debug(
             assigned_status = "IN_REVIEW"
         else:
             assigned_status = "DEFERRED"
+
+        # CRS-C224: abstract class / no properties in ISM — promote 0.60+ to IN_REVIEW.
+        # 1235 rows were stuck in DEFERRED at conf=0.65; this override rescues them.
+        if _cat == "CRS-C224" and _conf >= 0.60:
+            assigned_status = "IN_REVIEW"
+            log.info(
+                "  Tier 3: CRS-C224 conf=%.2f >= 0.60 → overriding to IN_REVIEW "
+                "(abstract class / no properties in ISM pattern)",
+                _conf,
+            )
 
         matched_template = next(
             (t for t in templates if t.get("category") == _cat), None

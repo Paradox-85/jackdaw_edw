@@ -24,6 +24,10 @@ from prefect import task, get_run_logger
 from prefect.cache_policies import NO_CACHE
 from sqlalchemy import Engine, text
 
+# Advisory voting notation (1oo2, 1oo4, etc.) is never a classifiable CRS category.
+# Any benchmark match that contains this pattern must route to NEEDSNEWCATEGORY.
+_ONE_OO_N_PAT = re.compile(r"1[oO][oO]\d", re.IGNORECASE)
+
 
 def _normalize_comment(comment: str) -> str:
     """Normalize comment text for matching (lowercase, strip, collapse whitespace).
@@ -135,11 +139,26 @@ def run_tier25_benchmark(
 
         if matched_benchmark:
             # Benchmark row: (id, comment_pattern, category, assigned_status, confidence)
+            cat_code   = matched_benchmark[2]
+            cat_conf   = float(matched_benchmark[4])
+            cat_status = matched_benchmark[3]
+
+            # Post-match guard: 1ooN (e.g. 1oo2, 1oo4) is advisory voting logic —
+            # never a classifiable CRS category regardless of what the benchmark says.
+            if _ONE_OO_N_PAT.search(norm_comment):
+                cat_code   = "OTHER"
+                cat_conf   = 0.25
+                cat_status = "NEEDSNEWCATEGORY"
+                logger.warning(
+                    "Tier 2.5: 1ooN pattern detected — overriding benchmark match to "
+                    "NEEDSNEWCATEGORY. norm_comment=%.80s", norm_comment,
+                )
+
             classified.append({
                 **comment,
-                "category_code": matched_benchmark[2],
-                "category_confidence": float(matched_benchmark[4]),
-                "status": matched_benchmark[3],
+                "category_code": cat_code,
+                "category_confidence": cat_conf,
+                "status": cat_status,
                 "classification_tier": 2.5,
                 "benchmark_id": matched_benchmark[0],
             })
