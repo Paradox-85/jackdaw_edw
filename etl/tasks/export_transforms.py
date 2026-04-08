@@ -99,7 +99,8 @@ def sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     for col in df.columns:
         if pd.api.types.is_string_dtype(df[col]):
             df[col] = df[col].apply(
-                lambda x: clean_engineering_text(x) if isinstance(x, str) else x
+                lambda x: clean_engineering_text(x) if isinstance(x, str)
+                          else ("" if pd.isna(x) else x)
             )
     return df
 
@@ -166,6 +167,17 @@ def _apply_common_eis_transforms(df: pd.DataFrame) -> pd.DataFrame:
 
     # Second-level defence: only Active records exported
     df = df[df["OBJECT_STATUS"] == "Active"]
+
+    # Normalise pseudo-null values in FK code fields for correct FK validation
+    _CODE_FIELDS = [
+        "PROCESS_UNIT_CODE", "AREA_CODE", "PLANT_CODE",
+        "TAG_CLASS_NAME", "DESIGNED_BY_COMPANY_NAME",
+    ]
+    for col in _CODE_FIELDS:
+        if col in df.columns:
+            df[col] = df[col].apply(
+                lambda v: "" if isinstance(v, str) and v.strip().upper() in ("NA", "N/A", "N.A.") else v
+            )
 
     # ACTION_STATUS: Void tag_status always maps to Deleted regardless of sync_status
     # Case-insensitive check — DB may store 'Void', 'VOID', or 'void' depending on source
@@ -240,11 +252,14 @@ def transform_tag_register(df: pd.DataFrame) -> pd.DataFrame:
     # not sync_timestamp (which reflects last ETL run, not last status change).
     # Source column: action_date_raw (correlated subquery in _TAG_REGISTER_SQL).
     if "ACTION_DATE_RAW" in df.columns:
-        df["ACTION_DATE"] = (
+        derived = (
             pd.to_datetime(df["ACTION_DATE_RAW"], errors="coerce")
             .dt.strftime("%d.%m.%Y")
-            .fillna("")   # если ACTION_DATE_RAW пустой — оставить пустую строку
         )
+        # Preserve SYNC_TIMESTAMP-derived ACTION_DATE as fallback for rows
+        # where ACTION_DATE_RAW is null (tag has no status history entry).
+        df["ACTION_DATE"] = derived.where(derived.notna(), other=df["ACTION_DATE"])
+        df["ACTION_DATE"] = df["ACTION_DATE"].fillna("")
         df = df.drop(columns=["ACTION_DATE_RAW"], errors="ignore")
 
     # Normalise PARENT_TAG_NAME: literal 'unset' → empty string
@@ -301,6 +316,11 @@ def transform_tag_properties(df: pd.DataFrame) -> pd.DataFrame:
     if "OBJECT_STATUS" in df.columns:
         df = df[df["OBJECT_STATUS"] == "Active"]
 
+    # Auto-clear UNIT when PROPERTY_VALUE is NA or TBC
+    if "PROPERTY_VALUE" in df.columns and "UNIT" in df.columns:
+        mask = df["PROPERTY_VALUE"].fillna("").str.strip().str.upper().isin(["NA", "TBC"])
+        df.loc[mask, "UNIT"] = ""
+
     # Drop all internal/validation helper columns not part of EIS output schema
     internal_cols = [
         "OBJECT_STATUS", "SYNC_STATUS", "SYNC_TIMESTAMP",
@@ -356,6 +376,11 @@ def transform_equipment_properties(df: pd.DataFrame) -> pd.DataFrame:
     # Second-level defence: only Active records exported
     if "OBJECT_STATUS" in df.columns:
         df = df[df["OBJECT_STATUS"] == "Active"]
+
+    # Auto-clear UNIT when PROPERTY_VALUE is NA or TBC
+    if "PROPERTY_VALUE" in df.columns and "UNIT" in df.columns:
+        mask = df["PROPERTY_VALUE"].fillna("").str.strip().str.upper().isin(["NA", "TBC"])
+        df.loc[mask, "UNIT"] = ""
 
     # Drop all internal/validation helper columns not part of EIS output schema
     internal_cols = [
@@ -428,11 +453,14 @@ def transform_equipment_register(df: pd.DataFrame) -> pd.DataFrame:
     # not sync_timestamp (which reflects last ETL run, not last status change).
     # Source column: action_date_raw (correlated subquery in _EQUIPMENT_REGISTER_SQL).
     if "ACTION_DATE_RAW" in df.columns:
-        df["ACTION_DATE"] = (
+        derived = (
             pd.to_datetime(df["ACTION_DATE_RAW"], errors="coerce")
             .dt.strftime("%d.%m.%Y")
-            .fillna("")
         )
+        # Preserve SYNC_TIMESTAMP-derived ACTION_DATE as fallback for rows
+        # where ACTION_DATE_RAW is null (tag has no status history entry).
+        df["ACTION_DATE"] = derived.where(derived.notna(), other=df["ACTION_DATE"])
+        df["ACTION_DATE"] = df["ACTION_DATE"].fillna("")
         df = df.drop(columns=["ACTION_DATE_RAW"], errors="ignore")
 
     # Equipment-specific second-level defence: reject rows without equipment number
@@ -681,6 +709,10 @@ def transform_tag_connections(df: pd.DataFrame) -> pd.DataFrame:
     """
     df = df.copy()
     df.columns = df.columns.str.upper()
+
+    # Exclude self-loop connections (FROM_TAG = TO_TAG)
+    df = df[df["FROM_TAG_NAME"] != df["TO_TAG_NAME"]]
+
     available = [c for c in _TAG_CONNECTIONS_COLUMNS if c in df.columns]
     return df[available]
 

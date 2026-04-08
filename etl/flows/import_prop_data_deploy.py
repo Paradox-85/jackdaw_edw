@@ -33,7 +33,7 @@ def sync_properties_task(run_id):
         raise ValueError("Config key 'prop_value_dataset_file' is missing!")
 
     engine = create_engine(DB_URL)
-    start_time = datetime.now()
+    audit_start_time = datetime.now()
     
     # --- PHASE 1: PRE-LOAD LOOKUPS (Memory Cache) ---
     logger.info("Pre-loading lookups for property resolution...")
@@ -73,11 +73,12 @@ def sync_properties_task(run_id):
         conn.execute(text("""
             INSERT INTO audit_core.sync_run_stats (run_id, target_table, start_time, source_file)
             VALUES (:rid, 'project_core.property_value', :st, :src)
-        """), {"rid": run_id, "st": start_time, "src": filename})
+        """), {"rid": run_id, "st": audit_start_time, "src": filename})
         conn.commit()
 
     # --- PHASE 3: PROCESSING (Unified Transaction) ---
     logger.info(f"Synchronizing {len(df)} records...")
+    start_time = datetime.now()         # cleanup boundary начинается ЗДЕСЬ
     with engine.begin() as conn:
         for _, row in df.iterrows():
             try:
@@ -113,9 +114,11 @@ def sync_properties_task(run_id):
                     val_uuid, old_hash, old_sync_status = existing
                     if old_hash == curr_hash:
                         sync_status = "No Changes"
-                        if old_sync_status != 'No Changes':
-                            conn.execute(text("UPDATE project_core.property_value SET sync_status='No Changes', sync_timestamp=:ts WHERE id=:id"), 
-                                         {"ts": datetime.now(), "id": val_uuid})
+                        conn.execute(text("""
+                            UPDATE project_core.property_value
+                            SET sync_status='No Changes', sync_timestamp=:ts, object_status='Active'
+                            WHERE id=:id
+                        """), {"ts": datetime.now(), "id": val_uuid})
                     else:
                         sync_status = "Updated"
                         params["id"] = val_uuid; params["ss"] = sync_status
@@ -150,7 +153,9 @@ def sync_properties_task(run_id):
     with engine.begin() as conn:
         conn.execute(text("""
             UPDATE project_core.property_value SET sync_status = 'Deleted', object_status = 'Inactive'
-            WHERE sync_timestamp < :run_start AND sync_status != 'Deleted'
+            WHERE sync_timestamp < :run_start
+              AND sync_status != 'Deleted'
+              AND object_status = 'Active'
         """), {"run_start": start_time})
 
     with engine.begin() as conn:
