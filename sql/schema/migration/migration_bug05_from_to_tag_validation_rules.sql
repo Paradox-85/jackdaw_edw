@@ -17,6 +17,7 @@ INSERT INTO audit_core.export_validation_rule (
     'tag',
     'FROM_TAG_NAME',
     'FROM_TAG and TO_TAG must not be equal — self-referencing connections are invalid.',
+    'FROM_TAG_NAME equals_col TO_TAG_NAME',
     'FROM_TAG_NAME == TO_TAG_NAME',
     NULL,
     FALSE,

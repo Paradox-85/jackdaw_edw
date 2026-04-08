@@ -11,7 +11,8 @@ DSL — rule_expression (violation condition):
     <clause1> AND <clause2>
 
     col_spec: '*' (all object columns) | column name (case-insensitive)
-    operators: contains, icontains, max_length, is_null, not_null, matches_regex
+    operators: contains, icontains, max_length, is_null, not_null, matches_regex, equals_col
+    equals_col  — compare column to another column by name (cross-column equality)
 
 DSL — fix_expression (auto-fix for built-in mode):
     replace "X" "Y"   — replace all occurrences of X with Y
@@ -145,6 +146,17 @@ def _eval_single_clause(
             )
             return series.fillna("").astype(str).apply(
                 lambda v: any(p in v for p in _ENCODING_PATTERNS)
+            )
+        if op == "equals_col":
+            target_lower = (value or "").lower()
+            target_matched = [c for c in df.columns if c.lower() == target_lower]
+            if not target_matched:
+                return pd.Series(False, index=df.index)
+            other = df[target_matched[0]].astype(str)
+            return (
+                series.notna()
+                & df[target_matched[0]].notna()
+                & (series.astype(str) == other)
             )
         raise ExpressionParseError(f"Unknown operator: {op!r}")
 
