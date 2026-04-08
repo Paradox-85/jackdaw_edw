@@ -70,7 +70,15 @@ def clean_engineering_text(value: str) -> str:
     s = re.sub(r" {2,}", " ", s)
 
     # Step 12: Strip leading/trailing whitespace
-    return s.strip()
+    s = s.strip()
+
+    # Step 12b: Strip leading/trailing dash artefacts
+    # Covers patterns: "- Description", "Description -", "- Description -"
+    # Applied after whitespace strip so "- text -" → "text" not "- text -".
+    # Only removes edge dashes — internal dashes (e.g. DRAKA/PRYSMIAN - BFOU) are preserved.
+    s = s.strip("-").strip()
+
+    return s
 
 
 # ---------------------------------------------------------------------------
