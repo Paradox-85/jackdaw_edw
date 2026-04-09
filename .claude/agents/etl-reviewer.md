@@ -49,6 +49,12 @@ Report ✅ PASS or ❌ FAIL for each, with line numbers and suggested fixes for 
 - [ ] SQLAlchemy reads use `engine.connect()` context manager
 - [ ] Type hints present on all functions
 
+## Category 7: Database Change Safety
+- [ ] No direct DB schema mutation logic was introduced
+- [ ] No psql / SQLAlchemy / raw SQL path performs ALTER, DROP, CREATE TABLE, TRUNCATE, DELETE as part of schema change workflow
+- [ ] If schema-related logic changed, `sql/schema/schema.sql` was updated
+- [ ] No MCP-based DB write workflow was introduced
+
 ---
 
 Output format:

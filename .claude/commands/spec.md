@@ -36,9 +36,10 @@ Report chosen filename to user BEFORE Phase 1:
 
 ## Phase 1 — Explore (READ ONLY — make ZERO file changes in this phase)
 1. Read all files relevant to the task using Read, Grep, Glob tools
-2. If task involves schema: query pgedge MCP to get current DB state
+2. If task involves schema: read current schema from `sql/schema/schema.sql`
 3. If anything is ambiguous: use AskUserQuestion tool to ask me — do NOT assume
 4. Do NOT create files, do NOT edit files, do NOT run Bash write commands
+5. NEVER propose direct DB mutation as an implementation step
 
 ## Phase 2 — Design
 1. Write implementation plan to $PLAN_FILE (determined in Phase 0)
@@ -46,20 +47,18 @@ Report chosen filename to user BEFORE Phase 1:
    - **Problem** (1-2 sentences)
    - **Files to modify** (exact paths, what changes in each)
    - **Files to create** (exact paths, what goes in each)
-   - **SQL changes** (if any) — does schema.sql need updating? yes/no
+   - **SQL changes** (if any) — references `sql/schema/schema.sql`
    - **Implementation order** (numbered steps)
    - **Risks and edge cases**
    - **Verification** (how to confirm the change worked)
-3. Show me the complete plan
-4. WAIT for me to type exactly "proceed" — do not start implementation until then
+3. Plan must explicitly state: "Direct DB execution is forbidden; repo artifacts only"
+4. Show me the complete plan
+5. WAIT for me to type exactly "proceed" — do not start implementation until then
 
 ## Phase 3 — Implement (ONLY after I type "proceed")
 1. Execute the plan step by step
 2. After each file change: report what changed and why
-3. If any DB objects modified: run /schema-change
+3. If DB-related logic changed: update `sql/schema/schema.sql` and any related code/docs; do NOT execute DDL/DML against DB
 4. After any ETL file modified: run etl-reviewer subagent
 5. Run verification steps from the plan
-
-Then commit:
-git add .claude/commands/spec.md
-git commit -m "[config] spec command: auto-generate plan filename cc_YYYY.MM.DD_slug.md"
+6. At the end, remind the user to run `git status`, `git commit`, and `git push` manually

@@ -8,7 +8,9 @@ Before compacting, produce a structured snapshot:
 4. **SCD2 state** — hash formula confirmed in use, which sync_status values were involved
 5. **Pending decisions** — unresolved questions, TODOs, FK misses discovered
 6. **Blockers** — anything that was failing or unclear
-7. **Next step** — what is EXACT first action to take after context reset
+7. **Schema file status** — was `sql/schema/schema.sql` updated? if not, why not?
+8. **DB safety reminder** — direct DB writes remain forbidden after resume
+9. **Next step** — what is EXACT first action to take after context reset
 
 Save snapshot to docs/plans/session-snapshot.md (overwrite each time).
 Then run /compact using this snapshot as compaction instruction.

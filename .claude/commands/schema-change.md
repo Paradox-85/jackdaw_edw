@@ -1,25 +1,21 @@
-# Database Schema Change Workflow
+Manage a schema-related change safely.
 
-MANDATORY: Use this command before making any database schema changes.
+## Rules
+1. `sql/schema/schema.sql` is the canonical schema file and MUST be updated for every schema-related change
+2. NEVER modify the database directly — not via MCP, not via Python, not via Bash/psql
+3. Database access is READ-ONLY only
+4. Schema changes must exist as repository artifacts first; actual DB execution is outside Claude Code
 
-## Process
-1. **Read** `sql/schema.sql` for current state.
-2. **Validate** with pgedge MCP:
-   ```sql
-   SELECT * FROM information_schema.tables WHERE table_schema = 'project_core';
-   SELECT * FROM information_schema.table_constraints;
-   ```
-3. **Use subagent (schema-validator)** for conflict analysis.
-4. **Implement** change (DDL or migration).
-5. **Update** `schema.sql` immediately after — same commit.
-6. **Verify**: `pg_dump -d edw_db -s > /tmp/current.sql && diff /tmp/current.sql sql/schema.sql`
+## Workflow
+1. Read the relevant code, SQL, and docs
+2. Determine what schema-related logic changed
+3. Update `sql/schema/schema.sql`
+4. Update any affected code, mappings, docs, or tests
+5. Show the exact diff
+6. Verify that `sql/schema/schema.sql` is staged before commit
 
-## Commit message template
-```
-[sql] <short description>
-
-- Changed: <table/column/index>
-- Purpose: <business reason>
-- FK: <if applicable>
-- Verified with pgedge MCP and schema.sql diff clean
+## Verification
+```bash
+git diff -- sql/schema/schema.sql
+git diff --cached --name-only | grep "sql/schema/schema.sql"
 ```
