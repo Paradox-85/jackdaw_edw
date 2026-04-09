@@ -276,15 +276,16 @@ def _apply_fix(df: pd.DataFrame, col_spec: str, fix_expr: str) -> pd.DataFrame:
                 regex=True,
             )
         # normalize_pseudo_null — replace entire value with "NA" for all pseudo-null placeholders:
-        # numeric (9{5,} + optional unit suffix), domain-prefix NAs (Area-NA, PU-NA, PO-NA,
-        # SECE-NA), epoch date placeholder (01/01/1990), single dash.
+        # numeric (9{5,} + optional unit suffix), ALL prefix variants with - or _ (Tag-NA, Signal_NA),
+        # verbose variants (N.A., n/a, not applicable), epoch date placeholder (01/01/1990), single dash.
         # Each matched value is replaced wholesale — non-matching values are left unchanged.
         if fix_expr == "normalize_pseudo_null":
             _NULL_RE = re.compile(
                 r"^9{5,}[\d./a-zA-Z ]*$"    # numeric: 9{5,} + optional unit/digit suffix
-                r"|^(Area|PU|PO|SECE)-NA$"  # domain-prefixed NA variants from EIS source
+                r"|^[A-Za-z]+[-_]NA$"        # ALL prefix variants with - or _ (Tag-NA, Signal_NA, etc.)
                 r"|^01/01/1990"              # epoch date placeholder (source default "no date")
                 r"|^-$"                      # single dash pseudo-null
+                r"|(?i)^(N\.A\.|n/a|n\.a\.|not\s+applicable|not\s+appl\.?)$"  # verbose variants
             )
             return s.astype(str).apply(lambda v: "NA" if _NULL_RE.match(v) else v)
         # strip_edge_char "X" — remove leading/trailing occurrences of char X
@@ -294,6 +295,10 @@ def _apply_fix(df: pd.DataFrame, col_spec: str, fix_expr: str) -> pd.DataFrame:
         if m:
             char = m.group(1)
             return s.astype(str).str.strip(char).str.strip()
+        # split_value_uom — handled at DataFrame level, not series level
+        # This fix_expression is a marker; actual splitting happens in transform functions
+        if fix_expr == "split_value_uom":
+            return s  # No-op: splitting handled in transform_tag/equipment_properties
         raise ExpressionParseError(f"Unknown fix_expression: {fix_expr!r}")
 
     for col in target_cols:

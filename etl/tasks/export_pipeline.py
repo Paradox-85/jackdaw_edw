@@ -19,6 +19,44 @@ from tasks.export_validation import (
 
 
 # ---------------------------------------------------------------------------
+# UoM lookup utilities
+# ---------------------------------------------------------------------------
+
+def _load_uom_lookup(engine) -> dict[str, str]:
+    """
+    Load alias_lower → symbol_ascii mapping from ontology_core.uom_alias.
+
+    Safe for incremental migration — returns {} if table doesn't exist yet.
+
+    Args:
+        engine: SQLAlchemy engine connected to engineering_core.
+
+    Returns:
+        Dictionary mapping alias_lower → symbol_ascii for all active UoM aliases.
+
+    Example:
+        >>> lookup = _load_uom_lookup(engine)
+        >>> lookup.get('bar(g)', 'bar(g)')
+        'bar(g)'
+    """
+    from sqlalchemy import text
+
+    sql = """
+        SELECT a.alias_lower, COALESCE(u.symbol_ascii, u.symbol) AS symbol_ascii
+        FROM ontology_core.uom_alias a
+        JOIN ontology_core.uom u ON u.id = a.uom_id
+        WHERE a.object_status = 'Active' AND u.object_status = 'Active'
+    """
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(sql)).fetchall()
+        return {r.alias_lower: r.symbol_ascii for r in rows}
+    except Exception:
+        # Table may not exist yet (migration pending) — return empty lookup
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # Public: unified export pipeline
 # ---------------------------------------------------------------------------
 

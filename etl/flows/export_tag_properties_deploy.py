@@ -19,7 +19,7 @@ if str(script_root) not in sys.path:
 try:
     from tasks.common import load_config, get_db_engine_url
     from tasks.export_transforms import transform_tag_properties
-    from tasks.export_pipeline import run_export_pipeline
+    from tasks.export_pipeline import run_export_pipeline, _load_uom_lookup
 except ImportError as e:
     print(f"[SKIP] {Path(__file__).name}: Could not import task modules. Details: {e}")
     sys.exit(0)
@@ -45,13 +45,14 @@ Routing: Functional concept → seq 303 (this file, -010-)
 Note:    ILIKE '%...%' used because mapping_concept may be composite,
          e.g. 'Functional Physical'.
 Changes: 2026-03-13 — Initial implementation.
+         2026-04-09 — Added uom_alias join for symbol_ascii resolution.
 */
 SELECT
     pl.code                         AS PLANT_CODE,
     t.tag_name                      AS TAG_NAME,
     p.code                          AS PROPERTY_CODE,
     pv.property_value               AS PROPERTY_VALUE,
-    pv.property_uom_raw             AS UNIT,
+    COALESCE(u.symbol_ascii, u.symbol, pv.property_uom_raw) AS UNIT,
     -- internal fields for validation rules (dropped by transform before CSV write)
     pv.id                           AS object_id,
     t.tag_name                      AS object_name,
@@ -71,6 +72,11 @@ JOIN ontology_core.property p
 -- Why LEFT JOIN on plant: tag must not disappear due to missing plant FK
 LEFT JOIN reference_core.plant pl
     ON t.plant_id = pl.id
+-- Resolve property_uom_raw to canonical symbol_ascii via uom_alias
+LEFT JOIN ontology_core.uom_alias ua
+    ON LOWER(TRIM(pv.property_uom_raw)) = ua.alias_lower
+LEFT JOIN ontology_core.uom u
+    ON ua.uom_id = u.id
 WHERE pv.object_status = 'Active'
   AND cp.mapping_concept ILIKE '%Functional%'
   AND cp.mapping_concept NOT ILIKE '%common%'
@@ -148,13 +154,17 @@ def export_tag_properties_flow(
         )
 
     engine = create_engine(DB_URL)
+
+    # Load UoM lookup for value/UoM splitting (safe if table doesn't exist yet)
+    uom_lookup = _load_uom_lookup(engine)
+
     output_path = Path(output_dir or _EXPORT_DIR) / _FILE_TEMPLATE.format(revision=doc_revision)
 
     return run_export_pipeline(
         engine=engine,
         scope="tag_property",
         extract_fn=extract_tag_properties,
-        transform_fn=transform_tag_properties,
+        transform_fn=lambda df: transform_tag_properties(df, uom_lookup),
         output_path=output_path,
         report_name="tag_properties",
         logger=logger,

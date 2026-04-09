@@ -1,9 +1,126 @@
 """Shared utilities for all Reverse ETL export flows."""
 
-import re
+import re as _re
 from pathlib import Path
 
 import pandas as pd
+
+
+# ---------------------------------------------------------------------------
+# Value/UoM splitting utilities
+# ---------------------------------------------------------------------------
+
+_VALUE_UOM_SPLIT_RE = _re.compile(
+    r"^(?P<value>[\d.,]+(?:\s*[-–]\s*[\d.,]+)?)"  # numeric or range
+    r"\s*(?P<uom>[A-Za-z°²³µμ%][A-Za-z0-9°²³/.*()\\-]*)\s*$"
+)
+
+
+def _resolve_uom_symbol(raw_uom: str, uom_lookup: dict[str, str]) -> str:
+    """
+    Resolve raw UoM to canonical symbol_ascii via alias_lookup.
+
+    Args:
+        raw_uom: Raw UoM string from source data.
+        uom_lookup: Dictionary mapping alias_lower → symbol_ascii.
+
+    Returns:
+        Canonical symbol_ascii if found in lookup, otherwise stripped raw_uom.
+
+    Example:
+        >>> lookup = {'bar(g)': 'bar(g)', 'mm2': 'mm2'}
+        >>> _resolve_uom_symbol('BAR(G)', lookup)
+        'bar(g)'
+    """
+    if not raw_uom:
+        return ""
+    return uom_lookup.get(raw_uom.strip().lower(), raw_uom.strip())
+
+
+def _split_value_uom(
+    value: str, uom: str, uom_lookup: dict[str, str]
+) -> tuple[str, str]:
+    """
+    Split combined value and UoM (e.g., "490mm" → ("490", "mm")).
+
+    If uom is already provided separately, returns value and uom unchanged.
+    If value contains embedded UoM pattern, splits and resolves to canonical form.
+
+    Args:
+        value: Property value string, potentially with embedded UoM.
+        uom: Separate UoM column value (if already split).
+        uom_lookup: Dictionary mapping alias_lower → symbol_ascii.
+
+    Returns:
+        Tuple of (clean_value, canonical_uom).
+
+    Example:
+        >>> lookup = {'mm': 'mm', 'bar(g)': 'bar(g)'}
+        >>> _split_value_uom('490mm', '', lookup)
+        ('490', 'mm')
+        >>> _split_value_uom('490', 'mm', lookup)
+        ('490', 'mm')
+    """
+    if uom.strip():
+        return value, uom
+    if not isinstance(value, str) or not value.strip():
+        return value, uom
+
+    m = _VALUE_UOM_SPLIT_RE.match(value.strip())
+    if m:
+        clean_val = m.group("value").strip()
+        raw_uom = m.group("uom").strip()
+        canon_uom = _resolve_uom_symbol(raw_uom, uom_lookup)
+        return clean_val, canon_uom
+    return value, uom
+
+
+def _apply_value_uom_split(
+    df: pd.DataFrame,
+    value_col: str = "PROPERTY_VALUE",
+    uom_col: str = "PROPERTY_VALUE_UOM",
+    uom_lookup: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    """
+    Apply _split_value_uom row-wise to a DataFrame.
+
+    Args:
+        df: DataFrame containing property value columns.
+        value_col: Name of the column containing values (may include embedded UoM).
+        uom_col: Name of the UoM column (will be updated if empty).
+        uom_lookup: Dictionary mapping alias_lower → symbol_ascii.
+
+    Returns:
+        DataFrame with split and normalized value/UoM columns.
+
+    Example:
+        >>> df = pd.DataFrame({'PROPERTY_VALUE': ['490mm', '3.5bar(g)', 'NA'], 'PROPERTY_VALUE_UOM': ['', '', '']})
+        >>> lookup = {'mm': 'mm', 'bar(g)': 'bar(g)'}
+        >>> result = _apply_value_uom_split(df, uom_lookup=lookup)
+        >>> result['PROPERTY_VALUE'].tolist()
+        ['490', '3.5', 'NA']
+        >>> result['PROPERTY_VALUE_UOM'].tolist()
+        ['mm', 'bar(g)', '']
+    """
+    if uom_lookup is None:
+        uom_lookup = {}
+    if value_col not in df.columns or uom_col not in df.columns:
+        return df
+
+    result = df.apply(
+        lambda r: pd.Series(
+            _split_value_uom(
+                str(r[value_col]) if pd.notna(r[value_col]) else "",
+                str(r[uom_col]) if pd.notna(r[uom_col]) else "",
+                uom_lookup,
+            ),
+            index=[value_col, uom_col],
+        ),
+        axis=1,
+    )
+    df = df.copy()
+    df[[value_col, uom_col]] = result
+    return df
 
 
 # ---------------------------------------------------------------------------
@@ -285,16 +402,18 @@ _TAG_PROPERTY_COLUMNS: list[str] = [
 ]
 
 
-def transform_tag_properties(df: pd.DataFrame) -> pd.DataFrame:
+def transform_tag_properties(df: pd.DataFrame, uom_lookup: dict[str, str] | None = None) -> pd.DataFrame:
     """
     Apply domain-specific transforms for EIS Tag Property Values export (seq 303).
 
     Layers:
     1. Normalise column names to UPPER_CASE.
     2. Second-level defence: keep only object_status = 'Active' rows.
-    3. Drop internal columns used by validation rules (mapping_concept_raw,
+    3. Split combined value/UoM (e.g., "490mm" → "490", "mm") if uom_lookup provided.
+    4. Auto-clear UNIT when PROPERTY_VALUE is NA or TBC.
+    5. Drop internal columns used by validation rules (mapping_concept_raw,
        object_id, object_name) and EIS audit columns not in seq-303 schema.
-    4. Reorder columns to EIS-specified output order.
+    6. Reorder columns to EIS-specified output order.
 
     Note: ACTION_STATUS / ACTION_DATE are intentionally excluded from this
     register — property value rows carry no independent sync lifecycle beyond
@@ -302,21 +421,36 @@ def transform_tag_properties(df: pd.DataFrame) -> pd.DataFrame:
 
     Args:
         df: Raw DataFrame from extract_tag_properties SQL query.
+        uom_lookup: Dictionary mapping alias_lower → symbol_ascii for UoM resolution.
+                   If None or empty, value/UoM splitting is skipped.
 
     Returns:
         Transformed DataFrame ready for write_csv().
 
     Example:
-        >>> result = transform_tag_properties(raw_df)
+        >>> lookup = {'mm': 'mm', 'bar(g)': 'bar(g)'}
+        >>> result = transform_tag_properties(raw_df, uom_lookup=lookup)
         >>> list(result.columns)
         ['PLANT_CODE', 'TAG_NAME', 'PROPERTY_CODE', 'PROPERTY_VALUE', 'UNIT']
     """
+    if uom_lookup is None:
+        uom_lookup = {}
+
     df = df.copy()
     df.columns = df.columns.str.upper()
 
     # Second-level defence: only Active records exported
     if "OBJECT_STATUS" in df.columns:
         df = df[df["OBJECT_STATUS"] == "Active"]
+
+    # Split combined value/UoM if uom_lookup provided
+    if uom_lookup and "PROPERTY_VALUE" in df.columns and "UNIT" in df.columns:
+        df = _apply_value_uom_split(
+            df,
+            value_col="PROPERTY_VALUE",
+            uom_col="UNIT",
+            uom_lookup=uom_lookup,
+        )
 
     # Auto-clear UNIT when PROPERTY_VALUE is NA or TBC
     if "PROPERTY_VALUE" in df.columns and "UNIT" in df.columns:
@@ -348,7 +482,7 @@ _EQUIPMENT_PROPERTY_COLUMNS: list[str] = [
 ]
 
 
-def transform_equipment_properties(df: pd.DataFrame) -> pd.DataFrame:
+def transform_equipment_properties(df: pd.DataFrame, uom_lookup: dict[str, str] | None = None) -> pd.DataFrame:
     """
     Apply domain-specific transforms for EIS Equipment Property Values export (seq 301).
 
@@ -358,26 +492,43 @@ def transform_equipment_properties(df: pd.DataFrame) -> pd.DataFrame:
     Layers:
     1. Normalise column names to UPPER_CASE.
     2. Second-level defence: keep only object_status = 'Active' rows.
-    3. Drop internal columns used by validation rules.
-    4. Reorder columns to EIS-specified output order.
+    3. Split combined value/UoM (e.g., "490mm" → "490", "mm") if uom_lookup provided.
+    4. Auto-clear UNIT when PROPERTY_VALUE is NA or TBC.
+    5. Drop internal columns used by validation rules.
+    6. Reorder columns to EIS-specified output order.
 
     Args:
         df: Raw DataFrame from extract_equipment_properties SQL query.
+        uom_lookup: Dictionary mapping alias_lower → symbol_ascii for UoM resolution.
+                   If None or empty, value/UoM splitting is skipped.
 
     Returns:
         Transformed DataFrame ready for write_csv().
 
     Example:
-        >>> result = transform_equipment_properties(raw_df)
+        >>> lookup = {'mm': 'mm', 'bar(g)': 'bar(g)'}
+        >>> result = transform_equipment_properties(raw_df, uom_lookup=lookup)
         >>> list(result.columns)
         ['PLANT_CODE', 'TAG_NAME', 'PROPERTY_CODE', 'PROPERTY_VALUE', 'UNIT']
     """
+    if uom_lookup is None:
+        uom_lookup = {}
+
     df = df.copy()
     df.columns = df.columns.str.upper()
 
     # Second-level defence: only Active records exported
     if "OBJECT_STATUS" in df.columns:
         df = df[df["OBJECT_STATUS"] == "Active"]
+
+    # Split combined value/UoM if uom_lookup provided
+    if uom_lookup and "PROPERTY_VALUE" in df.columns and "UNIT" in df.columns:
+        df = _apply_value_uom_split(
+            df,
+            value_col="PROPERTY_VALUE",
+            uom_col="UNIT",
+            uom_lookup=uom_lookup,
+        )
 
     # Auto-clear UNIT when PROPERTY_VALUE is NA or TBC
     if "PROPERTY_VALUE" in df.columns and "UNIT" in df.columns:
