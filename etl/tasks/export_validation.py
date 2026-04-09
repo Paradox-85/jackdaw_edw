@@ -133,8 +133,11 @@ def _eval_single_clause(
         if op == "not_null":
             return ~(series.isna() | (s.str.strip() == "") | (s.str.lower() == "none"))
         if op == "matches_regex":
+            # Guard: pandas str.contains() misbehaves with capture groups.
+            # Convert (X) → (?:X) so patterns from the DB are always safe.
+            pattern = re.sub(r'\((?!\?)', '(?:', value or "")
             # Case-insensitive: DB may store ACTIVE/VOID (uppercase) while rules reference Active/Void
-            return s.str.contains(value or "", na=False, regex=True, flags=re.IGNORECASE)
+            return s.str.contains(pattern, na=False, regex=True, flags=re.IGNORECASE)
         if op == "has_encoding_artefacts":
             # Detect any known encoding corruption pattern from clean_engineering_text pipeline
             _ENCODING_PATTERNS = (
