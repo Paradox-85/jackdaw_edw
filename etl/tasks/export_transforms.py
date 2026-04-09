@@ -72,12 +72,6 @@ def clean_engineering_text(value: str) -> str:
     # Step 12: Strip leading/trailing whitespace
     s = s.strip()
 
-    # Step 12b: Strip leading/trailing dash artefacts
-    # Covers patterns: "- Description", "Description -", "- Description -"
-    # Applied after whitespace strip so "- text -" → "text" not "- text -".
-    # Only removes edge dashes — internal dashes (e.g. DRAKA/PRYSMIAN - BFOU) are preserved.
-    s = s.strip("-").strip()
-
     return s
 
 
@@ -718,8 +712,8 @@ def transform_tag_connections(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = df.columns.str.upper()
 
-    # Exclude self-loop connections (FROM_TAG = TO_TAG)
-    df = df[df["FROM_TAG_NAME"] != df["TO_TAG_NAME"]]
+    # Self-loop exclusion moved to SQL level (DISTINCT + from_tag_raw != to_tag_raw)
+    # No Python filtering needed here.
 
     available = [c for c in _TAG_CONNECTIONS_COLUMNS if c in df.columns]
     return df[available]

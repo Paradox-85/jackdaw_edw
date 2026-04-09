@@ -284,6 +284,13 @@ def _apply_fix(df: pd.DataFrame, col_spec: str, fix_expr: str) -> pd.DataFrame:
                 r"|^-$"                      # single dash pseudo-null
             )
             return s.astype(str).apply(lambda v: "NA" if _NULL_RE.match(v) else v)
+        # strip_edge_char "X" — remove leading/trailing occurrences of char X
+        # DB-driven equivalent of Python s.strip("X").strip()
+        # Example fix_expression: strip_edge_char "-"
+        m = re.fullmatch(r'strip_edge_char\s+"([^"]*)"', fix_expr)
+        if m:
+            char = m.group(1)
+            return s.astype(str).str.strip(char).str.strip()
         raise ExpressionParseError(f"Unknown fix_expression: {fix_expr!r}")
 
     for col in target_cols:
