@@ -1,904 +1,590 @@
-CREATE TABLE "reference_core"."site" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "code" TEXT NOT NULL,
-  "name" TEXT NULL,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  CONSTRAINT "site_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "site_code_key" UNIQUE ("code")
-);
-CREATE TABLE "ontology_core"."class_property" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "class_id" UUID NULL,
-  "property_id" UUID NULL,
-  "mapping_concept" TEXT NULL,
-  "mapping_presence" TEXT NULL,
-  "mapping_status" TEXT NULL DEFAULT 'Active'::text ,
-  "mapping_class_name_raw" TEXT NULL,
-  "mapping_class_code_raw" TEXT NULL,
-  "mapping_property_code_raw" TEXT NULL,
-  "mapping_property_name_raw" TEXT NULL,
-  CONSTRAINT "class_property_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "class_property_unique_link" UNIQUE ("class_id", "property_id")
-);
-CREATE TABLE "audit_core"."sync_run_stats" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "run_id" UUID NOT NULL,
-  "target_table" TEXT NOT NULL,
-  "start_time" TIMESTAMP NOT NULL,
-  "end_time" TIMESTAMP NULL,
-  "count_created" INTEGER NULL DEFAULT 0 ,
-  "count_updated" INTEGER NULL DEFAULT 0 ,
-  "count_unchanged" INTEGER NULL DEFAULT 0 ,
-  "count_deleted" INTEGER NULL DEFAULT 0 ,
-  "count_errors" INTEGER NULL DEFAULT 0 ,
-  "source_file" TEXT NULL,
-  "mapping_status" TEXT NULL DEFAULT 'Active'::text ,
-  "count_exported" INTEGER NOT NULL DEFAULT 0 ,
-  CONSTRAINT "sync_run_stats_pkey" PRIMARY KEY ("id")
-);
-CREATE TABLE "ontology_core"."uom_group" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "code" TEXT NOT NULL,
-  "name" TEXT NOT NULL,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  CONSTRAINT "uom_group_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "uom_group_code_key" UNIQUE ("code")
-);
-CREATE TABLE "reference_core"."purchase_order" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "package_id" UUID NULL,
-  "issuer_id" UUID NULL,
-  "receiver_id" UUID NULL,
-  "name" TEXT NULL,
-  "definition" TEXT NULL,
-  "po_date" TEXT NULL,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  "issuer_company_raw" TEXT NULL,
-  "receiver_company_raw" TEXT NULL,
-  "package_code_raw" TEXT NULL,
-  "code" TEXT NOT NULL,
-  CONSTRAINT "purchase_order_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "purchase_order_code_key" UNIQUE ("code")
-);
-CREATE TABLE "reference_core"."plant" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "site_id" UUID NULL,
-  "code" TEXT NOT NULL,
-  "name" TEXT NULL,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  "site_code_raw" TEXT NULL,
-  CONSTRAINT "plant_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "plant_code_key" UNIQUE ("code")
-);
-CREATE TABLE "audit_core"."export_validation_rule" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "rule_code" TEXT NOT NULL,
-  "scope" TEXT NOT NULL,
-  "object_field" TEXT NULL,
-  "description" TEXT NULL,
-  "rule_expression" TEXT NOT NULL,
-  "fix_expression" TEXT NULL,
-  "is_builtin" BOOLEAN NOT NULL DEFAULT false ,
-  "is_blocking" BOOLEAN NOT NULL DEFAULT false ,
-  "severity" TEXT NOT NULL DEFAULT 'Warning'::text ,
-  "object_status" TEXT NOT NULL DEFAULT 'Active'::text ,
-  "tier" TEXT NULL,
-  "category" TEXT NULL,
-  "source_ref" TEXT NULL,
-  "check_type" TEXT NOT NULL DEFAULT 'dsl'::text ,
-  "sort_order" INTEGER NULL,
-  CONSTRAINT "export_validation_rule_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "export_validation_rule_code_key" UNIQUE ("rule_code")
-);
-CREATE TABLE "ontology_core"."validation_rule" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "validation_type" TEXT NULL,
-  "validation_value" TEXT NULL,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  "code" TEXT NOT NULL,
-  "name" TEXT NULL,
-  CONSTRAINT "validation_rule_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "validation_rule_code_key" UNIQUE ("code")
-);
-CREATE TABLE "ontology_core"."property" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "code" TEXT NOT NULL,
-  "name" TEXT NOT NULL,
-  "definition" TEXT NULL,
-  "data_type" TEXT NULL,
-  "length" INTEGER NULL,
-  "uom_group_id" UUID NULL,
-  "validation_rule_id" UUID NULL,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  CONSTRAINT "property_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "property_code_key" UNIQUE ("code")
-);
-CREATE TABLE "reference_core"."company" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "code" TEXT NOT NULL,
-  "name" TEXT NULL,
-  "address" TEXT NULL,
-  "town_city" TEXT NULL,
-  "zip_code" TEXT NULL,
-  "country_code" CHARACTER(2) NULL,
-  "phone" TEXT NULL,
-  "email" TEXT NULL,
-  "website" TEXT NULL,
-  "contact_person" TEXT NULL,
-  "is_manufacturer" BOOLEAN NULL DEFAULT false ,
-  "is_supplier" BOOLEAN NULL DEFAULT false ,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  CONSTRAINT "company_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "company_code_key" UNIQUE ("code")
-);
-CREATE TABLE "reference_core"."po_package" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "code" TEXT NOT NULL,
-  "name" TEXT NULL,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  CONSTRAINT "po_package_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "po_package_code_key" UNIQUE ("code")
-);
-CREATE TABLE "audit_core"."crs_validation_query" (
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "query_code" TEXT NOT NULL,
-  "query_name" TEXT NOT NULL,
-  "description" TEXT NULL,
-  "category" TEXT NOT NULL,
-  "category_description" TEXT NULL,
-  "sql_query" TEXT NOT NULL,
-  "expected_result" TEXT NULL,
-  "has_parameters" BOOLEAN NOT NULL DEFAULT false ,
-  "parameter_names" TEXT[] NULL,
-  "is_active" BOOLEAN NOT NULL DEFAULT true ,
-  "created_at" TIMESTAMP NOT NULL DEFAULT now() ,
-  "updated_at" TIMESTAMP NOT NULL DEFAULT now() ,
-  "created_by" TEXT NULL,
-  "notes" TEXT NULL,
-  "object_status" TEXT NOT NULL DEFAULT 'Active'::text ,
-  "evaluation_strategy" TEXT NULL,
-  "group_by_field" TEXT NULL,
-  "response_template" TEXT NULL,
-  "query_type" TEXT NOT NULL DEFAULT 'GROUP',
-  CONSTRAINT "crs_validation_query_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "crs_validation_query_code_key" UNIQUE ("query_code"),
-  CONSTRAINT "chk_crs_vq_query_type" CHECK (query_type IN ('GROUP', 'INDIVIDUAL'))
-);
-CREATE TABLE "reference_core"."project" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "site_id" UUID NULL,
-  "code" TEXT NOT NULL,
-  "name" TEXT NULL,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  "site_code_raw" TEXT NULL,
-  CONSTRAINT "project_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "project_code_key" UNIQUE ("code")
-);
-CREATE TABLE "reference_core"."model_part" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "manufacturer_id" UUID NULL,
-  "code" TEXT NOT NULL,
-  "name" TEXT NULL,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  "manuf_company_raw" TEXT NULL,
-  "definition" TEXT NULL,
-  CONSTRAINT "model_part_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "uq_model_part_manuf_raw_code" UNIQUE ("manuf_company_raw", "code")
-);
-CREATE TABLE "reference_core"."sece" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "code" TEXT NOT NULL,
-  "name" TEXT NULL,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  CONSTRAINT "sece_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "sece_code_key" UNIQUE ("code")
-);
-CREATE TABLE "reference_core"."discipline" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "code" TEXT NOT NULL,
-  "name" TEXT NOT NULL,
-  "code_internal" TEXT NULL,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  CONSTRAINT "discipline_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "discipline_code_key" UNIQUE ("code")
-);
-CREATE TABLE "project_core"."tag" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "tag_name" TEXT NOT NULL,
-  "tag_status" TEXT NULL,
-  "parent_tag_id" UUID NULL,
-  "class_id" UUID NULL,
-  "article_id" UUID NULL,
-  "design_company_id" UUID NULL,
-  "area_id" UUID NULL,
-  "discipline_id" UUID NULL,
-  "process_unit_id" UUID NULL,
-  "project_id" UUID NULL,
-  "po_id" UUID NULL,
-  "row_hash" TEXT NULL,
-  "tag_class_raw" TEXT NULL,
-  "sync_status" TEXT NULL,
-  "sync_timestamp" TIMESTAMP NULL DEFAULT now() ,
-  "article_code_raw" TEXT NULL,
-  "design_company_name_raw" TEXT NULL,
-  "area_code_raw" TEXT NULL,
-  "process_unit_raw" TEXT NULL,
-  "discipline_code_raw" TEXT NULL,
-  "po_code_raw" TEXT NULL,
-  "equip_no" TEXT NULL,
-  "manufacturer_id" UUID NULL,
-  "vendor_id" UUID NULL,
-  "model_id" UUID NULL,
-  "serial_no" TEXT NULL,
-  "tech_id" TEXT NULL,
-  "alias" TEXT NULL,
-  "description" TEXT NULL,
-  "install_date" TEXT NULL,
-  "startup_date" TEXT NULL,
-  "warranty_end_date" TEXT NULL,
-  "price" TEXT NULL,
-  "model_part_raw" TEXT NULL,
-  "manufacturer_company_raw" TEXT NULL,
-  "vendor_company_raw" TEXT NULL,
-  "source_id" TEXT NOT NULL,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  "parent_tag_raw" TEXT NULL,
-  "ex_class" TEXT NULL,
-  "ip_grade" TEXT NULL,
-  "mc_package_code" TEXT NULL,
-  "from_tag_raw" TEXT NULL,
-  "to_tag_raw" TEXT NULL,
-  "from_tag_id" UUID NULL,
-  "to_tag_id" UUID NULL,
-  "plant_id" UUID NULL,
-  "plant_raw" TEXT NULL,
-  "safety_critical_item" TEXT NULL,
-  "safety_critical_item_reason_awarded" TEXT NULL,
-  "production_critical_item" TEXT NULL,
-  CONSTRAINT "tag_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "uq_source_id" UNIQUE ("source_id")
-);
-CREATE TABLE "ontology_core"."uom" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "uom_group_id" UUID NULL,
-  "code" TEXT NOT NULL,
-  "name" TEXT NOT NULL,
-  "symbol" TEXT NULL,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  CONSTRAINT "uom_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "uom_code_key" UNIQUE ("code")
-);
-CREATE TABLE "audit_core"."validation_result" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "session_id" UUID NOT NULL,
-  "run_time" TIMESTAMP NOT NULL DEFAULT now() ,
-  "rule_code" TEXT NOT NULL,
-  "scope" TEXT NOT NULL,
-  "severity" TEXT NOT NULL DEFAULT 'Warning'::text ,
-  "object_type" TEXT NULL,
-  "object_id" UUID NULL,
-  "object_name" TEXT NULL,
-  "violation_detail" TEXT NULL,
-  "column_name" TEXT NULL,
-  "original_value" TEXT NULL,
-  "is_resolved" BOOLEAN NOT NULL DEFAULT false ,
-  "tier" TEXT NULL,
-  "category" TEXT NULL,
-  "check_type" TEXT NULL,
-  CONSTRAINT "validation_result_pkey" PRIMARY KEY ("id")
-);
-CREATE TABLE "reference_core"."article" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "code" TEXT NOT NULL,
-  "name" TEXT NULL,
-  "article_type" TEXT NULL,
-  "basic_construction" TEXT NULL,
-  "cable_cross_sectional_area" REAL NULL,
-  "cable_outer_diameter" REAL NULL,
-  "commodity_code" TEXT NULL,
-  "manufacturer_id" UUID NULL,
-  "manufacturer_el_number" TEXT NULL,
-  "manufacturer_material" TEXT NULL,
-  "model_part_id" UUID NULL,
-  "manufacturer_sap_code" TEXT NULL,
-  "product_family" TEXT NULL,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  "manufacturer_company_name_raw" TEXT NULL,
-  "model_part_code_raw" TEXT NULL,
-  "definition" TEXT NULL,
-  CONSTRAINT "article_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "article_code_key" UNIQUE ("code")
-);
-CREATE TABLE "ontology_core"."class" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "parent_class_id" UUID NULL,
-  "code" TEXT NOT NULL,
-  "name" TEXT NOT NULL,
-  "is_abstract" BOOLEAN NULL DEFAULT false ,
-  "definition" TEXT NULL,
-  "concept" TEXT NULL,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  CONSTRAINT "class_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "class_code_key" UNIQUE ("code")
-);
-CREATE TABLE "audit_core"."report_metadata" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "report_name" TEXT NOT NULL,
-  "category" TEXT NOT NULL DEFAULT 'General'::text ,
-  "description" TEXT NULL,
-  "sql_query" TEXT NOT NULL,
-  "author" TEXT NULL DEFAULT 'system'::text ,
-  "is_parametric" BOOLEAN NOT NULL DEFAULT false ,
-  "is_active" BOOLEAN NOT NULL DEFAULT true ,
-  "created_at" TIMESTAMP NOT NULL DEFAULT now() ,
-  "updated_at" TIMESTAMP NOT NULL DEFAULT now() ,
-  CONSTRAINT "report_metadata_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "report_metadata_name_key" UNIQUE ("report_name")
-);
-CREATE TABLE "reference_core"."area" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "plant_id" UUID NULL,
-  "code" TEXT NOT NULL,
-  "name" TEXT NULL,
-  "main_area_code" TEXT NULL,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  "plant_code_raw" TEXT NULL,
-  CONSTRAINT "area_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "area_code_key" UNIQUE ("code")
-);
-CREATE TABLE "reference_core"."process_unit" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "plant_id" UUID NULL,
-  "code" TEXT NOT NULL,
-  "name" TEXT NULL,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  "plant_code_raw" TEXT NULL,
-  CONSTRAINT "process_unit_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "process_unit_code_key" UNIQUE ("code")
-);
-CREATE TABLE "project_core"."document" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "doc_number" TEXT NOT NULL,
-  "title" TEXT NULL,
-  "rev" TEXT NULL,
-  "rev_comment" TEXT NULL,
-  "status" TEXT NULL,
-  "doc_type_code" TEXT NULL,
-  "rev_author" TEXT NULL,
-  "plant_id" UUID NULL,
-  "project_id" UUID NULL,
-  "company_id" UUID NULL,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  "row_hash" TEXT NULL,
-  "sync_status" TEXT NULL,
-  "sync_timestamp" TIMESTAMP NULL DEFAULT now() ,
-  "mdr_flag" BOOLEAN NULL,
-  "rev_date" DATE NULL,
-  "company_name_raw" TEXT NULL,
-  CONSTRAINT "document_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "document_doc_number_key" UNIQUE ("doc_number")
-);
-CREATE TABLE "audit_core"."crs_comment_template" (
+-- ===========================================================================
+-- Jackdaw EDW - Canonical Database Schema
+-- Database: engineering_core
+-- Last Updated: 2026-04-09 (from live DB via MCP)
+-- ===========================================================================
+-- This is the single source of truth for database structure.
+-- All migrations must update this file in the same commit.
+-- Never add columns/tables here without also creating a migration file.
+-- ===========================================================================
+
+-- ---------------------------------------------------------------------------
+-- Schema: app_core
+-- Purpose: Jackdaw EDW UI user management and feedback system
+-- ---------------------------------------------------------------------------
+
+-- ui_user: Jackdaw EDW UI users with bcrypt passwords and role-based access.
+CREATE TABLE "app_core"."ui_user" (
   "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-  "template_text" TEXT NOT NULL,
-  "template_hash" TEXT NOT NULL,
-  "category" TEXT NOT NULL,
-  "check_type" TEXT NULL,
-  "source" TEXT NOT NULL DEFAULT 'llm'::text,
-  "confidence" REAL NOT NULL DEFAULT 1.0,
-  "usage_count" INTEGER NOT NULL DEFAULT 0,
-  "last_used_at" TIMESTAMP NOT NULL DEFAULT now(),
-  "created_at" TIMESTAMP NOT NULL DEFAULT now(),
-  "object_status" TEXT NOT NULL DEFAULT 'Active'::text,
-  "short_template_text" TEXT NULL,
-  "severity"            TEXT NULL DEFAULT 'Warning'::text,
-  "updated_at"          TIMESTAMPTZ NULL DEFAULT now(),
-  CONSTRAINT "crs_comment_template_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "crs_comment_template_hash_key" UNIQUE ("template_hash"),
-  CONSTRAINT "chk_crs_template_confidence" CHECK (confidence BETWEEN 0 AND 1),
-  CONSTRAINT "chk_crs_template_source" CHECK (source IN ('llm', 'manual', 'rule')),
-  CONSTRAINT "chk_crs_template_object_status" CHECK (object_status IN ('Active', 'Inactive'))
-);
-CREATE TABLE "audit_core"."crs_llm_template_staging" (
-  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-  "template_text" TEXT NOT NULL,
-  "template_hash" CHAR(32) NOT NULL,
-  "suggested_category" VARCHAR(20) NOT NULL,
-  "check_type" VARCHAR(50) NULL,
-  "confidence" NUMERIC(4,3) NOT NULL,
-  "llm_response" TEXT NULL,
-  "revision" VARCHAR(20) NULL,
-  "occurrence_count" INTEGER NOT NULL DEFAULT 1,
-  "last_seen_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
-  "created_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
-  "object_status" VARCHAR(20) NOT NULL DEFAULT 'PendingReview',
-  "reviewed_at" TIMESTAMPTZ NULL,
-  "review_notes" TEXT NULL,
-  CONSTRAINT "crs_llm_staging_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "uq_llm_staging_hash" UNIQUE ("template_hash"),
-  CONSTRAINT "chk_llm_staging_confidence" CHECK (confidence BETWEEN 0.0 AND 1.0),
-  CONSTRAINT "chk_llm_staging_status" CHECK (object_status IN ('PendingReview', 'Approved', 'Rejected'))
-);
-CREATE TABLE "audit_core"."crs_comment" (
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "crs_doc_number" TEXT NOT NULL,
-  "revision" TEXT NULL,
-  "return_code" TEXT NULL,
-  "transmittal_number" TEXT NULL,
-  "transmittal_date" DATE NULL,
-  "comment_id" TEXT NOT NULL,
-  "group_comment" TEXT NOT NULL,
-  "comment" TEXT NOT NULL,
-  "tag_name" TEXT NULL,
-  "tag_id" UUID NULL,
-  "property_name" TEXT NULL,
-  "document_number" TEXT NULL,
-  "response_vendor" TEXT NULL,
-  "source_file" TEXT NOT NULL,
-  "detail_file" TEXT NULL,
-  "detail_sheet" TEXT NULL,
-  "crs_file_path" TEXT NOT NULL,
-  "crs_file_timestamp" TIMESTAMP NULL,
-  "llm_category" TEXT NULL,
-  "llm_category_confidence" REAL NULL,
-  "llm_response" TEXT NULL,
-  "llm_response_timestamp" TIMESTAMP NULL,
-  "llm_model_used" TEXT NULL,
-  "status" TEXT NOT NULL DEFAULT 'RECEIVED'::text ,
-  "formal_response" TEXT NULL,
-  "formal_response_rationale" TEXT NULL,
-  "response_author" TEXT NULL,
-  "response_approval_date" DATE NULL,
-  "response_review_notes" TEXT NULL,
-  "row_hash" TEXT NULL,
-  "sync_timestamp" TIMESTAMP NOT NULL DEFAULT now() ,
-  "object_status" TEXT NOT NULL DEFAULT 'Active'::text ,
-  "document_number" TEXT NULL,
-  "from_tag" TEXT NULL,
-  "to_tag" TEXT NULL,
-  "classification_tier" SMALLINT NULL,
-  "category_code" TEXT NULL,
-  "category_confidence" REAL NULL,
-  "validation_query_ids" UUID[] NULL,
-  "template_id" UUID NULL,
-  "deferred_reason" TEXT NULL,
-  CONSTRAINT "crs_comment_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "crs_comment_comment_id_key" UNIQUE ("comment_id"),
-  CONSTRAINT "crs_comment_template_id_fkey" FOREIGN KEY ("template_id") REFERENCES "audit_core"."crs_comment_template"("id") ON DELETE SET NULL
-);
-CREATE TABLE "app_core"."ui_user" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
   "username" TEXT NOT NULL,
-  "password_hash" TEXT NOT NULL,
-  "role" TEXT NOT NULL DEFAULT 'viewer'::text ,
-  "is_active" BOOLEAN NOT NULL DEFAULT true ,
-  "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now() ,
-  "last_login" TIMESTAMP WITH TIME ZONE NULL,
+  "password_hash" TEXT NOT NULL, -- bcrypt hash (rounds=12). Never store plaintext.
+  "role" TEXT NOT NULL DEFAULT 'viewer', -- viewer = read-only pages; admin = full access incl. ETL/EIS.
+  "is_active" BOOLEAN NOT NULL DEFAULT true,
+  "last_login" TIMESTAMP WITH TIME ZONE,
+  "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
   CONSTRAINT "ui_user_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "ui_user_username_key" UNIQUE ("username")
 );
-CREATE TABLE "app_core"."ui_feedback" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "user_id" UUID NULL,
-  "username" TEXT NULL,
-  "feedback_type" TEXT NOT NULL,
+
+-- ui_feedback: User-submitted feedback and enhancement requests from the UI.
+CREATE TABLE "app_core"."ui_feedback" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
   "title" TEXT NOT NULL,
   "body" TEXT NOT NULL,
-  "status" TEXT NOT NULL DEFAULT 'Open'::text ,
-  "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now() ,
-  CONSTRAINT "ui_feedback_pkey" PRIMARY KEY ("id")
+  "feedback_type" TEXT NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'Open',
+  "username" TEXT,
+  "user_id" UUID,
+  "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  CONSTRAINT "ui_feedback_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "ui_feedback_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "app_core"."ui_user" ("id")
 );
-CREATE TABLE "audit_core"."crs_comment_validation" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "comment_id" UUID NOT NULL,
-  "validation_query_id" UUID NOT NULL,
-  "validation_status" TEXT NOT NULL DEFAULT 'PENDING'::text ,
-  "validation_result_json" JSONB NULL,
-  "validation_timestamp" TIMESTAMP NULL,
-  "validation_error" TEXT NULL,
-  "run_id" UUID NULL,
-  CONSTRAINT "crs_comment_validation_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "crs_comment_validation_unique" UNIQUE ("comment_id", "validation_query_id")
+
+-- ---------------------------------------------------------------------------
+-- Schema: audit_core
+-- Purpose: Audit trail, validation results, and ETL run statistics
+-- ---------------------------------------------------------------------------
+
+-- sync_run_stats: ETL run statistics and audit log entries.
+CREATE TABLE "audit_core"."sync_run_stats" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "run_id" UUID NOT NULL,
+  "target_table" TEXT NOT NULL,
+  "start_time" TIMESTAMP NOT NULL,
+  "end_time" TIMESTAMP,
+  "source_file" TEXT,
+  "count_created" INTEGER DEFAULT 0,
+  "count_updated" INTEGER DEFAULT 0,
+  "count_unchanged" INTEGER DEFAULT 0,
+  "count_deleted" INTEGER DEFAULT 0,
+  "count_errors" INTEGER DEFAULT 0,
+  "count_exported" INTEGER NOT NULL DEFAULT 0, -- Number of rows written to the EIS export CSV file. Set by export_pipeline._log_audit_end().
+  "mapping_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "sync_run_stats_pkey" PRIMARY KEY ("id")
 );
-CREATE TABLE IF NOT EXISTS "audit_core"."crs_template_query_map" (
-  "id"            UUID      NOT NULL DEFAULT gen_random_uuid(),
-  "template_id"   UUID      NOT NULL,
-  "query_id"      UUID      NOT NULL,
-  "priority"      SMALLINT  NOT NULL DEFAULT 1,
-  "object_status" TEXT      NOT NULL DEFAULT 'Active',
-  "created_at"    TIMESTAMP NOT NULL DEFAULT now(),
-  CONSTRAINT "crs_template_query_map_pkey" PRIMARY KEY ("id"),
-  CONSTRAINT "crs_template_query_map_uq"   UNIQUE ("template_id", "query_id"),
-  CONSTRAINT "crs_tqmap_template_fkey" FOREIGN KEY ("template_id")
-      REFERENCES "audit_core"."crs_comment_template" ("id") ON DELETE CASCADE,
-  CONSTRAINT "crs_tqmap_query_fkey" FOREIGN KEY ("query_id")
-      REFERENCES "audit_core"."crs_validation_query" ("id") ON DELETE CASCADE
-);
-CREATE TABLE "mapping"."tag_sece" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "tag_id" UUID NULL,
-  "sece_id" UUID NULL,
-  "mapping_status" TEXT NULL DEFAULT 'Active'::text ,
-  "row_hash" TEXT NULL,
-  "sync_status" TEXT NULL,
-  "sync_timestamp" TIMESTAMP NULL DEFAULT now() ,
-  CONSTRAINT "tag_sece_pkey" PRIMARY KEY ("id")
-);
-CREATE TABLE "project_core"."property_value" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "tag_id" UUID NULL,
-  "class_id" UUID NULL,
-  "property_id" UUID NULL,
-  "mapping_id" UUID NULL,
-  "tag_name_raw" TEXT NULL,
-  "class_code_raw" TEXT NULL,
-  "property_code_raw" TEXT NULL,
-  "mapping_concept_raw" TEXT NULL,
-  "property_uom_raw" TEXT NULL,
-  "property_value" TEXT NULL,
-  "row_hash" TEXT NULL,
-  "sync_status" TEXT NULL,
-  "sync_timestamp" TIMESTAMP NULL DEFAULT now() ,
-  "object_status" TEXT NULL DEFAULT 'Active'::text ,
-  "tag_source_id_raw" TEXT NULL,
-  CONSTRAINT "property_value_pkey" PRIMARY KEY ("id")
-);
-CREATE TABLE "mapping"."document_po" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "document_id" UUID NULL,
-  "po_id" UUID NULL,
-  "mapping_status" TEXT NULL DEFAULT 'Active'::text ,
-  "row_hash" TEXT NULL,
-  "sync_status" TEXT NULL,
-  "sync_timestamp" TIMESTAMP NULL DEFAULT now() ,
-  CONSTRAINT "document_po_pkey" PRIMARY KEY ("id")
-);
-CREATE TABLE "mapping"."tag_document" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "tag_id" UUID NULL,
-  "document_id" UUID NULL,
-  "mapping_status" TEXT NULL DEFAULT 'Active'::text ,
-  "row_hash" TEXT NULL,
-  "sync_status" TEXT NULL,
-  "sync_timestamp" TIMESTAMP NULL DEFAULT now() ,
-  "doc_number_raw" TEXT NULL,
-  "tag_name_raw" TEXT NULL,
-  CONSTRAINT "tag_document_pkey" PRIMARY KEY ("id")
-);
-CREATE TABLE "audit_core"."tag_status_history" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
+
+-- tag_status_history: SCD Type 2 change tracking for tag records.
+CREATE TABLE "audit_core"."tag_status_history" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
   "tag_id" UUID NOT NULL,
   "tag_name" TEXT NOT NULL,
   "source_id" TEXT NOT NULL,
   "sync_status" TEXT NOT NULL,
-  "sync_timestamp" TIMESTAMP NOT NULL DEFAULT now() ,
-  "run_id" UUID NULL,
-  "row_hash" TEXT NULL,
-  "snapshot" JSONB NULL,
-  CONSTRAINT "tag_status_history_pkey" PRIMARY KEY ("id")
+  "row_hash" TEXT,
+  "snapshot" JSONB,
+  "run_id" UUID,
+  "sync_timestamp" TIMESTAMP NOT NULL DEFAULT now(),
+  CONSTRAINT "tag_status_history_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "tag_status_history_tag_id_fkey" FOREIGN KEY ("tag_id") REFERENCES "project_core"."tag" ("id")
 );
-CREATE TABLE "audit_core"."crs_comment_audit" ( 
-  "id" UUID NOT NULL DEFAULT gen_random_uuid() ,
-  "comment_id" UUID NOT NULL,
-  "change_type" TEXT NOT NULL,
-  "snapshot" JSONB NOT NULL,
-  "changed_fields" ARRAY NULL,
-  "changed_by" TEXT NULL,
-  "change_reason" TEXT NULL,
-  "changed_at" TIMESTAMP NOT NULL DEFAULT now() ,
-  "run_id" UUID NULL,
-  CONSTRAINT "crs_comment_audit_pkey" PRIMARY KEY ("id")
-);
-CREATE INDEX "idx_sync_stats_time" 
-ON "audit_core"."sync_run_stats" (
-  "start_time" ASC
-);
-CREATE INDEX "idx_crs_query_is_active" 
-ON "audit_core"."crs_validation_query" (
-  "is_active" ASC
-);
-CREATE INDEX "idx_crs_query_category"
-ON "audit_core"."crs_validation_query" (
-  "category" ASC
-);
-CREATE INDEX "idx_crs_query_evaluation_strategy"
-ON "audit_core"."crs_validation_query" (
-  "evaluation_strategy" ASC
-)
-WHERE "evaluation_strategy" IS NOT NULL;
-CREATE INDEX IF NOT EXISTS "idx_crs_vq_query_type"
-ON "audit_core"."crs_validation_query" (
-  "query_type" ASC
-);
-CREATE INDEX IF NOT EXISTS "idx_crs_tqmap_template"
-ON "audit_core"."crs_template_query_map" (
-  "template_id" ASC
-);
-CREATE INDEX IF NOT EXISTS "idx_crs_tqmap_query"
-ON "audit_core"."crs_template_query_map" (
-  "query_id" ASC
-);
-CREATE INDEX "idx_tag_plant_id" 
-ON "project_core"."tag" (
-  "plant_id" ASC
-);
-CREATE INDEX "idx_val_result_object_id" 
-ON "audit_core"."validation_result" (
-  "object_id" ASC
-);
-CREATE INDEX "idx_val_result_session" 
-ON "audit_core"."validation_result" (
-  "session_id" ASC
-);
-CREATE INDEX "idx_crs_comment_category" 
-ON "audit_core"."crs_comment" (
-  "llm_category" ASC
-);
-CREATE INDEX "idx_crs_comment_crs_doc_number" 
-ON "audit_core"."crs_comment" (
-  "crs_doc_number" ASC
-);
-CREATE INDEX "idx_crs_comment_low_confidence" 
-ON "audit_core"."crs_comment" (
-  "llm_category_confidence" ASC
-);
-CREATE INDEX "idx_crs_comment_sync_timestamp" 
-ON "audit_core"."crs_comment" (
-  "sync_timestamp" ASC
-);
-CREATE INDEX "idx_crs_comment_transmittal" 
-ON "audit_core"."crs_comment" (
-  "transmittal_date" ASC
-);
-CREATE INDEX "idx_crs_comment_source_file" 
-ON "audit_core"."crs_comment" (
-  "source_file" ASC
-);
-CREATE INDEX "idx_crs_comment_tag_id" 
-ON "audit_core"."crs_comment" (
-  "tag_id" ASC
-);
-CREATE INDEX "idx_crs_comment_status"
-ON "audit_core"."crs_comment" (
-  "status" ASC
-);
--- Partial index: only index actionable document references (excludes NULL and 'Not Applicable')
-CREATE INDEX "idx_crs_comment_document_number"
-ON "audit_core"."crs_comment" ("document_number")
-WHERE "document_number" IS NOT NULL AND "document_number" != 'Not Applicable';
 
--- =============================================================================
--- VIEWS
--- =============================================================================
-
-CREATE OR REPLACE VIEW "audit_core"."v_crs_resolution_report" AS
-SELECT
-    cc.id                        AS comment_id,
-    cc.comment_id                AS comment_ref,
-    cc.revision,
-    cc.tag_name,
-    cc.status                    AS comment_status,
-    cc.category_code,
-    cc.classification_tier,
-    cc.deferred_reason,
-    cc.formal_response,
-    cc.response_author,
-    cc.response_approval_date,
-    cv.validation_status,
-    cv.validation_result_json,
-    cv.validation_error,
-    cv.validation_timestamp,
-    cv.run_id                    AS validation_run_id,
-    vq.query_code,
-    vq.query_name,
-    vq.category                  AS query_category,
-    vq.evaluation_strategy,
-    vq.response_template,
-    vq.group_by_field
-FROM "audit_core"."crs_comment" cc
-LEFT JOIN "audit_core"."crs_comment_validation" cv
-       ON cv.comment_id = cc.id
-LEFT JOIN "audit_core"."crs_validation_query"   vq
-       ON vq.id = cv.validation_query_id
-WHERE cc.object_status = 'Active';
-
--- =============================================================================
--- COMMENT ON: audit_core CRS tables
--- =============================================================================
-
-COMMENT ON TABLE "audit_core"."crs_comment" IS
-    'CRS comment master table. One row = one detail-level comment from CRS Excel files. '
-    'SCD2 change tracking via row_hash. Phase 2: LLM fields populated by classify_crs_comment.';
-
-COMMENT ON COLUMN "audit_core"."crs_comment"."crs_doc_number" IS
-    'CRS source document number (from Excel file header). Identifies which CRS file the comment came from.';
-
-COMMENT ON COLUMN "audit_core"."crs_comment"."comment_id" IS
-    'Deterministic UUID5 business key. Stable across re-runs for ON CONFLICT upsert. '
-    'Key: crs_doc_number|group_comment|detail_sheet|tag_name|comment|property_name|document_number_ref.';
-
-COMMENT ON COLUMN "audit_core"."crs_comment"."document_number" IS
-    'Project document reference containing the tag (DOCUMENT_NUMBER column in '
-    'detail sheet). Stores ''Not Applicable'' when column is absent in source. '
-    'Distinct from crs_doc_number (the CRS header file number).';
-
-COMMENT ON COLUMN "audit_core"."crs_comment"."llm_category_confidence" IS
-    'LLM confidence score 0-1. Partial index idx_crs_comment_low_confidence for values < 0.7.';
-
-COMMENT ON COLUMN "audit_core"."crs_comment"."deferred_reason" IS
-    'Tier 0 skip reason: INFORMATIONAL, TAG_NOT_IN_EDW, TAG_INACTIVE, '
-    'TAG_NO_STATUS, TAG_OBJECT_INACTIVE. NULL for Tier 1–3 classified rows.';
-
-COMMENT ON TABLE "audit_core"."crs_validation_query" IS
-    'Registry of SQL validation queries for CRS comment processing. '
-    'query_code format: CRS-C001..CRS-C229 (matches crs_comment_template.category). '
-    'Phase 3: added evaluation_strategy, group_by_field, response_template, query_type columns. '
-    'query_type=GROUP: batch via crs_template_query_map (ANY(:tag_names)). '
-    'query_type=INDIVIDUAL: ad-hoc per comment via crs_comment_validation.';
-
-COMMENT ON TABLE "audit_core"."crs_template_query_map" IS
-    'Maps comment templates to GROUP validation queries (one template → one or more queries). '
-    'Populated by category match: ct.category = vq.query_code (both in CRS-C### format). '
-    'INDIVIDUAL queries use crs_comment_validation directly — no row here.';
-
-COMMENT ON TABLE "audit_core"."crs_comment_validation" IS
-    'M2M: one comment may have multiple validation queries. '
-    'Populated in Phase 2 by validate_crs_comment task. '
-    'Stores validation status and result JSONB for each query execution.';
-
-COMMENT ON TABLE "audit_core"."crs_comment_audit" IS
-    'SCD Type 2 audit trail for crs_comment. Full JSONB snapshot per change. '
-    'Enables temporal queries: what was the status of comment X on date Y?';
-
-CREATE INDEX "idx_ui_feedback_created" 
-ON "app_core"."ui_feedback" (
-  "created_at" DESC
+-- export_validation_rule: Configurable validation rules for EIS export quality checks.
+CREATE TABLE "audit_core"."export_validation_rule" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "rule_code" TEXT NOT NULL,
+  "scope" TEXT NOT NULL,
+  "object_field" TEXT,
+  "description" TEXT,
+  "rule_expression" TEXT NOT NULL,
+  "fix_expression" TEXT,
+  "is_builtin" BOOLEAN NOT NULL DEFAULT false,
+  "is_blocking" BOOLEAN NOT NULL DEFAULT false,
+  "severity" TEXT NOT NULL DEFAULT 'Warning',
+  "object_status" TEXT NOT NULL DEFAULT 'Active',
+  "tier" TEXT,
+  "category" TEXT,
+  "source_ref" TEXT,
+  "check_type" TEXT NOT NULL DEFAULT 'dsl',
+  "sort_order" INTEGER,
+  CONSTRAINT "export_validation_rule_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "export_validation_rule_code_key" UNIQUE ("rule_code")
 );
-CREATE INDEX "idx_ui_feedback_status" 
-ON "app_core"."ui_feedback" (
-  "status" ASC
-);
-CREATE INDEX "idx_crs_cv_timestamp" 
-ON "audit_core"."crs_comment_validation" (
-  "validation_timestamp" ASC
-);
-CREATE INDEX "idx_crs_cv_status" 
-ON "audit_core"."crs_comment_validation" (
-  "validation_status" ASC
-);
-CREATE INDEX "idx_crs_cv_query" 
-ON "audit_core"."crs_comment_validation" (
-  "validation_query_id" ASC
-);
-CREATE INDEX "idx_crs_cv_comment" 
-ON "audit_core"."crs_comment_validation" (
-  "comment_id" ASC
-);
-CREATE INDEX "idx_prop_val_tag_id" 
-ON "project_core"."property_value" (
-  "tag_id" ASC
-);
-CREATE INDEX "idx_prop_val_mapping_id" 
-ON "project_core"."property_value" (
-  "mapping_id" ASC
-);
-CREATE INDEX "idx_prop_val_row_hash" 
-ON "project_core"."property_value" (
-  "row_hash" ASC
-);
-CREATE INDEX "idx_tag_hist_tag_id" 
-ON "audit_core"."tag_status_history" (
-  "tag_id" ASC
-);
-CREATE INDEX "idx_tag_hist_ts" 
-ON "audit_core"."tag_status_history" (
-  "sync_timestamp" ASC
-);
-CREATE INDEX "idx_crs_audit_comment" 
-ON "audit_core"."crs_comment_audit" (
-  "comment_id" ASC
-);
-CREATE INDEX "idx_crs_audit_change_type" 
-ON "audit_core"."crs_comment_audit" (
-  "change_type" ASC
-);
-CREATE INDEX "idx_crs_audit_changed_at" 
-ON "audit_core"."crs_comment_audit" (
-  "changed_at" ASC
-);
-ALTER TABLE "ontology_core"."class_property" ADD CONSTRAINT "class_property_class_id_fkey" FOREIGN KEY ("class_id") REFERENCES "ontology_core"."class" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "ontology_core"."class_property" ADD CONSTRAINT "class_property_property_id_fkey" FOREIGN KEY ("property_id") REFERENCES "ontology_core"."property" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "reference_core"."purchase_order" ADD CONSTRAINT "purchase_order_package_id_fkey" FOREIGN KEY ("package_id") REFERENCES "reference_core"."po_package" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "reference_core"."purchase_order" ADD CONSTRAINT "purchase_order_issuer_id_fkey" FOREIGN KEY ("issuer_id") REFERENCES "reference_core"."company" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "reference_core"."purchase_order" ADD CONSTRAINT "purchase_order_receiver_id_fkey" FOREIGN KEY ("receiver_id") REFERENCES "reference_core"."company" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "reference_core"."plant" ADD CONSTRAINT "plant_site_id_fkey" FOREIGN KEY ("site_id") REFERENCES "reference_core"."site" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "ontology_core"."property" ADD CONSTRAINT "property_uom_group_id_fkey" FOREIGN KEY ("uom_group_id") REFERENCES "ontology_core"."uom_group" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "ontology_core"."property" ADD CONSTRAINT "property_validation_id_fkey" FOREIGN KEY ("validation_rule_id") REFERENCES "ontology_core"."validation_rule" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "reference_core"."project" ADD CONSTRAINT "project_site_id_fkey" FOREIGN KEY ("site_id") REFERENCES "reference_core"."site" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "reference_core"."model_part" ADD CONSTRAINT "model_part_manuf_id_fkey" FOREIGN KEY ("manufacturer_id") REFERENCES "reference_core"."company" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_parent_tag_id_fkey" FOREIGN KEY ("parent_tag_id") REFERENCES "project_core"."tag" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_plant_id_fkey" FOREIGN KEY ("plant_id") REFERENCES "reference_core"."plant" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_from_tag_id_fkey" FOREIGN KEY ("from_tag_id") REFERENCES "project_core"."tag" ("id") ON DELETE SET NULL ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_to_tag_id_fkey" FOREIGN KEY ("to_tag_id") REFERENCES "project_core"."tag" ("id") ON DELETE SET NULL ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_class_id_fkey" FOREIGN KEY ("class_id") REFERENCES "ontology_core"."class" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_article_id_fkey" FOREIGN KEY ("article_id") REFERENCES "reference_core"."article" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_company_id_fkey" FOREIGN KEY ("design_company_id") REFERENCES "reference_core"."company" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_area_id_fkey" FOREIGN KEY ("area_id") REFERENCES "reference_core"."area" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_discipline_id_fkey" FOREIGN KEY ("discipline_id") REFERENCES "reference_core"."discipline" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_process_unit_id_fkey" FOREIGN KEY ("process_unit_id") REFERENCES "reference_core"."process_unit" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "reference_core"."project" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."tag" ADD CONSTRAINT "tag_po_id_fkey" FOREIGN KEY ("po_id") REFERENCES "reference_core"."purchase_order" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "ontology_core"."uom" ADD CONSTRAINT "uom_uom_group_id_fkey" FOREIGN KEY ("uom_group_id") REFERENCES "ontology_core"."uom_group" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "reference_core"."article" ADD CONSTRAINT "article_manufacturer_id_fkey" FOREIGN KEY ("manufacturer_id") REFERENCES "reference_core"."company" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "reference_core"."article" ADD CONSTRAINT "article_model_part_id_fkey" FOREIGN KEY ("model_part_id") REFERENCES "reference_core"."model_part" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "ontology_core"."class" ADD CONSTRAINT "class_parent_class_id_fkey" FOREIGN KEY ("parent_class_id") REFERENCES "ontology_core"."class" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "reference_core"."area" ADD CONSTRAINT "area_plant_id_fkey" FOREIGN KEY ("plant_id") REFERENCES "reference_core"."plant" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "reference_core"."process_unit" ADD CONSTRAINT "process_unit_plant_id_fkey" FOREIGN KEY ("plant_id") REFERENCES "reference_core"."plant" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."document" ADD CONSTRAINT "document_plant_id_fkey" FOREIGN KEY ("plant_id") REFERENCES "reference_core"."plant" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."document" ADD CONSTRAINT "document_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "reference_core"."project" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."document" ADD CONSTRAINT "document_company_id_fkey" FOREIGN KEY ("company_id") REFERENCES "reference_core"."company" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "audit_core"."crs_comment" ADD CONSTRAINT "crs_comment_tag_id_fkey" FOREIGN KEY ("tag_id") REFERENCES "project_core"."tag" ("id") ON DELETE SET NULL ON UPDATE NO ACTION;
-ALTER TABLE "app_core"."ui_feedback" ADD CONSTRAINT "ui_feedback_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "app_core"."ui_user" ("id") ON DELETE SET NULL ON UPDATE NO ACTION;
-ALTER TABLE "audit_core"."crs_comment_validation" ADD CONSTRAINT "crs_comment_validation_comment_id_fkey" FOREIGN KEY ("comment_id") REFERENCES "audit_core"."crs_comment" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
-ALTER TABLE "audit_core"."crs_comment_validation" ADD CONSTRAINT "crs_comment_validation_validation_query_id_fkey" FOREIGN KEY ("validation_query_id") REFERENCES "audit_core"."crs_validation_query" ("id") ON DELETE RESTRICT ON UPDATE NO ACTION;
-ALTER TABLE "mapping"."tag_sece" ADD CONSTRAINT "tag_sece_tag_id_fkey" FOREIGN KEY ("tag_id") REFERENCES "project_core"."tag" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "mapping"."tag_sece" ADD CONSTRAINT "tag_sece_sece_id_fkey" FOREIGN KEY ("sece_id") REFERENCES "reference_core"."sece" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."property_value" ADD CONSTRAINT "property_value_tag_id_fkey" FOREIGN KEY ("tag_id") REFERENCES "project_core"."tag" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."property_value" ADD CONSTRAINT "property_value_class_id_fkey" FOREIGN KEY ("class_id") REFERENCES "ontology_core"."class" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."property_value" ADD CONSTRAINT "property_value_property_id_fkey" FOREIGN KEY ("property_id") REFERENCES "ontology_core"."property" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "project_core"."property_value" ADD CONSTRAINT "property_value_mapping_id_fkey" FOREIGN KEY ("mapping_id") REFERENCES "ontology_core"."class_property" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "mapping"."document_po" ADD CONSTRAINT "document_po_document_id_fkey" FOREIGN KEY ("document_id") REFERENCES "project_core"."document" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "mapping"."document_po" ADD CONSTRAINT "document_po_po_id_fkey" FOREIGN KEY ("po_id") REFERENCES "reference_core"."purchase_order" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "mapping"."tag_document" ADD CONSTRAINT "tag_document_tag_id_fkey" FOREIGN KEY ("tag_id") REFERENCES "project_core"."tag" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "mapping"."tag_document" ADD CONSTRAINT "tag_document_document_id_fkey" FOREIGN KEY ("document_id") REFERENCES "project_core"."document" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "audit_core"."tag_status_history" ADD CONSTRAINT "tag_status_history_tag_id_fkey" FOREIGN KEY ("tag_id") REFERENCES "project_core"."tag" ("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-ALTER TABLE "audit_core"."crs_comment_audit" ADD CONSTRAINT "crs_comment_audit_comment_id_fkey" FOREIGN KEY ("comment_id") REFERENCES "audit_core"."crs_comment" ("id") ON DELETE CASCADE ON UPDATE NO ACTION;
 
--- Phase 2 CRS views (migration_016_crs_phase2.sql)
--- Separate views prevent Cartesian product when joining tags to both docs and properties.
-CREATE OR REPLACE VIEW "project_core"."v_tag_with_docs" AS
-SELECT t.id, t.tag_name, t.tag_status, t.object_status,
-       d.id AS document_id, d.doc_number
-FROM project_core.tag t
-LEFT JOIN mapping.tag_document td ON td.tag_id = t.id AND td.mapping_status = 'Active'
-LEFT JOIN project_core.document d ON d.id = td.document_id AND d.object_status = 'Active'
-WHERE t.object_status = 'Active';
+-- validation_result: Violation records from full-scan validation runs.
+CREATE TABLE "audit_core"."validation_result" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "session_id" UUID NOT NULL,
+  "run_time" TIMESTAMP NOT NULL DEFAULT now(),
+  "rule_code" TEXT NOT NULL,
+  "scope" TEXT NOT NULL,
+  "severity" TEXT NOT NULL DEFAULT 'Warning',
+  "object_type" TEXT,
+  "object_id" UUID,
+  "object_name" TEXT,
+  "violation_detail" TEXT,
+  "column_name" TEXT,
+  "original_value" TEXT,
+  "is_resolved" BOOLEAN NOT NULL DEFAULT false,
+  "tier" TEXT,
+  "category" TEXT,
+  "check_type" TEXT,
+  CONSTRAINT "validation_result_pkey" PRIMARY KEY ("id")
+);
 
-CREATE OR REPLACE VIEW "project_core"."v_tag_properties" AS
-SELECT t.id, t.tag_name, t.tag_status, t.object_status,
-       p.code AS property_code, p.name AS property_name,
-       pv.property_value, pv.property_uom_raw
-FROM project_core.tag t
-LEFT JOIN project_core.property_value pv ON pv.tag_id = t.id AND pv.object_status = 'Active'
-LEFT JOIN ontology_core.property p ON p.id = pv.property_id
-WHERE t.object_status = 'Active';
+-- report_metadata: Dynamic SQL report catalogue for EDW Control Center.
+CREATE TABLE "audit_core"."report_metadata" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "report_name" TEXT NOT NULL,
+  "sql_query" TEXT NOT NULL,
+  "category" TEXT NOT NULL DEFAULT 'General',
+  "description" TEXT,
+  "is_active" BOOLEAN NOT NULL DEFAULT true,
+  "is_parametric" BOOLEAN NOT NULL DEFAULT false, -- True if sql_query contains :param placeholders. UI will render input widgets before execution.
+  "author" TEXT DEFAULT 'system',
+  "created_at" TIMESTAMP NOT NULL DEFAULT now(),
+  "updated_at" TIMESTAMP NOT NULL DEFAULT now(),
+  CONSTRAINT "report_metadata_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "report_metadata_report_name_key" UNIQUE ("report_name")
+);
 
--- Phase 3 CRS view (migration_028_crs_phase3_map.sql)
-CREATE OR REPLACE VIEW "audit_core"."v_template_queries" AS
-SELECT
-    ct.id                   AS template_id,
-    ct.category             AS template_category,
-    ct.check_type,
-    ct.template_text,
-    vq.id                   AS query_id,
-    vq.query_code,
-    vq.query_name,
-    vq.query_type,
-    vq.evaluation_strategy,
-    vq.has_parameters,
-    vq.parameter_names,
-    vq.sql_query,
-    vq.response_template,
-    tqm.priority
-FROM audit_core.crs_template_query_map tqm
-JOIN audit_core.crs_comment_template   ct ON ct.id = tqm.template_id
-JOIN audit_core.crs_validation_query   vq ON vq.id = tqm.query_id
-WHERE tqm.object_status = 'Active'
-  AND ct.object_status  = 'Active'
-  AND vq.is_active      = true
-  AND vq.query_type     = 'GROUP';
+-- ---------------------------------------------------------------------------
+-- Schema: mapping
+-- Purpose: Many-to-many relationship tables
+-- ---------------------------------------------------------------------------
 
-COMMENT ON VIEW "audit_core"."v_template_queries" IS
-    'GROUP queries per template. Used by batch validation flow: '
-    'GROUP BY category → fetch all tag_names → ONE SQL call via ANY(:tag_names). '
-    'INDIVIDUAL queries are looked up directly from crs_comment_validation.';
+-- tag_document: Tag to document cross-reference mapping.
+CREATE TABLE "mapping"."tag_document" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "tag_id" UUID,
+  "document_id" UUID,
+  "tag_name_raw" TEXT,
+  "doc_number_raw" TEXT,
+  "row_hash" TEXT,
+  "sync_status" TEXT DEFAULT 'Active',
+  "sync_timestamp" TIMESTAMP DEFAULT now(),
+  "mapping_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "tag_document_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "tag_document_tag_id_fkey" FOREIGN KEY ("tag_id") REFERENCES "project_core"."tag" ("id"),
+  CONSTRAINT "tag_document_document_id_fkey" FOREIGN KEY ("document_id") REFERENCES "project_core"."document" ("id")
+);
+
+-- tag_sece: Tag to Safety/Environment/Criticality/Equipment (SECE) code mapping.
+CREATE TABLE "mapping"."tag_sece" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "tag_id" UUID,
+  "sece_id" UUID,
+  "row_hash" TEXT,
+  "sync_status" TEXT DEFAULT 'Active',
+  "sync_timestamp" TIMESTAMP DEFAULT now(),
+  "mapping_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "tag_sece_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "tag_sece_tag_id_fkey" FOREIGN KEY ("tag_id") REFERENCES "project_core"."tag" ("id"),
+  CONSTRAINT "tag_sece_sece_id_fkey" FOREIGN KEY ("sece_id") REFERENCES "reference_core"."sece" ("id")
+);
+
+-- document_po: Document to purchase order cross-reference mapping.
+CREATE TABLE "mapping"."document_po" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "document_id" UUID,
+  "po_id" UUID,
+  "row_hash" TEXT,
+  "sync_status" TEXT DEFAULT 'Active',
+  "sync_timestamp" TIMESTAMP DEFAULT now(),
+  "mapping_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "document_po_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "document_po_document_id_fkey" FOREIGN KEY ("document_id") REFERENCES "project_core"."document" ("id"),
+  CONSTRAINT "document_po_po_id_fkey" FOREIGN KEY ("po_id") REFERENCES "reference_core"."purchase_order" ("id")
+);
+
+-- ---------------------------------------------------------------------------
+-- Schema: ontology_core
+-- Purpose: CFIHOS ontology definitions (classes, properties, UoM, validation rules)
+-- ---------------------------------------------------------------------------
+
+-- class: CFIHOS class definitions (tag classes, equipment classes).
+CREATE TABLE "ontology_core"."class" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "code" TEXT NOT NULL,
+  "name" TEXT NOT NULL,
+  "definition" TEXT,
+  "concept" TEXT, -- Functional | Physical | Functional Physical
+  "is_abstract" BOOLEAN,
+  "parent_class_id" UUID,
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "class_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "class_code_key" UNIQUE ("code"),
+  CONSTRAINT "class_parent_class_id_fkey" FOREIGN KEY ("parent_class_id") REFERENCES "ontology_core"."class" ("id")
+);
+
+-- property: CFIHOS property/attribute definitions.
+CREATE TABLE "ontology_core"."property" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "code" TEXT NOT NULL,
+  "name" TEXT NOT NULL,
+  "definition" TEXT,
+  "data_type" TEXT,
+  "length" INTEGER,
+  "uom_group_id" UUID,
+  "validation_rule_id" UUID,
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "property_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "property_code_key" UNIQUE ("code"),
+  CONSTRAINT "property_uom_group_id_fkey" FOREIGN KEY ("uom_group_id") REFERENCES "ontology_core"."uom_group" ("id"),
+  CONSTRAINT "property_validation_rule_id_fkey" FOREIGN KEY ("validation_rule_id") REFERENCES "ontology_core"."validation_rule" ("id")
+);
+
+-- uom: Units of measure.
+CREATE TABLE "ontology_core"."uom" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "code" TEXT NOT NULL,
+  "name" TEXT NOT NULL,
+  "symbol" TEXT,
+  "uom_group_id" UUID,
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "uom_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "uom_code_key" UNIQUE ("code"),
+  CONSTRAINT "uom_uom_group_id_fkey" FOREIGN KEY ("uom_group_id") REFERENCES "ontology_core"."uom_group" ("id")
+);
+
+-- uom_group: Unit of measure groupings (Pressure, Temperature, Length, Mass, Power, etc.).
+CREATE TABLE "ontology_core"."uom_group" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "code" TEXT NOT NULL,
+  "name" TEXT NOT NULL,
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "uom_group_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "uom_group_code_key" UNIQUE ("code")
+);
+
+-- validation_rule: Property validation rules and picklists.
+CREATE TABLE "ontology_core"."validation_rule" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "code" TEXT NOT NULL,
+  "name" TEXT,
+  "validation_type" TEXT, -- picklist | regex | range
+  "validation_value" TEXT,
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "validation_rule_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "validation_rule_code_key" UNIQUE ("code")
+);
+
+-- class_property: Property definitions per class (CFIHOS mappings).
+CREATE TABLE "ontology_core"."class_property" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "class_id" UUID,
+  "property_id" UUID,
+  "mapping_concept" TEXT, -- Functional | Physical | Functional Physical
+  "mapping_presence" TEXT, -- Mandatory | Optional
+  "mapping_status" TEXT DEFAULT 'Active',
+  "mapping_class_name_raw" TEXT,
+  "mapping_class_code_raw" TEXT,
+  "mapping_property_code_raw" TEXT,
+  "mapping_property_name_raw" TEXT,
+  CONSTRAINT "class_property_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "class_property_unique_link" UNIQUE ("class_id", "property_id"),
+  CONSTRAINT "class_property_class_id_fkey" FOREIGN KEY ("class_id") REFERENCES "ontology_core"."class" ("id"),
+  CONSTRAINT "class_property_property_id_fkey" FOREIGN KEY ("property_id") REFERENCES "ontology_core"."property" ("id")
+);
+
+-- ---------------------------------------------------------------------------
+-- Schema: project_core
+-- Purpose: Core project data: tags, documents, property values (SCD Type 2)
+-- ---------------------------------------------------------------------------
+
+-- tag: Master tag register with SCD Type 2 change tracking.
+CREATE TABLE "project_core"."tag" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "source_id" TEXT NOT NULL,
+  "tag_name" TEXT NOT NULL,
+  "tag_status" TEXT,
+  "description" TEXT,
+  "parent_tag_raw" TEXT,
+  "parent_tag_id" UUID,
+  "tag_class_raw" TEXT,
+  "class_id" UUID,
+  "area_code_raw" TEXT,
+  "area_id" UUID,
+  "process_unit_raw" TEXT,
+  "process_unit_id" UUID,
+  "discipline_code_raw" TEXT,
+  "discipline_id" UUID,
+  "po_code_raw" TEXT,
+  "po_id" UUID,
+  "design_company_name_raw" TEXT,
+  "design_company_id" UUID,
+  "company_raw" TEXT,
+  "company_id" UUID,
+  "manufacturer_company_raw" TEXT,
+  "manufacturer_id" UUID,
+  "vendor_company_raw" TEXT,
+  "vendor_id" UUID,
+  "article_code_raw" TEXT,
+  "article_id" UUID,
+  "model_part_raw" TEXT,
+  "model_id" UUID,
+  "safety_critical_item" TEXT,
+  "safety_critical_item_reason_awarded" TEXT,
+  "production_critical_item" TEXT,
+  "serial_no" TEXT,
+  "install_date" TEXT,
+  "startup_date" TEXT,
+  "warranty_end_date" TEXT,
+  "price" TEXT,
+  "tech_id" TEXT,
+  "ip_grade" TEXT,
+  "ex_class" TEXT,
+  "mc_package_code" TEXT,
+  "equip_no" TEXT,
+  "alias" TEXT,
+  "from_tag_raw" TEXT,
+  "from_tag_id" UUID,
+  "to_tag_raw" TEXT,
+  "to_tag_id" UUID,
+  "plant_raw" TEXT,
+  "plant_id" UUID,
+  "project_id" UUID,
+  "row_hash" TEXT,
+  "sync_status" TEXT,
+  "sync_timestamp" TIMESTAMP DEFAULT now(),
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "tag_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "tag_source_id_key" UNIQUE ("source_id"),
+  CONSTRAINT "tag_plant_id_fkey" FOREIGN KEY ("plant_id") REFERENCES "reference_core"."plant" ("id"),
+  CONSTRAINT "tag_class_id_fkey" FOREIGN KEY ("class_id") REFERENCES "ontology_core"."class" ("id"),
+  CONSTRAINT "tag_area_id_fkey" FOREIGN KEY ("area_id") REFERENCES "reference_core"."area" ("id"),
+  CONSTRAINT "tag_process_unit_id_fkey" FOREIGN KEY ("process_unit_id") REFERENCES "reference_core"."process_unit" ("id"),
+  CONSTRAINT "tag_discipline_id_fkey" FOREIGN KEY ("discipline_id") REFERENCES "reference_core"."discipline" ("id"),
+  CONSTRAINT "tag_po_id_fkey" FOREIGN KEY ("po_id") REFERENCES "reference_core"."purchase_order" ("id"),
+  CONSTRAINT "tag_design_company_id_fkey" FOREIGN KEY ("design_company_id") REFERENCES "reference_core"."company" ("id"),
+  CONSTRAINT "tag_article_id_fkey" FOREIGN KEY ("article_id") REFERENCES "reference_core"."article" ("id"),
+  CONSTRAINT "tag_parent_tag_id_fkey" FOREIGN KEY ("parent_tag_id") REFERENCES "project_core"."tag" ("id"),
+  CONSTRAINT "tag_from_tag_id_fkey" FOREIGN KEY ("from_tag_id") REFERENCES "project_core"."tag" ("id"),
+  CONSTRAINT "tag_to_tag_id_fkey" FOREIGN KEY ("to_tag_id") REFERENCES "project_core"."tag" ("id"),
+  CONSTRAINT "tag_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "reference_core"."project" ("id")
+);
+
+-- document: Master document register with SCD Type 2 change tracking.
+CREATE TABLE "project_core"."document" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "doc_number" TEXT NOT NULL,
+  "title" TEXT,
+  "rev" TEXT,
+  "rev_date" DATE,
+  "rev_comment" TEXT,
+  "rev_author" TEXT,
+  "status" TEXT,
+  "doc_type_code" TEXT,
+  "plant_id" UUID,
+  "project_id" UUID,
+  "company_id" UUID,
+  "company_name_raw" TEXT,
+  "mdr_flag" BOOLEAN,
+  "row_hash" TEXT,
+  "sync_status" TEXT,
+  "sync_timestamp" TIMESTAMP DEFAULT now(),
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "document_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "document_doc_number_key" UNIQUE ("doc_number"),
+  CONSTRAINT "document_plant_id_fkey" FOREIGN KEY ("plant_id") REFERENCES "reference_core"."plant" ("id"),
+  CONSTRAINT "document_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "reference_core"."project" ("id"),
+  CONSTRAINT "document_company_id_fkey" FOREIGN KEY ("company_id") REFERENCES "reference_core"."company" ("id")
+);
+
+-- property_value: Tag property values (EAV pattern) with SCD Type 2 change tracking.
+CREATE TABLE "project_core"."property_value" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "tag_id" UUID,
+  "tag_name_raw" TEXT,
+  "tag_source_id_raw" TEXT,
+  "mapping_id" UUID,
+  "property_id" UUID,
+  "class_id" UUID,
+  "class_code_raw" TEXT,
+  "property_code_raw" TEXT,
+  "property_value" TEXT,
+  "property_uom_raw" TEXT,
+  "mapping_concept_raw" TEXT,
+  "row_hash" TEXT,
+  "sync_status" TEXT,
+  "sync_timestamp" TIMESTAMP DEFAULT now(),
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "property_value_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "property_value_tag_id_fkey" FOREIGN KEY ("tag_id") REFERENCES "project_core"."tag" ("id"),
+  CONSTRAINT "property_value_mapping_id_fkey" FOREIGN KEY ("mapping_id") REFERENCES "ontology_core"."class_property" ("id"),
+  CONSTRAINT "property_value_property_id_fkey" FOREIGN KEY ("property_id") REFERENCES "ontology_core"."property" ("id"),
+  CONSTRAINT "property_value_class_id_fkey" FOREIGN KEY ("class_id") REFERENCES "ontology_core"."class" ("id")
+);
+
+-- ---------------------------------------------------------------------------
+-- Schema: reference_core
+-- Purpose: Reference/master data: companies, POs, locations, units, articles, etc.
+-- ---------------------------------------------------------------------------
+
+-- site: Geographic sites.
+CREATE TABLE "reference_core"."site" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "code" TEXT NOT NULL,
+  "name" TEXT,
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "site_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "site_code_key" UNIQUE ("code")
+);
+
+-- plant: Production plants.
+CREATE TABLE "reference_core"."plant" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "code" TEXT NOT NULL,
+  "name" TEXT,
+  "site_id" UUID,
+  "site_code_raw" TEXT,
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "plant_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "plant_code_key" UNIQUE ("code"),
+  CONSTRAINT "plant_site_id_fkey" FOREIGN KEY ("site_id") REFERENCES "reference_core"."site" ("id")
+);
+
+-- project: Projects.
+CREATE TABLE "reference_core"."project" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "code" TEXT NOT NULL,
+  "name" TEXT,
+  "site_id" UUID,
+  "site_code_raw" TEXT,
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "project_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "project_code_key" UNIQUE ("code"),
+  CONSTRAINT "project_site_id_fkey" FOREIGN KEY ("site_id") REFERENCES "reference_core"."site" ("id")
+);
+
+-- area: Area/zone hierarchy.
+CREATE TABLE "reference_core"."area" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "code" TEXT NOT NULL,
+  "name" TEXT,
+  "main_area_code" TEXT,
+  "plant_id" UUID,
+  "plant_code_raw" TEXT,
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "area_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "area_code_key" UNIQUE ("code"),
+  CONSTRAINT "area_plant_id_fkey" FOREIGN KEY ("plant_id") REFERENCES "reference_core"."plant" ("id")
+);
+
+-- process_unit: Process unit breakdown.
+CREATE TABLE "reference_core"."process_unit" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "code" TEXT NOT NULL,
+  "name" TEXT,
+  "plant_id" UUID,
+  "plant_code_raw" TEXT,
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "process_unit_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "process_unit_code_key" UNIQUE ("code"),
+  CONSTRAINT "process_unit_plant_id_fkey" FOREIGN KEY ("plant_id") REFERENCES "reference_core"."plant" ("id")
+);
+
+-- discipline: Engineering disciplines (EA=Electrical, MX=Mechanical, IN=Instrumentation, etc.).
+CREATE TABLE "reference_core"."discipline" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "code" TEXT NOT NULL,
+  "name" TEXT NOT NULL,
+  "code_internal" TEXT,
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "discipline_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "discipline_code_key" UNIQUE ("code")
+);
+
+-- company: Companies (manufacturers, suppliers, contractors).
+CREATE TABLE "reference_core"."company" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "code" TEXT NOT NULL,
+  "name" TEXT,
+  "address" TEXT,
+  "town_city" TEXT,
+  "zip_code" TEXT,
+  "country_code" CHAR(2),
+  "phone" TEXT,
+  "email" TEXT,
+  "website" TEXT,
+  "contact_person" TEXT,
+  "is_manufacturer" BOOLEAN,
+  "is_supplier" BOOLEAN,
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "company_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "company_code_key" UNIQUE ("code")
+);
+
+-- purchase_order: Purchase orders.
+CREATE TABLE "reference_core"."purchase_order" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "code" TEXT NOT NULL,
+  "name" TEXT,
+  "definition" TEXT,
+  "po_date" TEXT,
+  "issuer_id" UUID,
+  "receiver_id" UUID,
+  "issuer_company_raw" TEXT,
+  "receiver_company_raw" TEXT,
+  "package_id" UUID,
+  "package_code_raw" TEXT,
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "purchase_order_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "purchase_order_code_key" UNIQUE ("code"),
+  CONSTRAINT "purchase_order_issuer_id_fkey" FOREIGN KEY ("issuer_id") REFERENCES "reference_core"."company" ("id"),
+  CONSTRAINT "purchase_order_receiver_id_fkey" FOREIGN KEY ("receiver_id") REFERENCES "reference_core"."company" ("id"),
+  CONSTRAINT "purchase_order_package_id_fkey" FOREIGN KEY ("package_id") REFERENCES "reference_core"."po_package" ("id")
+);
+
+-- po_package: Purchase order groupings/packages.
+CREATE TABLE "reference_core"."po_package" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "code" TEXT NOT NULL,
+  "name" TEXT,
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "po_package_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "po_package_code_key" UNIQUE ("code")
+);
+
+-- sece: Safety/Environment/Criticality/Equipment codes.
+CREATE TABLE "reference_core"."sece" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "code" TEXT NOT NULL,
+  "name" TEXT,
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "sece_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "sece_code_key" UNIQUE ("code")
+);
+
+-- model_part: Component models and parts (technical catalog).
+CREATE TABLE "reference_core"."model_part" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "code" TEXT NOT NULL,
+  "name" TEXT,
+  "definition" TEXT,
+  "manuf_company_raw" TEXT,
+  "manufacturer_id" UUID,
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "model_part_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "model_part_code_key" UNIQUE ("code"),
+  CONSTRAINT "model_part_manufacturer_id_fkey" FOREIGN KEY ("manufacturer_id") REFERENCES "reference_core"."company" ("id")
+);
+
+-- article: Vendor parts/equipment specifications (SKU catalog).
+CREATE TABLE "reference_core"."article" (
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "code" TEXT NOT NULL,
+  "name" TEXT,
+  "definition" TEXT,
+  "article_type" TEXT,
+  "product_family" TEXT,
+  "commodity_code" TEXT,
+  "basic_construction" TEXT,
+  "manufacturer_material" TEXT,
+  "manufacturer_company_name_raw" TEXT,
+  "manufacturer_id" UUID,
+  "manufacturer_el_number" TEXT,
+  "manufacturer_sap_code" TEXT,
+  "model_part_code_raw" TEXT,
+  "model_part_id" UUID,
+  "cable_outer_diameter" REAL,
+  "cable_cross_sectional_area" REAL,
+  "object_status" TEXT DEFAULT 'Active',
+  CONSTRAINT "article_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "article_code_key" UNIQUE ("code"),
+  CONSTRAINT "article_manufacturer_id_fkey" FOREIGN KEY ("manufacturer_id") REFERENCES "reference_core"."company" ("id"),
+  CONSTRAINT "article_model_part_id_fkey" FOREIGN KEY ("model_part_id") REFERENCES "reference_core"."model_part" ("id")
+);
+
+-- ===========================================================================
+-- END OF SCHEMA
+-- ===========================================================================
