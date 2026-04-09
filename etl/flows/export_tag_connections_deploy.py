@@ -42,6 +42,7 @@ Note:    from_tag_raw / to_tag_raw exported verbatim — no FK resolution.
          Values may contain open-end labels, zone comments, or free text from source.
 Changes: 2026-03-16 — Initial implementation.
          2026-04-09 — Add DISTINCT + self-loop exclusion guard.
+         2026-04-09 - ORDER BY removed: incompatible with SELECT DISTINCT (t.tag_name not in select list)
 */
 SELECT DISTINCT
     p.code          AS plant_code,
@@ -60,7 +61,6 @@ WHERE t.object_status = 'Active'
   )
   AND (t.from_tag_raw IS NULL OR t.to_tag_raw IS NULL
        OR t.from_tag_raw != t.to_tag_raw)  -- exclude self-loop at SQL level
-ORDER BY t.tag_name
 """
 
 _FILE_TEMPLATE = "JDAW-KVE-E-JA-6944-00001-006-{revision}.CSV"
