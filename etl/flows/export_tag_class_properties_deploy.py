@@ -1,5 +1,20 @@
-"""Reverse ETL export flow: Tag Class Properties (EIS seq 307)."""
+"""Reverse ETL export flow: Tag Instance Property Values (EIS files 010 + 011).
 
+Replaces the previous Tag Class Properties schema export (seq 307).
+Exports tag instance property values for:
+  - File 010: Functional concept tags  (JDAW-KVE-E-JA-6944-00001-010-{rev}.CSV)
+  - File 011: Physical concept tags    (JDAW-KVE-E-JA-6944-00001-011-{rev}.CSV)
+
+Both files share the same 5-column schema (exact EIS order):
+  PLANT_CODE, TAG_NAME, PROPERTY_NAME, PROPERTY_VALUE, PROPERTY_VALUE_UOM
+
+PROPERTY_NAME  = human-readable name (ontology_core.property.name), NOT p.code
+PROPERTY_VALUE_UOM = symbol_ascii with fallback to symbol
+                     Mixed-case preserved (e.g. "degC", "kPa(g)", "mm2").
+                     Do NOT uppercase this column.
+"""
+
+import functools
 import re
 import sys
 from pathlib import Path
@@ -10,7 +25,6 @@ from prefect.cache_policies import NO_CACHE
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
-# Setup import path so tasks.* resolves from etl/
 current_dir = Path(__file__).resolve().parent
 script_root = current_dir.parent
 if str(script_root) not in sys.path:
@@ -18,77 +32,115 @@ if str(script_root) not in sys.path:
 
 try:
     from tasks.common import load_config, get_db_engine_url
-    from tasks.export_transforms import transform_tag_class_properties
-    from tasks.export_pipeline import run_export_pipeline
+    from tasks.export_transforms import transform_tag_instance_properties
+    from tasks.export_pipeline import run_export_pipeline, _load_uom_lookup
 except ImportError as e:
     print(f"[SKIP] {Path(__file__).name}: Could not import task modules. Details: {e}")
     sys.exit(0)
 
-# Module-level config — same pattern as other export flows
 config = load_config()
 DB_URL = get_db_engine_url(config)
 _EXPORT_DIR = config.get("storage", {}).get("export_dir", ".")
 
 # ---------------------------------------------------------------------------
-# SQL: Extract tag class property schema (Functional concept only)
+# SQL: Functional concept tag instance property values (file 010)
 # ---------------------------------------------------------------------------
 
-_TAG_CLASS_PROPERTIES_SQL = """
+_TAG_PROPERTY_VALUES_SQL = """
 /*
-Purpose: Tag Class Properties schema export for EIS (seq 307).
-Gate:    cp.mapping_status = 'Active'
-         cp.mapping_concept ILIKE '%Functional%'  — Tag classes only (excludes Physical-only)
-         c.object_status ILIKE 'Active'            — stored as 'ACTIVE' (uppercase) in DB
-         p.object_status = 'Active'
-Note:    mapping_presence is NULL in many rows — CASE maps NULL to 'N' (not mandatory).
-         validation_rule may be NULL — COALESCE returns empty string.
-Changes: 2026-03-13 — Initial implementation.
+Purpose : Tag instance property values for EIS file 010.
+Gate    : t.object_status = 'Active'
+          cp.mapping_concept ILIKE '%Functional%'
+          tpv.value IS NOT NULL AND tpv.value <> ''
+          Rows where value = NULL or '' excluded at SQL level.
+          Rows where value = 'TBC' are INCLUDED (valid export placeholder).
+Changes : 2026-04-10 — replaces class schema export (seq 307 → files 010/011).
 */
 SELECT
-    c.name                              AS TAG_CLASS_NAME,
-    p.code                              AS PROPERTY_CODE,
-    p.name                              AS PROPERTY_NAME,
-    COALESCE(p.data_type, '')           AS DATA_TYPE,
-    CASE WHEN cp.mapping_presence = 'Mandatory' THEN 'Y' ELSE 'N' END AS IS_MANDATORY,
-    COALESCE(vr.validation_value, '')   AS VALID_VALUES
-FROM ontology_core.class_property cp
--- Why INNER JOIN: rows without a valid class or property are ontology integrity errors
-JOIN ontology_core.class c ON c.id = cp.class_id
-JOIN ontology_core.property p ON p.id = cp.property_id
--- Why LEFT JOIN: not all properties have a picklist — NULL valid_values is expected
-LEFT JOIN ontology_core.validation_rule vr ON vr.id = p.validation_rule_id
-WHERE cp.mapping_status = 'Active'
-  AND cp.mapping_concept ILIKE '%Functional%'
-  AND c.object_status ILIKE 'Active'
+    COALESCE(plt.code, '')                  AS plant_code,
+    t.name                                  AS tag_name,
+    p.name                                  AS property_name,
+    tpv.value                               AS property_value,
+    COALESCE(u.symbol_ascii, u.symbol, '')  AS property_value_uom
+FROM project_core.tag_property_value tpv
+JOIN project_core.tag           t   ON t.id   = tpv.tag_id
+JOIN ontology_core.property     p   ON p.id   = tpv.property_id
+JOIN ontology_core.class_property cp
+     ON cp.class_id    = t.class_id
+    AND cp.property_id = p.id
+    AND cp.mapping_concept ILIKE '%Functional%'
+    AND cp.mapping_status  = 'Active'
+LEFT JOIN reference_core.plant  plt ON plt.id = t.plant_id
+LEFT JOIN ontology_core.uom     u   ON u.id   = tpv.uom_id
+WHERE t.object_status = 'Active'
   AND p.object_status = 'Active'
-ORDER BY c.name, p.code
+  AND tpv.value IS NOT NULL
+  AND tpv.value <> ''
+ORDER BY t.name, p.name
 """
 
-_FILE_TEMPLATE = "JDAW-KVE-E-JA-6944-00001-009-{revision}.CSV"
+# ---------------------------------------------------------------------------
+# SQL: Physical concept tag instance property values (file 011)
+# ---------------------------------------------------------------------------
+
+_EQUIPMENT_PROPERTY_VALUES_SQL = """
+/*
+Purpose : Equipment (Physical) tag instance property values for EIS file 011.
+Gate    : t.object_status = 'Active'
+          cp.mapping_concept ILIKE '%Physical%'
+          tpv.value IS NOT NULL AND tpv.value <> ''
+          Rows where value = NULL or '' excluded at SQL level.
+          Rows where value = 'TBC' are INCLUDED (valid export placeholder).
+Changes : 2026-04-10 — replaces class schema export (seq 307 → files 010/011).
+*/
+SELECT
+    COALESCE(plt.code, '')                  AS plant_code,
+    t.name                                  AS tag_name,
+    p.name                                  AS property_name,
+    tpv.value                               AS property_value,
+    COALESCE(u.symbol_ascii, u.symbol, '')  AS property_value_uom
+FROM project_core.tag_property_value tpv
+JOIN project_core.tag           t   ON t.id   = tpv.tag_id
+JOIN ontology_core.property     p   ON p.id   = tpv.property_id
+JOIN ontology_core.class_property cp
+     ON cp.class_id    = t.class_id
+    AND cp.property_id = p.id
+    AND cp.mapping_concept ILIKE '%Physical%'
+    AND cp.mapping_status  = 'Active'
+LEFT JOIN reference_core.plant  plt ON plt.id = t.plant_id
+LEFT JOIN ontology_core.uom     u   ON u.id   = tpv.uom_id
+WHERE t.object_status = 'Active'
+  AND p.object_status = 'Active'
+  AND tpv.value IS NOT NULL
+  AND tpv.value <> ''
+ORDER BY t.name, p.name
+"""
+
+_TAG_PROP_FILE_TEMPLATE   = "JDAW-KVE-E-JA-6944-00001-010-{revision}.CSV"
+_EQUIP_PROP_FILE_TEMPLATE = "JDAW-KVE-E-JA-6944-00001-011-{revision}.CSV"
 
 
 # ---------------------------------------------------------------------------
 # Prefect tasks
 # ---------------------------------------------------------------------------
 
-@task(name="extract-tag-class-properties", retries=1, cache_policy=NO_CACHE)
-def extract_tag_class_properties(engine: Engine) -> pd.DataFrame:
-    """
-    Run the Tag Class Properties SQL query and return a raw DataFrame.
-
-    Filters to Functional mapping_concept only — Physical-only class properties
-    (equipment schema) are excluded from seq 307.
-
-    Args:
-        engine: SQLAlchemy engine connected to engineering_core.
-
-    Returns:
-        DataFrame with active tag class property schema rows.
-    """
+@task(name="extract-tag-property-values", retries=1, cache_policy=NO_CACHE)
+def extract_tag_property_values(engine: Engine) -> pd.DataFrame:
+    """Extract Functional concept tag instance property values (file 010)."""
     logger = get_run_logger()
     with engine.connect() as conn:
-        df = pd.read_sql(text(_TAG_CLASS_PROPERTIES_SQL), conn)
-    logger.info(f"Extracted {len(df)} active tag class property rows (Functional concept)")
+        df = pd.read_sql(text(_TAG_PROPERTY_VALUES_SQL), conn)
+    logger.info(f"Extracted {len(df)} Functional tag property value rows (file 010)")
+    return df
+
+
+@task(name="extract-equipment-property-values", retries=1, cache_policy=NO_CACHE)
+def extract_equipment_property_values(engine: Engine) -> pd.DataFrame:
+    """Extract Physical concept tag instance property values (file 011)."""
+    logger = get_run_logger()
+    with engine.connect() as conn:
+        df = pd.read_sql(text(_EQUIPMENT_PROPERTY_VALUES_SQL), conn)
+    logger.info(f"Extracted {len(df)} Physical tag property value rows (file 011)")
     return df
 
 
@@ -96,61 +148,103 @@ def extract_tag_class_properties(engine: Engine) -> pd.DataFrame:
 # Prefect flow
 # ---------------------------------------------------------------------------
 
-@flow(name="export_tag_class_properties_data", log_prints=True)
-def export_tag_class_properties_flow(
-    doc_revision: str = "A35",
+@flow(name="export_tag_instance_properties_data", log_prints=True)
+def export_tag_instance_properties_flow(
+    doc_revision: str = "A37",
     output_dir: str | None = None,
 ) -> dict[str, int]:
     """
-    Export Tag Class Properties to EIS CSV snapshot (seq 307).
+    Export tag instance property values to EIS CSV snapshots (files 010 + 011).
 
-    Output file: JDAW-KVE-E-JA-6944-00001-009-{doc_revision}.CSV
-    Encoding:    UTF-8 BOM (utf-8-sig) for Excel/EIS compatibility.
-    Filter gate: mapping_status = 'Active', mapping_concept ILIKE '%Functional%',
-                 class.object_status ILIKE 'Active' (stored as 'ACTIVE' in DB).
-    Audit:       Start/end recorded in audit_core.sync_run_stats.
+    Exports tag instance property values for EIS files 010 (Functional)
+    and 011 (Physical). Replaces the previous class schema export (seq 307).
+
+    Output files:
+      JDAW-KVE-E-JA-6944-00001-010-{doc_revision}.CSV  (Functional tags)
+      JDAW-KVE-E-JA-6944-00001-011-{doc_revision}.CSV  (Physical/Equipment tags)
+
+    Column schema (both files, exact EIS order):
+      PLANT_CODE, TAG_NAME, PROPERTY_NAME, PROPERTY_VALUE, PROPERTY_VALUE_UOM
+
+    Encoding: UTF-8 BOM (utf-8-sig) for Excel/EIS compatibility.
+
+    UoM note:
+      PROPERTY_VALUE_UOM preserves mixed-case canonical symbols (e.g. "degC",
+      "kPa(g)", "mm2"). Column is NOT uppercased — EIS and source system are
+      case-sensitive for UoM matching.
 
     Args:
-        doc_revision: EIS revision code (e.g. "A35"). Must match [A-Z]\\d{2}.
+        doc_revision: EIS revision code (e.g. "A37"). Must match [A-Z]\\d{2}.
         output_dir: Destination directory. Defaults to config storage.export_dir.
 
     Returns:
-        dict with keys "exported" (rows written) and "violations" (total violations found).
-
-    Raises:
-        ValueError: If doc_revision does not match [A-Z]\\d{2} pattern.
+        dict with keys "exported_010", "exported_011", "violations".
 
     Example:
-        >>> export_tag_class_properties_flow(doc_revision="A35")
-        {'exported': 2230, 'violations': 0}
+        >>> export_tag_instance_properties_flow(doc_revision="A37")
+        {'exported_010': 8500, 'exported_011': 3200, 'violations': 12}
     """
     logger = get_run_logger()
 
     if not re.match(r"^[A-Z]\d{2}$", doc_revision):
         raise ValueError(
-            f"doc_revision '{doc_revision}' is invalid. Expected format: [A-Z]\\d{{2}} (e.g. 'A35')."
+            f"doc_revision '{doc_revision}' is invalid. Expected format: [A-Z]\\d{{2}} (e.g. 'A37')."
         )
 
     engine = create_engine(DB_URL)
-    output_path = Path(output_dir or _EXPORT_DIR) / _FILE_TEMPLATE.format(revision=doc_revision)
+    base_dir = Path(output_dir or _EXPORT_DIR)
 
-    return run_export_pipeline(
+    # Load UoM alias lookup once for both exports.
+    # Maps lower(alias) → symbol_ascii for UoM token resolution in _split_value_uom.
+    # Returns {} safely if uom_alias table not yet migrated.
+    uom_lookup = _load_uom_lookup(engine)
+    logger.info(f"Loaded {len(uom_lookup)} UoM alias entries")
+
+    transform_fn = functools.partial(transform_tag_instance_properties, uom_lookup=uom_lookup)
+
+    # --- File 010: Functional tag property values ---
+    output_010 = base_dir / _TAG_PROP_FILE_TEMPLATE.format(revision=doc_revision)
+    result_010 = run_export_pipeline(
         engine=engine,
-        scope="tag_class_property",
-        extract_fn=extract_tag_class_properties,
-        transform_fn=transform_tag_class_properties,
-        output_path=output_path,
-        report_name="tag_class_properties",
+        scope="common",
+        extract_fn=extract_tag_property_values,
+        transform_fn=transform_fn,
+        output_path=output_010,
+        report_name="tag_property_values_010",
         logger=logger,
     )
+
+    # --- File 011: Physical/Equipment tag property values ---
+    output_011 = base_dir / _EQUIP_PROP_FILE_TEMPLATE.format(revision=doc_revision)
+    result_011 = run_export_pipeline(
+        engine=engine,
+        scope="common",
+        extract_fn=extract_equipment_property_values,
+        transform_fn=transform_fn,
+        output_path=output_011,
+        report_name="tag_property_values_011",
+        logger=logger,
+    )
+
+    total_violations = result_010["violations"] + result_011["violations"]
+    logger.info(
+        f"Export complete: 010={result_010['exported']} rows, "
+        f"011={result_011['exported']} rows, violations={total_violations}"
+    )
+
+    return {
+        "exported_010": result_010["exported"],
+        "exported_011": result_011["exported"],
+        "violations":   total_violations,
+    }
 
 
 if __name__ == "__main__":
     _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-    export_tag_class_properties_flow.from_source(
+    export_tag_instance_properties_flow.from_source(
         source=str(_REPO_ROOT),
-        entrypoint="etl/flows/export_tag_class_properties_deploy.py:export_tag_class_properties_flow",
+        entrypoint="etl/flows/export_tag_class_properties_deploy.py:export_tag_instance_properties_flow",
     ).deploy(
-        name="export_tag_class_properties_data_deploy",
+        name="export_tag_instance_properties_data_deploy",
         work_pool_name="default-agent-pool",
     )

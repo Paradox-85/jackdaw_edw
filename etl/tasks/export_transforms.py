@@ -7,12 +7,54 @@ import pandas as pd
 
 
 # ---------------------------------------------------------------------------
-# Value/UoM splitting utilities
+# Value / UoM split patterns
 # ---------------------------------------------------------------------------
+# Pattern priority (evaluated top-to-bottom, first match wins):
+# P1: Inch notation — numeric followed by double-quote
+#     "6\""  → value="6",  uom="inch"
+#     No alias lookup needed; hardcoded to "inch".
+# P2: Degree-letter split — numeric (with optional sign/range) ending with °
+#     followed by optional space and letter(s)
+#     "-60°C"         → value="-60",      uom="degC"
+#     "+60° C"        → value="+60",      uom="degC"  (space between ° and C)
+#     "-50 - 450 Deg C" → NOT matched here (handled by P4 as range + UoM token)
+#     The ° sign is consumed; "C" merged to form "deg" + letter → canonical "degC"
+# P3: Percent + qualifier — numeric followed by % and optional text qualifier
+#     "0% LEL"   → value="0",  uom="% LEL"
+#     "100%"     → value="100", uom="%"
+#     Canonical: uom is kept as-is after strip; alias lookup applied.
+# P4: Standard — numeric (with optional sign prefix and range) followed by UoM token
+#     "490mm"        → value="490",    uom="mm"
+#     "4 - 50 mm"    → value="4 - 50", uom="mm"
+#     "-50 - 450 Deg C" → value="-50 - 450", uom="Deg C"
+#     "100kW"        → value="100",    uom="kW"
+#     "3.5 bar(g)"   → value="3.5",    uom="bar(g)"
+#     "25 degC"      → value="25",     uom="degC"
 
-_VALUE_UOM_SPLIT_RE = _re.compile(
-    r"^(?P<value>[\d.,]+(?:\s*[-–]\s*[\d.,]+)?)"  # numeric or range
-    r"\s*(?P<uom>[A-Za-z°²³µμ%][A-Za-z0-9°²³/.*()\\-]*)\s*$"
+# P1: inch — standalone number then double-quote
+_P1_INCH_RE = _re.compile(
+    r"^(?P<value>[+-]?[\d.,]+(?:\s*[-–]\s*[+-]?[\d.,]+)?)\s*\"$"
+)
+
+# P2: degree-letter — number then ° then optional space then letters
+_P2_DEG_RE = _re.compile(
+    r"^(?P<value>[+-]?[\d.,]+(?:\s*[-–]\s*[+-]?[\d.,]+)?)\s*°\s*(?P<letter>[A-Za-z]*)$"
+)
+
+# P3: percent — number then % then optional qualifier
+_P3_PCT_RE = _re.compile(
+    r"^(?P<value>[+-]?[\d.,]+(?:\s*[-–]\s*[+-]?[\d.,]+)?)\s*(?P<uom>%[A-Za-z0-9°²³/.*()\s\-]*)$"
+)
+
+# P4: standard — number (with optional sign/range) then space then UoM token
+# UoM token may contain spaces (e.g. "Deg C") — capture remainder of string
+_P4_STD_RE = _re.compile(
+    r"^(?P<value>[+-]?[\d.,]+(?:\s*[-–]\s*[+-]?[\d.,]+)?)\s+"
+    r"(?P<uom>[A-Za-z°²³µμ%][A-Za-z0-9°²³/.*()\s\-]*)$"
+    r"|"
+    # no-space variant: number immediately followed by UoM (no spaces)
+    r"^(?P<value2>[+-]?[\d.,]+(?:\s*[-–]\s*[+-]?[\d.,]+)?)"
+    r"(?P<uom2>[A-Za-z°²³µμ%][A-Za-z0-9°²³/.*()\-]*)$"
 )
 
 
@@ -41,37 +83,130 @@ def _split_value_uom(
     value: str, uom: str, uom_lookup: dict[str, str]
 ) -> tuple[str, str]:
     """
-    Split combined value and UoM (e.g., "490mm" → ("490", "mm")).
+    Split combined value and UoM token into separate fields.
 
-    If uom is already provided separately, returns value and uom unchanged.
-    If value contains embedded UoM pattern, splits and resolves to canonical form.
+    Handles the following source data patterns found in engineering datasets:
+
+    Standard numeric+UoM (no-space):
+        "490mm"        → ("490",    "mm")
+        "100kW"        → ("100",    "kW")
+        "49063mm2"     → ("49063",  "mm2")
+
+    Standard numeric+UoM (with space):
+        "4 - 50 mm"    → ("4 - 50", "mm")
+        "3.5 bar(g)"   → ("3.5",    "bar(g)")
+        "25 degC"      → ("25",     "degC")
+
+    Range notation with multi-word UoM:
+        "-50 - 450 Deg C" → ("-50 - 450", "Deg C")   # resolved to degC via alias
+
+    Signed values:
+        "+60° C"       → ("+60",    "degC")    # ° stripped, "C" merged to "deg"
+        "-60°"         → ("-60",    "degC")    # bare degree → canonical degC
+
+    Inch notation (double-quote):
+        "6\""          → ("6",      "inch")    # hardcoded; no alias needed
+
+    Percent with qualifier:
+        "0% LEL"       → ("0",      "% LEL")
+        "100%"         → ("100",    "%")
+
+    No-op cases — returned unchanged:
+        uom already set:  ("490", "mm", ...)   → ("490", "mm")
+        pure text:        ("Active", "", ...)  → ("Active", "")
+        pseudo-null:      ("NA", "", ...)      → ("NA", "")
+        already split:    ("100", "kW", ...)   → ("100", "kW")
+
+    UoM case normalization:
+        All extracted UoM tokens are passed through _resolve_uom_symbol().
+        If the token is found in uom_lookup (alias_lower → symbol_ascii),
+        the canonical symbol_ascii is returned.
+        If not found, the raw token is returned stripped but case-preserved.
+        Callers must NOT uppercase the UoM column globally — canonical symbols
+        may be mixed-case (e.g. "kPa(g)", "degC", "mbar").
 
     Args:
         value: Property value string, potentially with embedded UoM.
-        uom: Separate UoM column value (if already split).
-        uom_lookup: Dictionary mapping alias_lower → symbol_ascii.
+        uom: Separate UoM column value. If non-empty, function is a no-op.
+        uom_lookup: Dict mapping lower(alias) → symbol_ascii.
 
     Returns:
-        Tuple of (clean_value, canonical_uom).
+        Tuple (clean_value, canonical_uom).
 
-    Example:
-        >>> lookup = {'mm': 'mm', 'bar(g)': 'bar(g)'}
+    Examples:
+        >>> lookup = {'mm': 'mm', 'bar(g)': 'bar(g)', 'deg c': 'degC'}
         >>> _split_value_uom('490mm', '', lookup)
         ('490', 'mm')
+        >>> _split_value_uom('0% LEL', '', lookup)
+        ('0', '% LEL')
+        >>> _split_value_uom('+60° C', '', lookup)
+        ('+60', 'degC')
+        >>> _split_value_uom('-50 - 450 Deg C', '', lookup)
+        ('-50 - 450', 'degC')
+        >>> _split_value_uom('6\"', '', lookup)
+        ('6', 'inch')
         >>> _split_value_uom('490', 'mm', lookup)
         ('490', 'mm')
+        >>> _split_value_uom('Active', '', lookup)
+        ('Active', '')
     """
     if uom.strip():
+        # UoM already provided separately — no-op
         return value, uom
     if not isinstance(value, str) or not value.strip():
         return value, uom
 
-    m = _VALUE_UOM_SPLIT_RE.match(value.strip())
+    s = value.strip()
+
+    # P0: Excel date corruption — "Apr-50" → "4 - 50"
+    # Excel silently coerces "4 - 50" to a date (April 50th) when the cell
+    # has no explicit string type, then serializes it as "Apr-50" in CSV export.
+    # Must be corrected before UoM splitting or the value is lost entirely.
+    _MONTH_MAP = {
+        "jan": "1", "feb": "2", "mar": "3", "apr": "4",
+        "may": "5", "jun": "6", "jul": "7", "aug": "8",
+        "sep": "9", "oct": "10", "nov": "11", "dec": "12",
+    }
+    _excel_date_re = _re.compile(r"^([A-Za-z]{3})-(\d+)$")
+    _m0 = _excel_date_re.match(value.strip())
+    if _m0:
+        month_key = _m0.group(1).lower()
+        if month_key in _MONTH_MAP:
+            value = f"{_MONTH_MAP[month_key]} - {_m0.group(2)}"
+
+    # P1: Inch — "6\"" → ("6", "inch")
+    m = _P1_INCH_RE.match(s)
     if m:
-        clean_val = m.group("value").strip()
+        return m.group("value").strip(), "inch"
+
+    # P2: Degree-letter — "-60°C", "+60° C", "-60°"
+    # ° is consumed; letter part (if any) merged with "deg" prefix
+    m = _P2_DEG_RE.match(s)
+    if m:
+        letter = (m.group("letter") or "").strip()
+        raw_uom = "deg" + letter if letter else "degC"  # bare ° defaults to degC
+        canon_uom = _resolve_uom_symbol(raw_uom, uom_lookup)
+        return m.group("value").strip(), canon_uom
+
+    # P3: Percent — "0% LEL" → ("0", "% LEL"), "100%" → ("100", "%")
+    m = _P3_PCT_RE.match(s)
+    if m:
         raw_uom = m.group("uom").strip()
         canon_uom = _resolve_uom_symbol(raw_uom, uom_lookup)
+        return m.group("value").strip(), canon_uom
+
+    # P4: Standard — space-separated or no-space variants
+    m = _P4_STD_RE.match(s)
+    if m:
+        if m.group("value") is not None:
+            clean_val = m.group("value").strip()
+            raw_uom = m.group("uom").strip()
+        else:
+            clean_val = m.group("value2").strip()
+            raw_uom = m.group("uom2").strip()
+        canon_uom = _resolve_uom_symbol(raw_uom, uom_lookup)
         return clean_val, canon_uom
+
     return value, uom
 
 
@@ -121,6 +256,80 @@ def _apply_value_uom_split(
     df = df.copy()
     df[[value_col, uom_col]] = result
     return df
+
+
+# ---------------------------------------------------------------------------
+# Pseudo-null normalization
+# ---------------------------------------------------------------------------
+
+# Ordered list of (compiled_regex, replacement) pairs.
+# Evaluated top-to-bottom; first match wins.
+_PSEUDO_NULL_PATTERNS: list[tuple[_re.Pattern, str]] = [
+    # Already canonical — fast-path no-op
+    (_re.compile(r"^NA$"), "NA"),
+    # Large sentinel numbers: 999999, 9999999, etc. (5+ nines)
+    (_re.compile(r"^9{5,}$"), "NA"),
+    # Epoch date placeholders: 01/01/1990, 01.01.1990
+    (_re.compile(r"^01[./]01[./]1990$"), "NA"),
+    # Bare dash (common "no value" placeholder in legacy data)
+    (_re.compile(r"^-$"), "NA"),
+    # Domain/tag-prefixed NA variants:
+    #   Dash separator:       Area-NA, PU-NA, PO-NA, Tag-NA, Loop-NA
+    #   Underscore separator: Area_NA, PU_NA, PO_NA, Tag_NA, Loop_NA
+    #   Covers all prefix families per DOMAIN_PREFIX_NA + TAG_PREFIX_NA rules.
+    (_re.compile(r"^[A-Za-z]+[-_]NA$"), "NA"),
+    # Verbose "not applicable" variants (case-insensitive):
+    #   N.A., n/a, n.a., not applicable, not appl., N/A
+    #   Canonical target: "NA" (no dots, no slashes, exact uppercase)
+    (_re.compile(r"(?i)^(N\.A\.|n/a|n\.a\.|not\s+applicable|not\s+appl\.?)$"), "NA"),
+]
+
+
+def normalize_pseudo_null(value: str) -> str:
+    """
+    Normalize pseudo-null sentinel values to the canonical string "NA".
+
+    Source data contains many encodings of "no value" — this function
+    collapses all known variants to the single canonical sentinel "NA"
+    so that downstream validation rules (DOMAIN_PREFIX_NA, TAG_PREFIX_NA,
+    NOT_APPLICABLE_VARIANT) have a consistent target to check.
+
+    Handled patterns:
+    - Already canonical:     "NA"              → "NA"   (fast-path)
+    - Large sentinel nums:   "999999"          → "NA"
+    - Epoch date:            "01/01/1990"      → "NA"
+    - Bare dash:             "-"               → "NA"
+    - Prefixed (dash):       "Area-NA", "PU-NA", "Tag-NA"   → "NA"
+    - Prefixed (underscore): "Area_NA", "PU_NA", "Tag_NA"   → "NA"
+    - Verbose variants:      "N.A.", "n/a", "not applicable" → "NA"
+
+    Negative cases (must NOT be normalized):
+    - "PU_NAP"   — contains NA but not suffix  → unchanged
+    - "BANANA"   — contains NA but not suffix  → unchanged
+    - "TBC"      — valid export placeholder    → unchanged
+
+    Args:
+        value: Input string. Non-string values are returned unchanged.
+
+    Returns:
+        "NA" if value matches a pseudo-null pattern, otherwise the original value.
+
+    Examples:
+        >>> normalize_pseudo_null('PU_NA')
+        'NA'
+        >>> normalize_pseudo_null('not applicable')
+        'NA'
+        >>> normalize_pseudo_null('BANANA')
+        'BANANA'
+        >>> normalize_pseudo_null('PU_NAP')
+        'PU_NAP'
+    """
+    if not isinstance(value, str):
+        return value
+    for pattern, replacement in _PSEUDO_NULL_PATTERNS:
+        if pattern.match(value):
+            return replacement
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -827,6 +1036,103 @@ def transform_tag_class_properties(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = df.columns.str.upper()
     available = [c for c in _TAG_CLASS_PROP_COLUMNS if c in df.columns]
+    return df[available]
+
+
+# ---------------------------------------------------------------------------
+# Tag Instance Property Values domain transform (EIS files 010 / 011)
+# ---------------------------------------------------------------------------
+# Replaces the previous class schema export (seq 307).
+# Used by:
+#   export_tag_class_properties_deploy.py — file 010 (Functional concept)
+#   export_tag_class_properties_deploy.py — file 011 (Physical concept)
+# Column contract (both files — exact order required by EIS):
+#   PLANT_CODE, TAG_NAME, PROPERTY_NAME, PROPERTY_VALUE, PROPERTY_VALUE_UOM
+# PROPERTY_NAME:        human-readable property name (p.name), NOT p.code
+# PROPERTY_VALUE_UOM:   symbol_ascii with fallback to symbol (from SQL COALESCE)
+#                       May be mixed case — do NOT globally uppercase this column.
+#                       Examples of valid canonical values: "degC", "kPa(g)", "mm2"
+# UoM case note:
+#   symbol_ascii values are populated from ontology_core.uom.symbol_ascii which
+#   intentionally preserves mixed case for EIS compatibility (e.g. "degC" not "DEGC").
+#   Do NOT apply str.upper() to PROPERTY_VALUE_UOM in this transform.
+
+_TAG_INSTANCE_PROP_COLUMNS: list[str] = [
+    "PLANT_CODE",
+    "TAG_NAME",
+    "PROPERTY_NAME",
+    "PROPERTY_VALUE",
+    "PROPERTY_VALUE_UOM",
+]
+
+
+def transform_tag_instance_properties(
+    df: pd.DataFrame,
+    uom_lookup: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    """
+    Transform tag instance property values for EIS files 010 (Functional) / 011 (Physical).
+
+    Pipeline (in order):
+      1. Uppercase column names        — PostgreSQL returns lowercase aliases
+      2. sanitize_dataframe()          — NaN → "", encoding repair (mojibake etc.)
+      3. normalize_pseudo_null()       — PROPERTY_VALUE: sentinel → "NA"
+      4. _apply_value_uom_split()      — split embedded UoM (e.g. "490mm" → "490"/"mm")
+                                         handles: signed ranges, inch, degree, % LEL
+      5. UOM auto-clear                — blank PROPERTY_VALUE_UOM when value is "NA" or "TBC"
+      6. Column reorder                — _TAG_INSTANCE_PROP_COLUMNS (exact EIS order)
+
+    UoM case contract:
+      PROPERTY_VALUE_UOM is NOT uppercased. Canonical symbols are mixed-case
+      (e.g. "degC", "kPa(g)", "mm2"). Upstream alias lookup in _apply_value_uom_split
+      resolves raw tokens to canonical form via uom_lookup.
+
+    Args:
+        df: Raw DataFrame from _TAG_PROPERTY_VALUES_SQL or _EQUIPMENT_PROPERTY_VALUES_SQL.
+        uom_lookup: Dict mapping lower(alias) → symbol_ascii.
+                    Loaded once per flow run via _load_uom_lookup(engine).
+                    If None or empty, UoM splitting skips alias resolution.
+
+    Returns:
+        Transformed DataFrame with exactly 5 columns in EIS-specified order.
+        Rows with PROPERTY_VALUE = NULL or "" are excluded at SQL level (not here).
+
+    Example:
+        >>> result = transform_tag_instance_properties(raw_df, uom_lookup=lookup)
+        >>> list(result.columns)
+        ['PLANT_CODE', 'TAG_NAME', 'PROPERTY_NAME', 'PROPERTY_VALUE', 'PROPERTY_VALUE_UOM']
+    """
+    if uom_lookup is None:
+        uom_lookup = {}
+
+    df = df.copy()
+    df.columns = df.columns.str.upper()
+
+    # Step 2: encoding repair + NaN → ""
+    df = sanitize_dataframe(df)
+
+    # Step 3: normalize pseudo-null sentinels
+    if "PROPERTY_VALUE" in df.columns:
+        df["PROPERTY_VALUE"] = df["PROPERTY_VALUE"].apply(
+            lambda v: normalize_pseudo_null(v) if isinstance(v, str) else v
+        )
+
+    # Step 4: split embedded UoM
+    # Handles: "490mm", "+60° C", "-50 - 450 Deg C", "6\"", "0% LEL"
+    if "PROPERTY_VALUE" in df.columns and "PROPERTY_VALUE_UOM" in df.columns:
+        df = _apply_value_uom_split(
+            df,
+            value_col="PROPERTY_VALUE",
+            uom_col="PROPERTY_VALUE_UOM",
+            uom_lookup=uom_lookup,
+        )
+        # Step 5: auto-clear UOM for sentinel and placeholder values
+        # NA = pseudo-null (no meaningful value, no meaningful UoM)
+        # TBC = to be confirmed (valid export row, UoM would be speculative)
+        mask = df["PROPERTY_VALUE"].fillna("").str.strip().str.upper().isin(["NA", "TBC"])
+        df.loc[mask, "PROPERTY_VALUE_UOM"] = ""
+
+    available = [c for c in _TAG_INSTANCE_PROP_COLUMNS if c in df.columns]
     return df[available]
 
 
