@@ -184,7 +184,7 @@ def clean_engineering_text(value: str) -> str:
     s = s.replace("mm\u00b2", "mm2")  # mm² → mm2 (lowercase variant)
 
     # Step 11: Collapse multiple spaces to single
-    s = re.sub(r" {2,}", " ", s)
+    s = _re.sub(r" {2,}", " ", s)
 
     # Step 12: Strip leading/trailing whitespace
     s = s.strip()
