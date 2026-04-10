@@ -67,6 +67,7 @@ services:
       --threads 8
       --threads-batch 8
       --jinja
+      --reasoning-budget 0
       --metrics
       --api-key ${LLAMA_API_KEY}
     networks:

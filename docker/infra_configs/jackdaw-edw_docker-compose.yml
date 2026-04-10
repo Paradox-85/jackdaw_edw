@@ -91,6 +91,9 @@ services:
       LLM_BASE_URL: "http://llamacpp-qwen27b:8081/v1"
     volumes:
       - /mnt/shared-data:/mnt/shared-data
+    networks:
+      - default
+      - ai_core_network
     # Note: Keep an eye on entrypoint, it overrides Dockerfile's CMD/ENTRYPOINT
     entrypoint: >
       /bin/sh -c "
