@@ -60,22 +60,20 @@ SELECT
     COALESCE(plt.code, '')                  AS plant_code,
     t.name                                  AS tag_name,
     p.name                                  AS property_name,
-    tpv.value                               AS property_value,
+    pv.property_value                       AS property_value,
     COALESCE(u.symbol_ascii, u.symbol, '')  AS property_value_uom
-FROM project_core.tag_property_value tpv
-JOIN project_core.tag           t   ON t.id   = tpv.tag_id
-JOIN ontology_core.property     p   ON p.id   = tpv.property_id
+FROM project_core.property_value pv
+JOIN project_core.tag           t   ON t.id  = pv.tag_id
+JOIN ontology_core.property     p   ON p.id  = pv.property_id
 JOIN ontology_core.class_property cp
-     ON cp.class_id    = t.class_id
-    AND cp.property_id = p.id
+     ON cp.id = pv.mapping_id
     AND cp.mapping_concept ILIKE '%Functional%'
-    AND cp.mapping_status  = 'Active'
 LEFT JOIN reference_core.plant  plt ON plt.id = t.plant_id
-LEFT JOIN ontology_core.uom     u   ON u.id   = tpv.uom_id
-WHERE t.object_status = 'Active'
-  AND p.object_status = 'Active'
-  AND tpv.value IS NOT NULL
-  AND tpv.value <> ''
+LEFT JOIN ontology_core.uom     u   ON u.code = pv.property_uom_raw
+WHERE t.object_status  = 'Active'
+  AND pv.object_status = 'Active'
+  AND pv.property_value IS NOT NULL
+  AND pv.property_value <> ''
 ORDER BY t.name, p.name
 """
 
@@ -97,22 +95,20 @@ SELECT
     COALESCE(plt.code, '')                  AS plant_code,
     t.name                                  AS tag_name,
     p.name                                  AS property_name,
-    tpv.value                               AS property_value,
+    pv.property_value                       AS property_value,
     COALESCE(u.symbol_ascii, u.symbol, '')  AS property_value_uom
-FROM project_core.tag_property_value tpv
-JOIN project_core.tag           t   ON t.id   = tpv.tag_id
-JOIN ontology_core.property     p   ON p.id   = tpv.property_id
+FROM project_core.property_value pv
+JOIN project_core.tag           t   ON t.id  = pv.tag_id
+JOIN ontology_core.property     p   ON p.id  = pv.property_id
 JOIN ontology_core.class_property cp
-     ON cp.class_id    = t.class_id
-    AND cp.property_id = p.id
+     ON cp.id = pv.mapping_id
     AND cp.mapping_concept ILIKE '%Physical%'
-    AND cp.mapping_status  = 'Active'
 LEFT JOIN reference_core.plant  plt ON plt.id = t.plant_id
-LEFT JOIN ontology_core.uom     u   ON u.id   = tpv.uom_id
-WHERE t.object_status = 'Active'
-  AND p.object_status = 'Active'
-  AND tpv.value IS NOT NULL
-  AND tpv.value <> ''
+LEFT JOIN ontology_core.uom     u   ON u.code = pv.property_uom_raw
+WHERE t.object_status  = 'Active'
+  AND pv.object_status = 'Active'
+  AND pv.property_value IS NOT NULL
+  AND pv.property_value <> ''
 ORDER BY t.name, p.name
 """
 
@@ -148,8 +144,8 @@ def extract_equipment_property_values(engine: Engine) -> pd.DataFrame:
 # Prefect flow
 # ---------------------------------------------------------------------------
 
-@flow(name="export_tag_instance_properties_data", log_prints=True)
-def export_tag_instance_properties_flow(
+@flow(name="export_tag_class_properties_data", log_prints=True)
+def export_tag_class_properties_flow(
     doc_revision: str = "A37",
     output_dir: str | None = None,
 ) -> dict[str, int]:
@@ -181,7 +177,7 @@ def export_tag_instance_properties_flow(
         dict with keys "exported_010", "exported_011", "violations".
 
     Example:
-        >>> export_tag_instance_properties_flow(doc_revision="A37")
+        >>> export_tag_class_properties_flow(doc_revision="A37")
         {'exported_010': 8500, 'exported_011': 3200, 'violations': 12}
     """
     logger = get_run_logger()
@@ -241,10 +237,10 @@ def export_tag_instance_properties_flow(
 
 if __name__ == "__main__":
     _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-    export_tag_instance_properties_flow.from_source(
+    export_tag_class_properties_flow.from_source(
         source=str(_REPO_ROOT),
-        entrypoint="etl/flows/export_tag_class_properties_deploy.py:export_tag_instance_properties_flow",
+        entrypoint="etl/flows/export_tag_class_properties_deploy.py:export_tag_class_properties_flow",
     ).deploy(
-        name="export_tag_instance_properties_data_deploy",
+        name="export_tag_class_properties_data_deploy",
         work_pool_name="default-agent-pool",
     )
