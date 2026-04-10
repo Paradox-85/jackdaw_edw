@@ -1,41 +1,40 @@
--- Migration: Add and update validation rules for pseudo-null normalization
--- Purpose: Extend pseudo-null rules to support Tag prefixes, verbose variants, and UoM splitting
--- Date: 2026-04-09
--- Dependencies: None (can run independently)
+-- =============================================================================
+-- Migration: 20260409_pseudo_null_rules.sql
+-- Autocommit mode — NO BEGIN/COMMIT wrapper
+-- Safe to re-run: all statements are idempotent
+-- =============================================================================
 
--- UPDATE DOMAIN_PREFIX_NA - extend regex to support hyphen AND underscore
+-- ---------------------------------------------------------------------------
+-- 1. UPDATE DOMAIN_PREFIX_NA — расширить regex: dash + underscore
+-- ---------------------------------------------------------------------------
 UPDATE audit_core.export_validation_rule
-SET rule_expression = 'str.contains ".*-NA$" or str.contains ".*_NA$"',
-    description = 'Domain-prefixed NA variants with hyphen or underscore (Area-NA, PU_NA, PO-NA, SECE_NA, etc.)'
-WHERE rule_code = 'DOMAIN_PREFIX_NA'
-  AND scope = 'common';
+SET
+    rule_expression = 'matches_regex "^(Area|PU|PO|SECE)[-_]NA$"',
+    description     = 'Domain-prefixed NA placeholders (Area-NA, PU-NA, PO-NA, '
+                      'SECE-NA, Area_NA, PU_NA, PO_NA, SECE_NA) — source-system '
+                      'null sentinels, must be normalized to canonical "NA"'
+WHERE rule_code = 'DOMAIN_PREFIX_NA';
 
--- INSERT TAG_PREFIX_NA - new rule for all Tag-prefixed variants
+
+-- ---------------------------------------------------------------------------
+-- 2. INSERT TAG_PREFIX_NA — один ряд, scope=common
+--    ON CONFLICT DO UPDATE позволяет переприменять скрипт без ошибок
+-- ---------------------------------------------------------------------------
 INSERT INTO audit_core.export_validation_rule (
-    id,
-    rule_code,
-    scope,
-    object_field,
-    description,
-    rule_expression,
-    fix_expression,
-    is_builtin,
-    is_blocking,
-    severity,
-    object_status,
-    tier,
-    category,
-    source_ref,
-    check_type,
-    sort_order
-)
-SELECT
+    id, rule_code, scope, object_field, description,
+    rule_expression, fix_expression, is_builtin, is_blocking,
+    severity, object_status, tier, category, source_ref,
+    check_type, sort_order
+) VALUES (
     gen_random_uuid(),
     'TAG_PREFIX_NA',
-    'tag_property',
+    'common',
     NULL,
-    'Tag-prefixed NA variants (Tag-NA, Signal_NA, Loop_NA, etc.)',
-    'str.contains ".*-NA$" or str.contains ".*_NA$"',
+    'Extended domain-prefixed NA placeholders (Tag-NA, Tag_NA, Signal_NA, '
+    'Loop_NA, Equip_NA, Instr_NA, Doc_NA, Vendor_NA, Mfr_NA, etc.) — '
+    'covers all domain prefix families. Applies to tag_property and '
+    'equipment_property scopes.',
+    'matches_regex "^(Tag|Signal|Loop|Equip|Instr|Doc|Vendor|Mfr|Model|Class|Disc|System|Sub|Parent|Child|Group|Unit|Zone)[-_]NA$"',
     'normalize_pseudo_null',
     true,
     false,
@@ -46,79 +45,30 @@ SELECT
     'JDAW-PT-D-JA-7739-00003',
     'dsl',
     210
-WHERE NOT EXISTS (
-    SELECT 1 FROM audit_core.export_validation_rule
-    WHERE rule_code = 'TAG_PREFIX_NA'
-);
-
--- Also add TAG_PREFIX_NA to equipment_property scope
-INSERT INTO audit_core.export_validation_rule (
-    id,
-    rule_code,
-    scope,
-    object_field,
-    description,
-    rule_expression,
-    fix_expression,
-    is_builtin,
-    is_blocking,
-    severity,
-    object_status,
-    tier,
-    category,
-    source_ref,
-    check_type,
-    sort_order
 )
-SELECT
-    gen_random_uuid(),
-    'TAG_PREFIX_NA',
-    'equipment_property',
-    NULL,
-    'Tag-prefixed NA variants (Tag-NA, Signal_NA, Loop_NA, etc.)',
-    'str.contains ".*-NA$" or str.contains ".*_NA$"',
-    'normalize_pseudo_null',
-    true,
-    false,
-    'Warning',
-    'Active',
-    'L2',
-    'Completeness & Validity',
-    'JDAW-PT-D-JA-7739-00003',
-    'dsl',
-    210
-WHERE NOT EXISTS (
-    SELECT 1 FROM audit_core.export_validation_rule
-    WHERE rule_code = 'TAG_PREFIX_NA'
-      AND scope = 'equipment_property'
-);
+ON CONFLICT (rule_code) DO UPDATE SET
+    rule_expression = EXCLUDED.rule_expression,
+    description     = EXCLUDED.description,
+    fix_expression  = EXCLUDED.fix_expression,
+    sort_order      = EXCLUDED.sort_order;
 
--- INSERT NOT_APPLICABLE_VARIANT - rule for verbose pseudo-null variants
+
+-- ---------------------------------------------------------------------------
+-- 3. INSERT NOT_APPLICABLE_VARIANT — один ряд, scope=common
+-- ---------------------------------------------------------------------------
 INSERT INTO audit_core.export_validation_rule (
-    id,
-    rule_code,
-    scope,
-    object_field,
-    description,
-    rule_expression,
-    fix_expression,
-    is_builtin,
-    is_blocking,
-    severity,
-    object_status,
-    tier,
-    category,
-    source_ref,
-    check_type,
-    sort_order
-)
-SELECT
+    id, rule_code, scope, object_field, description,
+    rule_expression, fix_expression, is_builtin, is_blocking,
+    severity, object_status, tier, category, source_ref,
+    check_type, sort_order
+) VALUES (
     gen_random_uuid(),
     'NOT_APPLICABLE_VARIANT',
     'common',
     NULL,
-    'Verbose "not applicable" variants (N.A., n/a, not applicable)',
-    'str.matches_regex "(?i)^(N\.A\.|n/a|n\.a\.|not\s+applicable|not\s+appl\.?)$"',
+    'Verbose "not applicable" variants (N.A., n/a, N/A, n.a., '
+    'not applicable, not appl.) — must be normalized to canonical "NA"',
+    'matches_regex "(?i)^(N\\.A\\.|n/a|n\\.a\\.|not\\s+applicable|not\\s+appl\\.?)$"',
     'normalize_pseudo_null',
     true,
     false,
@@ -129,31 +79,42 @@ SELECT
     'JDAW-PT-D-JA-7739-00003',
     'dsl',
     215
-WHERE NOT EXISTS (
-    SELECT 1 FROM audit_core.export_validation_rule
-    WHERE rule_code = 'NOT_APPLICABLE_VARIANT'
-      AND scope = 'common'
-);
+)
+ON CONFLICT (rule_code) DO UPDATE SET
+    rule_expression = EXCLUDED.rule_expression,
+    description     = EXCLUDED.description,
+    fix_expression  = EXCLUDED.fix_expression,
+    sort_order      = EXCLUDED.sort_order;
 
--- UPDATE VALUE_UOM_COMBINED_IN_CELL - add fix_expression and improve regex
+
+-- ---------------------------------------------------------------------------
+-- 4. UPDATE VALUE_UOM_COMBINED_IN_CELL — добавить fix_expression
+-- ---------------------------------------------------------------------------
 UPDATE audit_core.export_validation_rule
-SET rule_expression = 'str.matches_regex "^[\d.,]+(?:\s*[-–]\s*[\d.,]+)?\s*[A-Za-z°²³µμ%][A-Za-z0-9°²³/.*()\\-]*$"',
-    fix_expression = 'split_value_uom',
-    description = 'Combined value and UoM in single cell (e.g., "490mm", "3.5bar(g)")',
-    is_blocking = false
-WHERE rule_code = 'VALUE_UOM_COMBINED_IN_CELL'
-  AND scope IN ('tag_property', 'equipment_property');
+SET
+    fix_expression  = 'split_value_uom',
+    description     = 'PROPERTY_VALUE contains embedded UoM — e.g. "490mm", '
+                      '"4 - 50 mm", "49063mm2", "17013mm", "100kW", "3.5bar(g)". '
+                      'Auto-split: numeric → PROPERTY_VALUE, UoM → PROPERTY_VALUE_UOM.',
+    is_blocking     = false
+WHERE rule_code = 'VALUE_UOM_COMBINED_IN_CELL';
 
--- Verify the changes
+
+-- ---------------------------------------------------------------------------
+-- 5. VERIFY — результат должен быть 4 строки
+-- ---------------------------------------------------------------------------
 SELECT
     rule_code,
     scope,
-    rule_expression,
+    left(rule_expression, 55)  AS rule_expression_preview,
     fix_expression,
-    is_builtin,
-    is_blocking,
     tier,
-    category
+    sort_order
 FROM audit_core.export_validation_rule
-WHERE rule_code IN ('DOMAIN_PREFIX_NA', 'TAG_PREFIX_NA', 'NOT_APPLICABLE_VARIANT', 'VALUE_UOM_COMBINED_IN_CELL')
-ORDER BY rule_code, scope;
+WHERE rule_code IN (
+    'DOMAIN_PREFIX_NA',
+    'TAG_PREFIX_NA',
+    'NOT_APPLICABLE_VARIANT',
+    'VALUE_UOM_COMBINED_IN_CELL'
+)
+ORDER BY sort_order NULLS LAST, rule_code;
