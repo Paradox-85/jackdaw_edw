@@ -158,22 +158,6 @@ def _split_value_uom(
 
     s = value.strip()
 
-    # P0: Excel date corruption — "Apr-50" → "4 - 50"
-    # Excel silently coerces "4 - 50" to a date (April 50th) when the cell
-    # has no explicit string type, then serializes it as "Apr-50" in CSV export.
-    # Must be corrected before UoM splitting or the value is lost entirely.
-    _MONTH_MAP = {
-        "jan": "1", "feb": "2", "mar": "3", "apr": "4",
-        "may": "5", "jun": "6", "jul": "7", "aug": "8",
-        "sep": "9", "oct": "10", "nov": "11", "dec": "12",
-    }
-    _excel_date_re = _re.compile(r"^([A-Za-z]{3})-(\d+)$")
-    _m0 = _excel_date_re.match(value.strip())
-    if _m0:
-        month_key = _m0.group(1).lower()
-        if month_key in _MONTH_MAP:
-            value = f"{_MONTH_MAP[month_key]} - {_m0.group(2)}"
-
     # P1: Inch — "6\"" → ("6", "inch")
     m = _P1_INCH_RE.match(s)
     if m:
