@@ -4,7 +4,7 @@ etl/flows/export_eis_data_deploy.py — EIS Full Package Export
 Sequential pipeline that runs all 11 EIS export flows in order.
 Mirrors the pattern of import_master_sync_deploy.py.
 
-Deployment name: export-eis-package-deployment
+Deployment name: export_eis_data_deploy
 Parameters:
     doc_revision: EIS revision code, e.g. "A35" (pattern [A-Z]\\d{2})
                   Each sub-flow uses its own output path from config.
@@ -37,10 +37,10 @@ except ImportError as e:
     sys.exit(0)
 
 
-@flow(name="export_eis_package_data", log_prints=True, description="SEQUENTIAL PIPELINE: all 11 EIS export flows — registers, properties, connections, doc cross-refs.")
-def export_eis_package_flow(doc_revision: str = "A35") -> dict[str, dict]:
+@flow(name="export_eis_data", log_prints=True, description="SEQUENTIAL PIPELINE: all 11 EIS export flows — registers, properties, connections, doc cross-refs.")
+def export_eis_data_flow(doc_revision: str = "A35") -> dict[str, dict]:
     """
-    Run all EIS export flows sequentially to produce a complete EIS data package.
+    Run all EIS export flows sequentially to produce a complete EIS data export.
 
     Sub-flows are executed in dependency order: registers first, then derived
     tables (properties, connections), then document cross-references last.
@@ -92,11 +92,11 @@ def export_eis_package_flow(doc_revision: str = "A35") -> dict[str, dict]:
 
 if __name__ == "__main__":
     _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-    export_eis_package_flow.from_source(
+    export_eis_data_flow.from_source(
         source=str(_REPO_ROOT),
-        entrypoint="etl/flows/export_eis_data_deploy.py:export_eis_package_flow",
+        entrypoint="etl/flows/export_eis_data_deploy.py:export_eis_data_flow",
     ).deploy(
-        name="export_eis_package_data_deploy",
+        name="export_eis_data_deploy",
         work_pool_name="default-agent-pool",
-        tags=["production", "eis-export", "full-package"],
+        tags=["production", "eis-export", "all-flows"],
     )
