@@ -234,18 +234,24 @@ def _analyse_column(
     df_b: pd.DataFrame,
     pk: Optional[List[str]],
 ) -> ColumnDiff:
-    """Build ColumnDiff for a single shared column, aligned by PK if available."""
+    """Build ColumnDiff for a single shared column, aligned by PK via merge.
+
+    Uses inner merge on PK columns (never set_index) to handle non-unique keys
+    safely (e.g. EAV files where TAG_NAME+PROPERTY_CODE may repeat across rows).
+    Falls back to positional comparison when no usable PK exists.
+    """
     diff = ColumnDiff(name=col)
 
     ser_a = df_a[col].fillna("")
     ser_b = df_b[col].fillna("")
-    diff.null_a = (df_a[col] == "").sum()
-    diff.null_b = (df_b[col] == "").sum()
-    diff.unique_a = ser_a.nunique()
-    diff.unique_b = ser_b.nunique()
+    diff.null_a = int((ser_a == "").sum())
+    diff.null_b = int((ser_b == "").sum())
+    diff.unique_a = int(ser_a.nunique())
+    diff.unique_b = int(ser_b.nunique())
 
     valid_pk = [k for k in (pk or []) if k in df_a.columns and k in df_b.columns and k != col]
     if valid_pk:
+        # merge-based comparison — safe for non-unique indices
         merged = pd.merge(
             df_a[valid_pk + [col]].rename(columns={col: "_val_a"}),
             df_b[valid_pk + [col]].rename(columns={col: "_val_b"}),
@@ -259,6 +265,7 @@ def _analyse_column(
         for _, row in changed.head(_MAX_SAMPLE).iterrows():
             diff.sample_changes.append((str(row["_val_a"]), str(row["_val_b"])))
     else:
+        # positional fallback when no PK available
         min_len = min(len(ser_a), len(ser_b))
         diff.total_rows = min_len
         if min_len > 0:
@@ -271,6 +278,36 @@ def _analyse_column(
                 diff.sample_changes.append((str(a_arr.iloc[i]), str(b_arr.iloc[i])))
 
     return diff
+
+
+def _count_changed_rows_by_pk(
+    df_a: pd.DataFrame,
+    df_b: pd.DataFrame,
+    valid_pk: List[str],
+    non_pk_cols: List[str],
+) -> int:
+    """Count rows (matched by PK via merge) where any non-PK column differs.
+
+    Avoids set_index/loc pattern that fails on non-unique PK labels.
+    """
+    if not non_pk_cols:
+        return 0
+    merged = pd.merge(
+        df_a[valid_pk + non_pk_cols],
+        df_b[valid_pk + non_pk_cols],
+        on=valid_pk,
+        how="inner",
+        suffixes=("_a", "_b"),
+    )
+    if merged.empty:
+        return 0
+    any_changed = pd.Series(False, index=merged.index)
+    for col in non_pk_cols:
+        col_a = f"{col}_a"
+        col_b = f"{col}_b"
+        if col_a in merged.columns and col_b in merged.columns:
+            any_changed = any_changed | (merged[col_a].fillna("") != merged[col_b].fillna(""))
+    return int(any_changed.sum())
 
 
 def analyse_pair(pair: FilePair) -> PairReport:
@@ -311,19 +348,9 @@ def analyse_pair(pair: FilePair) -> PairReport:
         keys_b = set(df_b[valid_pk].apply(tuple, axis=1))
         new_rows = len(keys_b - keys_a)
         removed_rows = len(keys_a - keys_b)
-        common_keys = keys_a & keys_b
-        if common_keys and shared_cols:
-            sub_a = df_a[df_a[valid_pk].apply(tuple, axis=1).isin(common_keys)].set_index(valid_pk)
-            sub_b = df_b[df_b[valid_pk].apply(tuple, axis=1).isin(common_keys)].set_index(valid_pk)
-            non_pk_shared = [c for c in shared_cols if c not in valid_pk]
-            if non_pk_shared:
-                sub_a_s = sub_a[non_pk_shared].sort_index()
-                sub_b_s = sub_b[non_pk_shared].sort_index()
-                common_idx = sub_a_s.index.intersection(sub_b_s.index)
-                if len(common_idx):
-                    changed_rows_pk = int(
-                        (sub_a_s.loc[common_idx] != sub_b_s.loc[common_idx]).any(axis=1).sum()
-                    )
+        non_pk_shared = [c for c in shared_cols if c not in valid_pk]
+        # use merge-based counter — never set_index (avoids non-unique label error)
+        changed_rows_pk = _count_changed_rows_by_pk(df_a, df_b, valid_pk, non_pk_shared)
 
     col_diffs = [
         _analyse_column(col, df_a, df_b, pk)
