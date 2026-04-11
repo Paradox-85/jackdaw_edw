@@ -22,7 +22,7 @@ if str(script_root) not in sys.path:
 
 try:
     from tasks.common import load_config, get_db_engine_url
-    from tasks.export_transforms import transform_tag_instance_properties
+    from tasks.export_transforms import transform_equipment_instance_properties
     from tasks.export_pipeline import run_export_pipeline, _load_uom_lookup
 except ImportError as e:
     print(f"[SKIP] {Path(__file__).name}: Could not import task modules. Details: {e}")
@@ -165,7 +165,7 @@ def export_equipment_properties_flow(
         engine=engine,
         scope="equipment_property",
         extract_fn=extract_equipment_properties,
-        transform_fn=lambda df: transform_tag_instance_properties(df, uom_lookup),
+        transform_fn=lambda df: transform_equipment_instance_properties(df, uom_lookup),
         output_path=output_path,
         report_name="equipment_properties",
         logger=logger,

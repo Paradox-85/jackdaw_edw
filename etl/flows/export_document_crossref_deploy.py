@@ -123,6 +123,7 @@ Changes: 2026-03-17 — Initial implementation.
 */
 SELECT DISTINCT
     d.doc_number                              AS DOCUMENT_NUMBER,
+    COALESCE(pl.code, 'JDA')                  AS PLANT_CODE,
     COALESCE(pu.code, '')                     AS PROCESS_UNIT_CODE,
     d.object_status
 FROM mapping.tag_document m
@@ -130,6 +131,8 @@ INNER JOIN project_core.document       d   ON m.document_id      = d.id
 INNER JOIN project_core.tag            t   ON m.tag_id            = t.id
 LEFT  JOIN reference_core.process_unit pu  ON t.process_unit_id  = pu.id
                AND pu.object_status = 'Active'
+LEFT  JOIN reference_core.plant        pl  ON t.plant_id          = pl.id
+               AND pl.object_status = 'Active'
 WHERE m.mapping_status = 'Active'
   AND d.object_status = 'Active'
   AND d.mdr_flag = TRUE
@@ -138,7 +141,7 @@ WHERE m.mapping_status = 'Active'
   AND t.object_status = 'Active'
   AND UPPER(COALESCE(t.tag_status, '')) NOT IN ('VOID', '')
   AND t.process_unit_id IS NOT NULL
-ORDER BY DOCUMENT_NUMBER, PROCESS_UNIT_CODE
+ORDER BY DOCUMENT_NUMBER, PLANT_CODE, PROCESS_UNIT_CODE
 """
 
 _FILE_410 = "JDAW-KVE-E-JA-6944-00001-018-{revision}.CSV"
@@ -303,7 +306,7 @@ Changes: 2026-03-17 — Initial implementation.
 SELECT
     d.doc_number                            AS DOCUMENT_NUMBER,
     COALESCE(pl.code, '')                   AS PLANT_CODE,
-    COALESCE(po.code, '')                   AS PO_CODE,
+    COALESCE(po.name, '')                   AS PO_CODE,
     d.object_status
 FROM mapping.document_po m
 INNER JOIN project_core.document         d   ON m.document_id = d.id
@@ -315,7 +318,8 @@ WHERE m.mapping_status = 'Active'
   AND d.status IS NOT NULL
   AND UPPER(COALESCE(d.status, '')) != 'CAN'
   AND po.object_status = 'Active'
-ORDER BY d.doc_number, po.code
+  AND po.name IS NOT NULL
+ORDER BY d.doc_number, po.name
 """
 
 _FILE_420 = "JDAW-KVE-E-JA-6944-00001-022-{revision}.CSV"

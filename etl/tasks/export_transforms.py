@@ -951,8 +951,6 @@ def transform_purchase_order(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 _MODEL_PART_COLUMNS: list[str] = [
-    "PLANT_CODE",
-    "MODEL_PART_CODE",
     "MANUFACTURER_COMPANY_NAME",
     "MODEL_PART_NAME",
     "EQUIPMENT_CLASS_NAME",
@@ -981,7 +979,7 @@ def transform_model_part(df: pd.DataFrame) -> pd.DataFrame:
     Example:
         >>> result = transform_model_part(raw_df)
         >>> list(result.columns)
-        ['PLANT_CODE', 'MODEL_PART_CODE', 'MANUFACTURER_COMPANY_NAME', 'MODEL_PART_NAME', 'EQUIPMENT_CLASS_NAME', 'MODEL_DESCRIPTION']
+        ['MANUFACTURER_COMPANY_NAME', 'MODEL_PART_NAME', 'EQUIPMENT_CLASS_NAME', 'MODEL_DESCRIPTION']
     """
     df = df.copy()
     df.columns = df.columns.str.upper()
@@ -1142,7 +1140,87 @@ def transform_tag_instance_properties(
         mask = df["PROPERTY_VALUE"].fillna("").str.strip().str.upper().isin(["NA", "TBC"])
         df.loc[mask, "PROPERTY_VALUE_UOM"] = ""
 
+    # Step 5b: lowercase UOM — canonical EIS format per A36 specification
+    if "PROPERTY_VALUE_UOM" in df.columns:
+        df["PROPERTY_VALUE_UOM"] = df["PROPERTY_VALUE_UOM"].str.lower()
+
     available = [c for c in _TAG_INSTANCE_PROP_COLUMNS if c in df.columns]
+    return df[available]
+
+
+_EQUIPMENT_INSTANCE_PROP_COLUMNS: list[str] = [
+    "PLANT_CODE",
+    "EQUIPMENT_NUMBER",
+    "PROPERTY_NAME",
+    "PROPERTY_VALUE",
+    "PROPERTY_VALUE_UOM",
+]
+
+
+def transform_equipment_instance_properties(
+    df: pd.DataFrame,
+    uom_lookup: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    """
+    Transform equipment instance property values for EIS file 011 (Physical).
+
+    Identical pipeline to transform_tag_instance_properties() but selects
+    EQUIPMENT_NUMBER (from t.equip_no SQL alias) instead of TAG_NAME.
+    EQUIPMENT_NUMBER arrives pre-formatted from SQL as 'Equip_<tag_name>'.
+
+    Pipeline (in order):
+      1. Uppercase column names
+      2. sanitize_dataframe()          — NaN → "", encoding repair
+      3. normalize_pseudo_null()       — PROPERTY_VALUE: sentinel → "NA"
+      4. _apply_value_uom_split()      — split embedded UoM
+      5. UOM auto-clear                — blank UOM when value is "NA" or "TBC"
+      5b. lowercase UOM                — canonical EIS format per A36 specification
+      6. Column reorder                — _EQUIPMENT_INSTANCE_PROP_COLUMNS
+
+    Args:
+        df: Raw DataFrame from _EQUIPMENT_PROPERTIES_SQL.
+        uom_lookup: Dict mapping lower(alias) → symbol_ascii.
+
+    Returns:
+        Transformed DataFrame with exactly 5 columns in EIS-specified order.
+
+    Example:
+        >>> result = transform_equipment_instance_properties(raw_df, uom_lookup=lookup)
+        >>> list(result.columns)
+        ['PLANT_CODE', 'EQUIPMENT_NUMBER', 'PROPERTY_NAME', 'PROPERTY_VALUE', 'PROPERTY_VALUE_UOM']
+    """
+    if uom_lookup is None:
+        uom_lookup = {}
+
+    df = df.copy()
+    df.columns = df.columns.str.upper()
+
+    # Step 2: encoding repair + NaN → ""
+    df = sanitize_dataframe(df)
+
+    # Step 3: normalize pseudo-null sentinels
+    if "PROPERTY_VALUE" in df.columns:
+        df["PROPERTY_VALUE"] = df["PROPERTY_VALUE"].apply(
+            lambda v: normalize_pseudo_null(v) if isinstance(v, str) else v
+        )
+
+    # Step 4: split embedded UoM
+    if "PROPERTY_VALUE" in df.columns and "PROPERTY_VALUE_UOM" in df.columns:
+        df = _apply_value_uom_split(
+            df,
+            value_col="PROPERTY_VALUE",
+            uom_col="PROPERTY_VALUE_UOM",
+            uom_lookup=uom_lookup,
+        )
+        # Step 5: auto-clear UOM for sentinel and placeholder values
+        mask = df["PROPERTY_VALUE"].fillna("").str.strip().str.upper().isin(["NA", "TBC"])
+        df.loc[mask, "PROPERTY_VALUE_UOM"] = ""
+
+    # Step 5b: lowercase UOM — canonical EIS format per A36 specification
+    if "PROPERTY_VALUE_UOM" in df.columns:
+        df["PROPERTY_VALUE_UOM"] = df["PROPERTY_VALUE_UOM"].str.lower()
+
+    available = [c for c in _EQUIPMENT_INSTANCE_PROP_COLUMNS if c in df.columns]
     return df[available]
 
 
@@ -1152,8 +1230,8 @@ def transform_tag_instance_properties(
 
 _TAG_CONNECTIONS_COLUMNS: list[str] = [
     "PLANT_CODE",
-    "FROM_TAG_NAME",
-    "TO_TAG_NAME",
+    "FROM_TAG",
+    "TO_TAG",
 ]
 
 
@@ -1174,13 +1252,19 @@ def transform_tag_connections(df: pd.DataFrame) -> pd.DataFrame:
     Example:
         >>> result = transform_tag_connections(raw_df)
         >>> list(result.columns)
-        ['PLANT_CODE', 'FROM_TAG_NAME', 'TO_TAG_NAME']
+        ['PLANT_CODE', 'FROM_TAG', 'TO_TAG']
     """
     df = df.copy()
     df.columns = df.columns.str.upper()
 
     # Self-loop exclusion moved to SQL level (DISTINCT + from_tag_raw != to_tag_raw)
     # No Python filtering needed here.
+
+    # Rename to A36 canonical column names
+    df = df.rename(columns={
+        "FROM_TAG_NAME": "FROM_TAG",
+        "TO_TAG_NAME":   "TO_TAG",
+    })
 
     available = [c for c in _TAG_CONNECTIONS_COLUMNS if c in df.columns]
     return df[available]
@@ -1192,7 +1276,7 @@ def transform_tag_connections(df: pd.DataFrame) -> pd.DataFrame:
 
 _DOC_TO_SITE_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "SITE_CODE"]
 _DOC_TO_PLANT_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE"]
-_DOC_TO_PROCESS_UNIT_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PROCESS_UNIT_CODE"]
+_DOC_TO_PROCESS_UNIT_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "PROCESS_UNIT_CODE"]
 _DOC_TO_AREA_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "AREA_CODE"]
 _DOC_TO_TAG_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "TAG_NAME"]
 _DOC_TO_EQUIPMENT_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "EQUIPMENT_NUMBER"]
