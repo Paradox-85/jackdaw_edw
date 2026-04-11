@@ -31,9 +31,9 @@ import pandas as pd
 #     "3.5 bar(g)"   → value="3.5",    uom="bar(g)"
 #     "25 degC"      → value="25",     uom="degC"
 
-# P1: inch — standalone number then double-quote
+# P1: inch — standalone number (incl. fractions like "1 1/2") then double-quote
 _P1_INCH_RE = _re.compile(
-    r"^(?P<value>[+-]?[\d.,]+(?:\s*[-–]\s*[+-]?[\d.,]+)?)\s*\"$"
+    r'^(?P<value>[+-]?[\d.,/ ]+(?:\s*[-–]\s*[+-]?[\d.,/ ]+)?)\s*"$'
 )
 
 # P2: degree-letter — number then ° then optional space then letters
@@ -106,6 +106,7 @@ def _split_value_uom(
 
     Inch notation (double-quote):
         "6\""          → ("6",      "inch")    # hardcoded; no alias needed
+        "1 1/2\""      → ("1 1/2",  "inch")    # fractional inch
 
     Percent with qualifier:
         "0% LEL"       → ("0",      "% LEL")

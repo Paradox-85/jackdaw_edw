@@ -1,4 +1,8 @@
-"""Reverse ETL export flow: Tag Property Values (EIS seq 303)."""
+"""Reverse ETL export flow: Tag Instance Property Values (EIS file 010, seq 303).
+
+Column schema (exact EIS order):
+  PLANT_CODE, TAG_NAME, PROPERTY_NAME, PROPERTY_VALUE, PROPERTY_VALUE_UOM
+"""
 
 import re
 import sys
@@ -18,7 +22,7 @@ if str(script_root) not in sys.path:
 
 try:
     from tasks.common import load_config, get_db_engine_url
-    from tasks.export_transforms import transform_tag_properties
+    from tasks.export_transforms import transform_tag_instance_properties
     from tasks.export_pipeline import run_export_pipeline, _load_uom_lookup
 except ImportError as e:
     print(f"[SKIP] {Path(__file__).name}: Could not import task modules. Details: {e}")
@@ -50,16 +54,13 @@ Changes: 2026-03-13 — Initial implementation.
 SELECT
     pl.code                         AS PLANT_CODE,
     t.tag_name                      AS TAG_NAME,
-    p.code                          AS PROPERTY_CODE,
+    p.name                          AS PROPERTY_NAME,
     pv.property_value               AS PROPERTY_VALUE,
-    COALESCE(u.symbol_ascii, u.symbol, pv.property_uom_raw) AS UNIT,
+    COALESCE(u.symbol_ascii, u.symbol, pv.property_uom_raw) AS PROPERTY_VALUE_UOM,
     -- internal fields for validation rules (dropped by transform before CSV write)
     pv.id                           AS object_id,
     t.tag_name                      AS object_name,
-    cp.mapping_concept              AS mapping_concept_raw,
-    pv.object_status,
-    pv.sync_status,
-    pv.sync_timestamp
+    pv.object_status
 FROM project_core.property_value pv
 -- Why INNER JOIN on tag and class_property: rows without a valid tag or mapping
 -- are data integrity errors — they must not silently appear in the export
@@ -80,7 +81,7 @@ LEFT JOIN ontology_core.uom u
 WHERE pv.object_status = 'Active'
   AND cp.mapping_concept ILIKE '%Functional%'
   AND cp.mapping_concept NOT ILIKE '%common%'
-ORDER BY pl.code, t.tag_name, p.code
+ORDER BY pl.code, t.tag_name, p.name
 """
 
 _FILE_TEMPLATE = "JDAW-KVE-E-JA-6944-00001-010-{revision}.CSV"
@@ -164,7 +165,7 @@ def export_tag_properties_flow(
         engine=engine,
         scope="tag_property",
         extract_fn=extract_tag_properties,
-        transform_fn=lambda df: transform_tag_properties(df, uom_lookup),
+        transform_fn=lambda df: transform_tag_instance_properties(df, uom_lookup),
         output_path=output_path,
         report_name="tag_properties",
         logger=logger,
