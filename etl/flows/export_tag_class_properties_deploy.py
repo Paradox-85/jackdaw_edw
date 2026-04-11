@@ -55,10 +55,11 @@ Gate    : t.object_status = 'Active'
           Rows where value = NULL or '' excluded at SQL level.
           Rows where value = 'TBC' are INCLUDED (valid export placeholder).
 Changes : 2026-04-10 — replaces class schema export (seq 307 → files 010/011).
+         2026-04-11 — fix t.name → t.tagname (actual column in project_core.tag).
 */
 SELECT
     COALESCE(plt.code, '')                  AS plant_code,
-    t.name                                  AS tag_name,
+    t.tagname                               AS tag_name,
     p.name                                  AS property_name,
     pv.property_value                       AS property_value,
     COALESCE(u.symbol_ascii, u.symbol, '')  AS property_value_uom
@@ -74,7 +75,7 @@ WHERE t.object_status  = 'Active'
   AND pv.object_status = 'Active'
   AND pv.property_value IS NOT NULL
   AND pv.property_value <> ''
-ORDER BY t.name, p.name
+ORDER BY t.tagname, p.name
 """
 
 # ---------------------------------------------------------------------------
@@ -90,10 +91,11 @@ Gate    : t.object_status = 'Active'
           Rows where value = NULL or '' excluded at SQL level.
           Rows where value = 'TBC' are INCLUDED (valid export placeholder).
 Changes : 2026-04-10 — replaces class schema export (seq 307 → files 010/011).
+         2026-04-11 — fix t.name → t.tagname (actual column in project_core.tag).
 */
 SELECT
     COALESCE(plt.code, '')                  AS plant_code,
-    t.name                                  AS tag_name,
+    t.tagname                               AS tag_name,
     p.name                                  AS property_name,
     pv.property_value                       AS property_value,
     COALESCE(u.symbol_ascii, u.symbol, '')  AS property_value_uom
@@ -109,7 +111,7 @@ WHERE t.object_status  = 'Active'
   AND pv.object_status = 'Active'
   AND pv.property_value IS NOT NULL
   AND pv.property_value <> ''
-ORDER BY t.name, p.name
+ORDER BY t.tagname, p.name
 """
 
 _TAG_PROP_FILE_TEMPLATE   = "JDAW-KVE-E-JA-6944-00001-010-{revision}.CSV"
