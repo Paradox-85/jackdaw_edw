@@ -12,8 +12,10 @@ report with:
   - Per-column value format analysis
   - New / removed / changed row counts (by primary key)
 
-Usage
------
+Dev usage (F5 in VS Code — no args needed):
+    Edit DEV_FOLDER_A / DEV_FOLDER_B / DEV_OUTPUT below, then run.
+
+CLI usage (overrides dev defaults):
     python tests/test_eis_export_diff.py \\
         --folder-a "C:\\path\\to\\Apr-26\\CSV\\eis_export_A37_20260411_0510" \\
         --folder-b "C:\\path\\to\\Mar-26\\CSV" \\
@@ -21,7 +23,7 @@ Usage
 
 Output
 ------
-    Markdown file written to --output (default: eis_diff_report.md).
+    Markdown file written to --output (default: DEV_OUTPUT).
     Exit code 0 always (report tool, not a blocker).
 """
 
@@ -35,6 +37,22 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
+
+
+# ---------------------------------------------------------------------------
+# Dev defaults — edit these when running locally / debugging in VS Code
+# CLI args (--folder-a / --folder-b / --output) override these values
+# ---------------------------------------------------------------------------
+
+DEV_FOLDER_A = Path(
+    r"C:\Users\ADZV\OneDrive - Ramboll\Ramboll_Jackdaw - Admin Team"
+    r"\EIS\Export for Shell\Apr-26\CSV\eis_export_A37_20260411_0510"
+)
+DEV_FOLDER_B = Path(
+    r"C:\Users\ADZV\OneDrive - Ramboll\Ramboll_Jackdaw - Admin Team"
+    r"\EIS\Export for Shell\Mar-26\CSV"
+)
+DEV_OUTPUT = Path(__file__).parent / "eis_diff_A37_vs_A36.md"
 
 
 # ---------------------------------------------------------------------------
@@ -157,30 +175,15 @@ def _scan_folder(folder: Path) -> Dict[str, FileEntry]:
     result: Dict[str, FileEntry] = {}
     if not folder.exists():
         return result
-    for p in folder.glob("*.CSV"):
+    for p in sorted(folder.iterdir()):
+        if not p.is_file():
+            continue
         m = _FILE_RE.match(p.name)
         if not m:
-            # Try case-insensitive search for .csv extension
-            pass
-        if not m:
-            for p2 in folder.glob("*.csv"):
-                m2 = _FILE_RE.match(p2.name)
-                if m2:
-                    seq = m2.group("seq")
-                    rev = m2.group("rev").upper()
-                    result[seq] = FileEntry(path=p2, seq=seq, rev=rev)
-            break
+            continue
         seq = m.group("seq")
         rev = m.group("rev").upper()
         result[seq] = FileEntry(path=p, seq=seq, rev=rev)
-    # Also check .csv (lowercase extension)
-    if not result:
-        for p in folder.glob("*.csv"):
-            m = _FILE_RE.match(p.name)
-            if m:
-                seq = m.group("seq")
-                rev = m.group("rev").upper()
-                result[seq] = FileEntry(path=p, seq=seq, rev=rev)
     return result
 
 
@@ -241,7 +244,6 @@ def _analyse_column(
     diff.unique_a = ser_a.nunique()
     diff.unique_b = ser_b.nunique()
 
-    # Align by PK for value comparison
     valid_pk = [k for k in (pk or []) if k in df_a.columns and k in df_b.columns and k != col]
     if valid_pk:
         merged = pd.merge(
@@ -257,14 +259,13 @@ def _analyse_column(
         for _, row in changed.head(_MAX_SAMPLE).iterrows():
             diff.sample_changes.append((str(row["_val_a"]), str(row["_val_b"])))
     else:
-        # Fall back to positional comparison (shorter length)
         min_len = min(len(ser_a), len(ser_b))
         diff.total_rows = min_len
         if min_len > 0:
             a_arr = ser_a.iloc[:min_len].reset_index(drop=True)
             b_arr = ser_b.iloc[:min_len].reset_index(drop=True)
             mask = a_arr != b_arr
-            diff.changed_rows = mask.sum()
+            diff.changed_rows = int(mask.sum())
             diff.pct_changed = (diff.changed_rows / min_len * 100) if min_len else 0.0
             for i in a_arr[mask].head(_MAX_SAMPLE).index:
                 diff.sample_changes.append((str(a_arr.iloc[i]), str(b_arr.iloc[i])))
@@ -304,7 +305,6 @@ def analyse_pair(pair: FilePair) -> PairReport:
     pk = SEQ_PRIMARY_KEYS.get(pair.seq, [])
     valid_pk = [k for k in pk if k in cols_a and k in cols_b]
 
-    # Row-level identity analysis
     new_rows = removed_rows = changed_rows_pk = 0
     if valid_pk:
         keys_a = set(df_a[valid_pk].apply(tuple, axis=1))
@@ -383,7 +383,6 @@ def render_report(
     lines.append(f"**Folder B (baseline):** `{folder_b}`\n")
     lines.append(f"**Files compared:** {len(reports)}\n")
 
-    # Summary table
     lines.append("## Summary\n")
     lines.append("| Seq | Register | Rev A | Rev B | Rows A | Rows B | Δ Rows | % | ⚠️ |")
     lines.append("|-----|----------|-------|-------|-------:|-------:|-------:|--:|---|")
@@ -400,8 +399,6 @@ def render_report(
         )
 
     lines.append("")
-
-    # Detailed section per file
     lines.append("---\n")
     lines.append("## Detailed Diff per File\n")
 
@@ -413,7 +410,6 @@ def render_report(
             lines.append(f"> 💥 **Load error:** `{r.error}`\n")
             continue
 
-        # --- Row counts ---
         lines.append("#### Row Counts\n")
         lines.append(f"| Metric | Rev A ({r.rev_a}) | Rev B ({r.rev_b}) | Delta |")
         lines.append("|--------|--------:|--------:|------:|")
@@ -426,7 +422,6 @@ def render_report(
         else:
             lines.append("\n> ⚠️ No PK columns available for row-identity analysis.\n")
 
-        # --- Column diffs ---
         lines.append("#### Column Differences\n")
         if not r.cols_only_in_a and not r.cols_only_in_b:
             lines.append("✅ Column sets are identical.\n")
@@ -436,16 +431,15 @@ def render_report(
             if r.cols_only_in_b:
                 lines.append(f"**Only in B ({r.rev_b}):** `{'`, `'.join(r.cols_only_in_b)}`\n")
 
-        # --- Per-column value stats ---
         if r.col_diffs:
             lines.append("#### Per-Column Value Statistics\n")
             lines.append(
-                f"| Column | Unique A | Unique B | Empty A | Empty B "
-                f"| Changed Rows | % Changed | Samples |"
+                "| Column | Unique A | Unique B | Empty A | Empty B "
+                "| Changed Rows | % Changed | Samples |"
             )
             lines.append(
-                "|--------|--------:|--------:|--------:|--------:|"
-                "------------:|----------:|---------|"
+                "|--------|--------:|--------:|--------:|--------:"
+                "|------------:|----------:|---------|"
             )
             for cd in sorted(r.col_diffs, key=lambda x: -x.pct_changed):
                 sample_str = ""
@@ -466,7 +460,7 @@ def render_report(
 
 
 # ---------------------------------------------------------------------------
-# CLI entry point
+# CLI — all args are optional; dev defaults used when not provided
 # ---------------------------------------------------------------------------
 
 
@@ -477,21 +471,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--folder-a",
-        required=True,
+        default=None,
         metavar="PATH",
-        help="Path to first (new) export folder, e.g. .../Apr-26/CSV/eis_export_A37_...",
+        help=f"New export folder (default: DEV_FOLDER_A = {DEV_FOLDER_A})",
     )
     p.add_argument(
         "--folder-b",
-        required=True,
+        default=None,
         metavar="PATH",
-        help="Path to second (baseline) export folder, e.g. .../Mar-26/CSV",
+        help=f"Baseline export folder (default: DEV_FOLDER_B = {DEV_FOLDER_B})",
     )
     p.add_argument(
         "--output",
-        default="eis_diff_report.md",
+        default=None,
         metavar="FILE",
-        help="Output Markdown report file path (default: eis_diff_report.md)",
+        help=f"Output Markdown report file (default: DEV_OUTPUT = {DEV_OUTPUT})",
     )
     return p
 
@@ -500,12 +494,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 
-    folder_a = Path(args.folder_a)
-    folder_b = Path(args.folder_b)
-    output = Path(args.output)
+    folder_a = Path(args.folder_a) if args.folder_a else DEV_FOLDER_A
+    folder_b = Path(args.folder_b) if args.folder_b else DEV_FOLDER_B
+    output   = Path(args.output)   if args.output   else DEV_OUTPUT
 
-    print(f"Scanning folder A: {folder_a}")
-    print(f"Scanning folder B: {folder_b}")
+    print(f"Folder A (new):      {folder_a}")
+    print(f"Folder B (baseline): {folder_b}")
+    print(f"Output:              {output}")
+
+    if not folder_a.exists():
+        print(f"ERROR: folder-a does not exist: {folder_a}")
+        return 1
+    if not folder_b.exists():
+        print(f"ERROR: folder-b does not exist: {folder_b}")
+        return 1
 
     pairs = discover_pairs(folder_a, folder_b)
     if not pairs:
