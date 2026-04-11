@@ -47,7 +47,7 @@ import pandas as pd
 
 DEV_FOLDER_A = Path(
     r"C:\Users\ADZV\OneDrive - Ramboll\Ramboll_Jackdaw - Admin Team"
-    r"\EIS\Export for Shell\Apr-26\CSV\eis_export_A37_20260411_0825"
+    r"\EIS\Export for Shell\Apr-26\CSV\eis_export_A37_20260411_1107"
 )
 DEV_FOLDER_B = Path(
     r"C:\Users\ADZV\OneDrive - Ramboll\Ramboll_Jackdaw - Admin Team"
@@ -564,7 +564,7 @@ def _render_row_examples(
     source_label = examples[0].source
     if source_label == "positional":
         lines.append(
-            f"> ⚠️ No shared PK — rows matched **positionally** "
+            "> ⚠️ No shared PK — rows matched **positionally** "
             "(row N in A vs row N in B). May reflect reordering rather than true changes.\n"
         )
     else:
