@@ -57,11 +57,14 @@ Purpose : Tag class schema export for EIS file 009.
           IS_MANDATORY: Y if mapping_presence = 'Mandatory', N otherwise.
           VALID_VALUES: picklist / regex from ontology_core.validation_rule.validation_value.
           INSTANCE_COUNT: active tags assigned to this class in project_core.tag.
-Gate    : cp.mapping_status = 'Active'
-          c.object_status = 'Active'
-          p.object_status = 'Active'
+Gate    : cp.mapping_status = 'Active'  (case-insensitive via UPPER())
+          c.object_status  = 'Active'   (case-insensitive via UPPER())
+          p.object_status  = 'Active'   (case-insensitive via UPPER())
+Note    : ontology_core.class stores object_status as 'ACTIVE' (all-caps).
+          UPPER() guards added 2026-04-11 to avoid touching source data.
 Changes : 2026-04-11 — restored and extended (added CLASS_CODE, CONCEPT,
                         INSTANCE_COUNT; renamed TAG_CLASS_NAME -> CLASS_NAME).
+          2026-04-11 — added UPPER() case-insensitive guards on all status filters.
 */
 SELECT
     c.code                                          AS class_code,
@@ -74,7 +77,7 @@ SELECT
          THEN 'Y' ELSE 'N' END                      AS is_mandatory,
     COALESCE(vr.validation_value, '')               AS valid_values,
     COUNT(t.id) FILTER (
-        WHERE t.object_status = 'Active'
+        WHERE UPPER(t.object_status) = 'ACTIVE'
     )                                               AS instance_count
 FROM ontology_core.class_property cp
 JOIN ontology_core.class   c  ON c.id  = cp.class_id
@@ -83,9 +86,9 @@ LEFT JOIN ontology_core.validation_rule vr
        ON vr.id = p.validation_rule_id
 LEFT JOIN project_core.tag t
        ON t.class_id = c.id
-WHERE cp.mapping_status = 'Active'
-  AND c.object_status   = 'Active'
-  AND p.object_status   = 'Active'
+WHERE UPPER(cp.mapping_status) = 'ACTIVE'
+  AND UPPER(c.object_status)   = 'ACTIVE'
+  AND UPPER(p.object_status)   = 'ACTIVE'
 GROUP BY c.code, c.name, c.concept,
          p.code, p.name, p.data_type,
          cp.mapping_presence,
