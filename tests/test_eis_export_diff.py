@@ -11,6 +11,7 @@ report with:
   - Value-level diff statistics per column
   - Per-column value format analysis
   - New / removed / changed row counts (by primary key)
+  - Up to 5 concrete row-level diff examples per file
 
 Dev usage (F5 in VS Code — no args needed):
     Edit DEV_FOLDER_A / DEV_FOLDER_B / DEV_OUTPUT below, then run.
@@ -75,14 +76,14 @@ SEQ_NAMES: Dict[str, str] = {
     "009": "Tag Class Properties (EIS-307)",
     "010": "Tag Property Values (EIS-303)",
     "011": "Equipment Property Values (EIS-301)",
-    "016": "Doc→Tag (EIS-412)",
-    "017": "Area Register / Doc→Area (EIS-203/411)",
-    "018": "Process Unit Register / Doc→ProcessUnit (EIS-204/410)",
-    "019": "Doc→Equipment (EIS-413)",
-    "020": "Doc→Model Part (EIS-414)",
-    "022": "Doc→Purchase Order (EIS-420)",
-    "023": "Doc→Plant (EIS-409)",
-    "024": "Doc→Site (EIS-408)",
+    "016": "Doc\u2192Tag (EIS-412)",
+    "017": "Area Register / Doc\u2192Area (EIS-203/411)",
+    "018": "Process Unit Register / Doc\u2192ProcessUnit (EIS-204/410)",
+    "019": "Doc\u2192Equipment (EIS-413)",
+    "020": "Doc\u2192Model Part (EIS-414)",
+    "022": "Doc\u2192Purchase Order (EIS-420)",
+    "023": "Doc\u2192Plant (EIS-409)",
+    "024": "Doc\u2192Site (EIS-408)",
 }
 
 # Primary key columns per sequence (best-effort; used for row identity)
@@ -104,6 +105,9 @@ SEQ_PRIMARY_KEYS: Dict[str, List[str]] = {
     "023": ["DOCUMENT_NUMBER"],
     "024": ["DOCUMENT_NUMBER"],
 }
+
+# Max row-level diff examples rendered per file
+_MAX_ROW_EXAMPLES = 5
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +148,23 @@ class ColumnDiff:
 
 
 @dataclass
+class RowDiffExample:
+    """A single concrete row-level diff example.
+
+    pk_values:      dict of PK column → value identifying this row
+    changed_cols:   list of (column, value_in_a, value_in_b) for every changed column
+    source:         'pk_match' | 'positional' (how the row was matched)
+    row_index_a:    positional index in A (only for positional source)
+    row_index_b:    positional index in B (only for positional source)
+    """
+    pk_values: Dict[str, str]
+    changed_cols: List[Tuple[str, str, str]]  # (column, val_a, val_b)
+    source: str = "pk_match"
+    row_index_a: Optional[int] = None
+    row_index_b: Optional[int] = None
+
+
+@dataclass
 class PairReport:
     seq: str
     seq_name: str
@@ -162,6 +183,7 @@ class PairReport:
     removed_rows: int = 0
     changed_rows: int = 0
     pk_used: List[str] = field(default_factory=list)
+    row_examples: List[RowDiffExample] = field(default_factory=list)
     error: Optional[str] = None
 
 
@@ -310,6 +332,116 @@ def _count_changed_rows_by_pk(
     return int(any_changed.sum())
 
 
+def _build_row_examples_pk(
+    df_a: pd.DataFrame,
+    df_b: pd.DataFrame,
+    valid_pk: List[str],
+    non_pk_cols: List[str],
+    n: int = _MAX_ROW_EXAMPLES,
+) -> List[RowDiffExample]:
+    """Return up to n row-level diff examples for files that have a usable PK.
+
+    Strategy:
+    - Inner-merge A and B on PK columns.
+    - For each merged row where ANY non-PK column differs, record a RowDiffExample
+      containing the PK identity and a list of (col, val_a, val_b) for changed cols.
+    - Sort changed rows so that rows with the MOST changed columns come first
+      (gives the most informative examples at the top).
+    """
+    if not non_pk_cols or not valid_pk:
+        return []
+
+    merged = pd.merge(
+        df_a[valid_pk + non_pk_cols],
+        df_b[valid_pk + non_pk_cols],
+        on=valid_pk,
+        how="inner",
+        suffixes=("_a", "_b"),
+    )
+    if merged.empty:
+        return []
+
+    # Build per-row change mask
+    change_counts = pd.Series(0, index=merged.index)
+    for col in non_pk_cols:
+        col_a, col_b = f"{col}_a", f"{col}_b"
+        if col_a in merged.columns and col_b in merged.columns:
+            change_counts += (merged[col_a].fillna("") != merged[col_b].fillna("")).astype(int)
+
+    # Keep only rows where something changed; sort by change_count desc for best examples
+    changed_idx = change_counts[change_counts > 0].sort_values(ascending=False).index
+    if len(changed_idx) == 0:
+        return []
+
+    examples: List[RowDiffExample] = []
+    for idx in changed_idx[:n]:
+        row = merged.loc[idx]
+        pk_values = {pk_col: str(row[pk_col]) for pk_col in valid_pk}
+        changed_cols: List[Tuple[str, str, str]] = []
+        for col in non_pk_cols:
+            col_a, col_b = f"{col}_a", f"{col}_b"
+            if col_a in merged.columns and col_b in merged.columns:
+                val_a = str(row[col_a]) if pd.notna(row[col_a]) else ""
+                val_b = str(row[col_b]) if pd.notna(row[col_b]) else ""
+                if val_a != val_b:
+                    changed_cols.append((col, val_a, val_b))
+        if changed_cols:
+            examples.append(RowDiffExample(
+                pk_values=pk_values,
+                changed_cols=changed_cols,
+                source="pk_match",
+            ))
+    return examples
+
+
+def _build_row_examples_positional(
+    df_a: pd.DataFrame,
+    df_b: pd.DataFrame,
+    shared_cols: List[str],
+    n: int = _MAX_ROW_EXAMPLES,
+) -> List[RowDiffExample]:
+    """Return up to n row-level diff examples for files without a usable PK.
+
+    Uses positional alignment (row 0 vs row 0, etc.).
+    Picks rows with the most changed columns first for maximum insight.
+    """
+    if not shared_cols:
+        return []
+
+    min_len = min(len(df_a), len(df_b))
+    if min_len == 0:
+        return []
+
+    a_slice = df_a[shared_cols].iloc[:min_len].reset_index(drop=True).fillna("")
+    b_slice = df_b[shared_cols].iloc[:min_len].reset_index(drop=True).fillna("")
+
+    # Count how many columns differ per row
+    diff_matrix = a_slice != b_slice
+    change_counts = diff_matrix.sum(axis=1)
+    changed_rows = change_counts[change_counts > 0].sort_values(ascending=False)
+
+    if changed_rows.empty:
+        return []
+
+    examples: List[RowDiffExample] = []
+    for row_idx in changed_rows.index[:n]:
+        changed_cols: List[Tuple[str, str, str]] = []
+        for col in shared_cols:
+            val_a = str(a_slice.at[row_idx, col])
+            val_b = str(b_slice.at[row_idx, col])
+            if val_a != val_b:
+                changed_cols.append((col, val_a, val_b))
+        if changed_cols:
+            examples.append(RowDiffExample(
+                pk_values={},
+                changed_cols=changed_cols,
+                source="positional",
+                row_index_a=int(row_idx),
+                row_index_b=int(row_idx),
+            ))
+    return examples
+
+
 def analyse_pair(pair: FilePair) -> PairReport:
     """Perform full diff analysis between two CSV files in the pair."""
     try:
@@ -343,14 +475,20 @@ def analyse_pair(pair: FilePair) -> PairReport:
     valid_pk = [k for k in pk if k in cols_a and k in cols_b]
 
     new_rows = removed_rows = changed_rows_pk = 0
+    row_examples: List[RowDiffExample] = []
+
     if valid_pk:
         keys_a = set(df_a[valid_pk].apply(tuple, axis=1))
         keys_b = set(df_b[valid_pk].apply(tuple, axis=1))
         new_rows = len(keys_b - keys_a)
         removed_rows = len(keys_a - keys_b)
         non_pk_shared = [c for c in shared_cols if c not in valid_pk]
-        # use merge-based counter — never set_index (avoids non-unique label error)
         changed_rows_pk = _count_changed_rows_by_pk(df_a, df_b, valid_pk, non_pk_shared)
+        # Build concrete row-level examples (PK-aligned)
+        row_examples = _build_row_examples_pk(df_a, df_b, valid_pk, non_pk_shared)
+    else:
+        # No usable PK — fall back to positional examples
+        row_examples = _build_row_examples_positional(df_a, df_b, shared_cols)
 
     col_diffs = [
         _analyse_column(col, df_a, df_b, pk)
@@ -375,6 +513,7 @@ def analyse_pair(pair: FilePair) -> PairReport:
         removed_rows=removed_rows,
         changed_rows=changed_rows_pk,
         pk_used=valid_pk,
+        row_examples=row_examples,
     )
 
 
@@ -384,6 +523,9 @@ def analyse_pair(pair: FilePair) -> PairReport:
 
 _WARN_ROW_PCT = 5.0   # highlight row-count change above this %
 _WARN_COL_PCT = 10.0  # highlight per-column value change above this %
+
+# Truncate long cell values in row-example table to keep it readable
+_CELL_MAX_LEN = 80
 
 
 def _pct_badge(pct: float) -> str:
@@ -396,6 +538,62 @@ def _col_pct_badge(pct: float) -> str:
     if pct >= _WARN_COL_PCT:
         return f"**{pct:.1f}%** ⚠️"
     return f"{pct:.1f}%"
+
+
+def _truncate(s: str, max_len: int = _CELL_MAX_LEN) -> str:
+    """Truncate a string for display in a Markdown table cell."""
+    s = s.replace("|", "︳")  # escape pipe to avoid breaking table
+    if len(s) > max_len:
+        return s[:max_len - 1] + "…"
+    return s
+
+
+def _render_row_examples(
+    examples: List[RowDiffExample],
+    rev_a: str,
+    rev_b: str,
+    valid_pk: List[str],
+) -> List[str]:
+    """Render the row-level diff examples section as Markdown lines."""
+    if not examples:
+        return []
+
+    lines: List[str] = []
+    lines.append("#### Row-Level Diff Examples\n")
+
+    source_label = examples[0].source
+    if source_label == "positional":
+        lines.append(
+            f"> ⚠️ No shared PK — rows matched **positionally** "
+            "(row N in A vs row N in B). May reflect reordering rather than true changes.\n"
+        )
+    else:
+        pk_str = ", ".join(f"`{k}`" for k in valid_pk)
+        lines.append(f"> Rows matched by PK: {pk_str}\n")
+
+    for i, ex in enumerate(examples, start=1):
+        lines.append(f"**Example {i}**")
+
+        # Identity header
+        if ex.source == "pk_match" and ex.pk_values:
+            pk_parts = "; ".join(f"`{k}` = `{_truncate(v)}`" for k, v in ex.pk_values.items())
+            lines.append(f"  - 🔑 {pk_parts}")
+        else:
+            lines.append(
+                f"  - 🔢 Row #{ex.row_index_a} (0-based positional index)"
+            )
+
+        # Changed columns table
+        lines.append("")
+        lines.append(f"  | Column | Rev A ({rev_a}) | Rev B ({rev_b}) |")
+        lines.append("  |--------|:------|:------|")
+        for col, val_a, val_b in ex.changed_cols:
+            ta = _truncate(val_a)
+            tb = _truncate(val_b)
+            lines.append(f"  | `{col}` | `{ta}` | `{tb}` |")
+        lines.append("")
+
+    return lines
 
 
 def render_report(
@@ -481,6 +679,15 @@ def render_report(
                 )
             lines.append("")
 
+        # Row-level diff examples — most informative section for debugging
+        if r.row_examples:
+            lines.extend(
+                _render_row_examples(r.row_examples, r.rev_a, r.rev_b, r.pk_used)
+            )
+        else:
+            lines.append("#### Row-Level Diff Examples\n")
+            lines.append("ℹ️ No row-level differences detected in shared rows.\n")
+
         lines.append("---\n")
 
     return "\n".join(lines)
@@ -548,7 +755,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"  Analysing seq={pair.seq} ({pair.rev_a} vs {pair.rev_b}) ...", end=" ")
         report = analyse_pair(pair)
         reports.append(report)
-        status = "ERROR" if report.error else f"Δrows={report.row_delta:+,}"
+        status = "ERROR" if report.error else (
+            f"Δrows={report.row_delta:+,}  examples={len(report.row_examples)}"
+        )
         print(status)
 
     md = render_report(reports, folder_a, folder_b)
