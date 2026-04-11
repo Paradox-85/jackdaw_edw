@@ -1230,8 +1230,8 @@ def transform_equipment_instance_properties(
 
 _TAG_CONNECTIONS_COLUMNS: list[str] = [
     "PLANT_CODE",
-    "FROM_TAG",
-    "TO_TAG",
+    "FROM_TAG_NAME",
+    "TO_TAG_NAME",
 ]
 
 
@@ -1252,19 +1252,13 @@ def transform_tag_connections(df: pd.DataFrame) -> pd.DataFrame:
     Example:
         >>> result = transform_tag_connections(raw_df)
         >>> list(result.columns)
-        ['PLANT_CODE', 'FROM_TAG', 'TO_TAG']
+        ['PLANT_CODE', 'FROM_TAG_NAME', 'TO_TAG_NAME']
     """
     df = df.copy()
     df.columns = df.columns.str.upper()
 
     # Self-loop exclusion moved to SQL level (DISTINCT + from_tag_raw != to_tag_raw)
     # No Python filtering needed here.
-
-    # Rename to A36 canonical column names
-    df = df.rename(columns={
-        "FROM_TAG_NAME": "FROM_TAG",
-        "TO_TAG_NAME":   "TO_TAG",
-    })
 
     available = [c for c in _TAG_CONNECTIONS_COLUMNS if c in df.columns]
     return df[available]
@@ -1281,7 +1275,13 @@ _DOC_TO_AREA_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "AREA_CODE"]
 _DOC_TO_TAG_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "TAG_NAME"]
 _DOC_TO_EQUIPMENT_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "EQUIPMENT_NUMBER"]
 _DOC_TO_MODEL_PART_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "MODEL_PART_CODE"]
-_DOC_TO_PO_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "PO_CODE"]
+_DOC_TO_PO_COLUMNS: list[str] = [
+    "DOCUMENT_NUMBER",
+    "REVISION_CODE",
+    "PO_CODE",
+    "PLANT_CODE",
+    "COMPANY_NAME",
+]
 
 # Shared helper — keeps each transform DRY
 def _transform_doc_crossref(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
@@ -1436,6 +1436,6 @@ def transform_doc_to_po(df: pd.DataFrame) -> pd.DataFrame:
 
     Example:
         >>> list(transform_doc_to_po(raw_df).columns)
-        ['DOCUMENT_NUMBER', 'PLANT_CODE', 'PO_CODE']
+        ['DOCUMENT_NUMBER', 'REVISION_CODE', 'PO_CODE', 'PLANT_CODE', 'COMPANY_NAME']
     """
     return _transform_doc_crossref(df, _DOC_TO_PO_COLUMNS)

@@ -342,9 +342,9 @@ WHERE `pv.object_status = 'Active'`
 |---|---|---|
 | `PLANT_CODE` | `plant.code` | via `tag.plant_id` LEFT JOIN |
 | `TAG_NAME` | `tag.tag_name` | INNER JOIN (обязателен) |
-| `PROPERTY_CODE` | `ontology_core.property.code` | CFIHOS code (e.g., `CFIHOS-12345678`) |
+| `PROPERTY_NAME` | `ontology_core.property.name` | human-readable property name |
 | `PROPERTY_VALUE` | `property_value.property_value` | actual value |
-| `UNIT` | `property_value.property_uom_raw` | optional unit |
+| `PROPERTY_VALUE_UOM` | resolved via `ontology_core.uom_alias` → `uom.symbol_ascii`; lowercase | canonical unit symbol |
 
 ---
 
@@ -361,10 +361,10 @@ WHERE `pv.object_status = 'Active'`
 | Column | Source | Notes |
 |---|---|---|
 | `PLANT_CODE` | `plant.code` | via `tag.plant_id` LEFT JOIN |
-| `TAG_NAME` | `tag.tag_name` | INNER JOIN (обязателен) |
-| `PROPERTY_CODE` | `ontology_core.property.code` | property CFIHOS code |
+| `EQUIPMENT_NUMBER` | `tag.equip_no` (alias from `project_core.tag`) | format: `Equip_<tag_name>` |
+| `PROPERTY_NAME` | `ontology_core.property.name` | human-readable property name |
 | `PROPERTY_VALUE` | `property_value.property_value` | actual value |
-| `UNIT` | `property_value.property_uom_raw` | measurement unit |
+| `PROPERTY_VALUE_UOM` | resolved via `ontology_core.uom_alias` → `uom.symbol_ascii`; lowercase | canonical unit symbol |
 
 ---
 
@@ -526,8 +526,10 @@ WHERE `pv.object_status = 'Active'`
 | Column | Source | Notes |
 |---|---|---|
 | `DOCUMENT_NUMBER` | `document.doc_number` | |
+| `REVISION_CODE` | `document.rev` | revision code (e.g. `C03`, `A35`) |
+| `PO_CODE` | `purchase_order.name` via `mapping.document_po.po_id` | hyphenated format e.g. `JA-EE047-1000` |
 | `PLANT_CODE` | `plant.code` via `document.plant_id` | LEFT JOIN; empty if unresolved |
-| `PO_CODE` | `purchase_order.code` via `mapping.document_po.po_id` | INNER JOIN |
+| `COMPANY_NAME` | `company.name` via `purchase_order.issuer_id` | issuing company name |
 
 ---
 

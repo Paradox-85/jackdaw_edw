@@ -298,27 +298,32 @@ _DOC_TO_PO_SQL = """
 /*
 Purpose: Document→PurchaseOrder cross-reference for EIS snapshot export (seq 420).
 Gate:    document: object_status='Active', mdr_flag=TRUE, status NOT NULL/CAN.
-         mapping: mapping_status='Active'.
-         purchase_order: object_status='Active'.
+         purchase_order: object_status='Active', name IS NOT NULL.
 Source:  mapping.document_po.
 Changes: 2026-03-17 — Initial implementation.
+         2026-04-11 — Added REVISION_CODE (d.rev) and COMPANY_NAME (c_iss.name via po.issuer_id)
+                      to align with canonical A36 schema (5 columns).
 */
 SELECT
-    d.doc_number                            AS DOCUMENT_NUMBER,
-    COALESCE(pl.code, '')                   AS PLANT_CODE,
-    COALESCE(po.name, '')                   AS PO_CODE,
-    d.object_status
-FROM mapping.document_po m
-INNER JOIN project_core.document         d   ON m.document_id = d.id
-INNER JOIN reference_core.purchase_order po  ON m.po_id       = po.id
-LEFT  JOIN reference_core.plant          pl  ON d.plant_id    = pl.id AND pl.object_status = 'Active'
-WHERE m.mapping_status = 'Active'
-  AND d.object_status = 'Active'
-  AND d.mdr_flag = TRUE
-  AND d.status IS NOT NULL
-  AND UPPER(COALESCE(d.status, '')) != 'CAN'
-  AND po.object_status = 'Active'
+    d.doc_number                        AS DOCUMENT_NUMBER,
+    d.rev                               AS REVISION_CODE,
+    po.name                             AS PO_CODE,
+    COALESCE(pl.code, '')               AS PLANT_CODE,
+    COALESCE(c_iss.name, '')            AS COMPANY_NAME
+FROM mapping.document_po dp
+JOIN project_core.document d
+    ON dp.document_id = d.id
+JOIN reference_core.purchase_order po
+    ON dp.po_id = po.id
+LEFT JOIN reference_core.plant pl
+    ON d.plant_id = pl.id
+LEFT JOIN reference_core.company c_iss
+    ON po.issuer_id = c_iss.id
+WHERE d.object_status  = 'Active'
+  AND d.mdr_flag        = TRUE
+  AND po.object_status  = 'Active'
   AND po.name IS NOT NULL
+  AND UPPER(COALESCE(d.status, '')) != 'CAN'
 ORDER BY d.doc_number, po.name
 """
 

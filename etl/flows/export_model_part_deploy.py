@@ -42,8 +42,10 @@ Note:    Source is project_core.tag joined to model_part via tag.model_id (direc
 Changes: 2026-03-13 — Initial implementation.
          2026-03-17 — Reworked: source changed to project_core.tag via tag.model_id FK;
                       added MANUFACTURER_COMPANY_NAME, EQUIPMENT_CLASS_NAME, MODEL_DESCRIPTION.
+         2026-04-11 — Added DISTINCT ON (mp.id) to deduplicate
+                      multi-tag references to the same model_part.
 */
-SELECT
+SELECT DISTINCT ON (mp.id)
     COALESCE(pl.code, 'JDA')            AS PLANT_CODE,
     mp.code                             AS MODEL_PART_CODE,
     COALESCE(c_mfr.name, '')            AS MANUFACTURER_COMPANY_NAME,
@@ -59,7 +61,7 @@ LEFT  JOIN reference_core.plant pl       ON t.plant_id         = pl.id
 WHERE t.object_status = 'Active'
   AND UPPER(COALESCE(t.tag_status, '')) NOT IN ('VOID', '')
   AND t.model_id IS NOT NULL
-ORDER BY mp.code, t.tag_name
+ORDER BY mp.id, mp.code
 """
 
 _FILE_TEMPLATE = "JDAW-KVE-E-JA-6944-00001-005-{revision}.CSV"
