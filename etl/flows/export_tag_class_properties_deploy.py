@@ -9,8 +9,7 @@ Both files share the same 5-column schema (exact EIS order):
   PLANT_CODE, TAG_NAME, PROPERTY_NAME, PROPERTY_VALUE, PROPERTY_VALUE_UOM
 
 PROPERTY_NAME  = human-readable name (ontology_core.property.name), NOT p.code
-PROPERTY_VALUE_UOM = symbol_ascii with fallback to symbol
-                     Mixed-case preserved (e.g. "degC", "kPa(g)", "mm2").
+PROPERTY_VALUE_UOM = uom.symbol (mixed-case preserved, e.g. "degC", "kPa(g)", "mm2").
                      Do NOT uppercase this column.
 """
 
@@ -51,18 +50,20 @@ _TAG_PROPERTY_VALUES_SQL = """
 Purpose : Tag instance property values for EIS file 010.
 Gate    : t.object_status = 'Active'
           cp.mapping_concept ILIKE '%Functional%'
-          tpv.value IS NOT NULL AND tpv.value <> ''
+          pv.property_value IS NOT NULL AND pv.property_value <> ''
           Rows where value = NULL or '' excluded at SQL level.
           Rows where value = 'TBC' are INCLUDED (valid export placeholder).
 Changes : 2026-04-10 — replaces class schema export (seq 307 → files 010/011).
-         2026-04-11 — fix t.name → t.tagname (actual column in project_core.tag).
+         2026-04-11 — fix column names per schema.sql:
+                      t.tag_name (was t.name / t.tagname).
+                      u.symbol only (symbol_ascii not in ontology_core.uom).
 */
 SELECT
-    COALESCE(plt.code, '')                  AS plant_code,
-    t.tagname                               AS tag_name,
-    p.name                                  AS property_name,
-    pv.property_value                       AS property_value,
-    COALESCE(u.symbol_ascii, u.symbol, '')  AS property_value_uom
+    COALESCE(plt.code, '')   AS plant_code,
+    t.tag_name               AS tag_name,
+    p.name                   AS property_name,
+    pv.property_value        AS property_value,
+    COALESCE(u.symbol, '')   AS property_value_uom
 FROM project_core.property_value pv
 JOIN project_core.tag           t   ON t.id  = pv.tag_id
 JOIN ontology_core.property     p   ON p.id  = pv.property_id
@@ -75,7 +76,7 @@ WHERE t.object_status  = 'Active'
   AND pv.object_status = 'Active'
   AND pv.property_value IS NOT NULL
   AND pv.property_value <> ''
-ORDER BY t.tagname, p.name
+ORDER BY t.tag_name, p.name
 """
 
 # ---------------------------------------------------------------------------
@@ -87,18 +88,20 @@ _EQUIPMENT_PROPERTY_VALUES_SQL = """
 Purpose : Equipment (Physical) tag instance property values for EIS file 011.
 Gate    : t.object_status = 'Active'
           cp.mapping_concept ILIKE '%Physical%'
-          tpv.value IS NOT NULL AND tpv.value <> ''
+          pv.property_value IS NOT NULL AND pv.property_value <> ''
           Rows where value = NULL or '' excluded at SQL level.
           Rows where value = 'TBC' are INCLUDED (valid export placeholder).
 Changes : 2026-04-10 — replaces class schema export (seq 307 → files 010/011).
-         2026-04-11 — fix t.name → t.tagname (actual column in project_core.tag).
+         2026-04-11 — fix column names per schema.sql:
+                      t.tag_name (was t.name / t.tagname).
+                      u.symbol only (symbol_ascii not in ontology_core.uom).
 */
 SELECT
-    COALESCE(plt.code, '')                  AS plant_code,
-    t.tagname                               AS tag_name,
-    p.name                                  AS property_name,
-    pv.property_value                       AS property_value,
-    COALESCE(u.symbol_ascii, u.symbol, '')  AS property_value_uom
+    COALESCE(plt.code, '')   AS plant_code,
+    t.tag_name               AS tag_name,
+    p.name                   AS property_name,
+    pv.property_value        AS property_value,
+    COALESCE(u.symbol, '')   AS property_value_uom
 FROM project_core.property_value pv
 JOIN project_core.tag           t   ON t.id  = pv.tag_id
 JOIN ontology_core.property     p   ON p.id  = pv.property_id
@@ -111,7 +114,7 @@ WHERE t.object_status  = 'Active'
   AND pv.object_status = 'Active'
   AND pv.property_value IS NOT NULL
   AND pv.property_value <> ''
-ORDER BY t.tagname, p.name
+ORDER BY t.tag_name, p.name
 """
 
 _TAG_PROP_FILE_TEMPLATE   = "JDAW-KVE-E-JA-6944-00001-010-{revision}.CSV"
@@ -167,9 +170,8 @@ def export_tag_class_properties_flow(
     Encoding: UTF-8 BOM (utf-8-sig) for Excel/EIS compatibility.
 
     UoM note:
-      PROPERTY_VALUE_UOM preserves mixed-case canonical symbols (e.g. "degC",
-      "kPa(g)", "mm2"). Column is NOT uppercased — EIS and source system are
-      case-sensitive for UoM matching.
+      PROPERTY_VALUE_UOM = uom.symbol (mixed-case, e.g. "degC", "kPa(g)", "mm2").
+      Column is NOT uppercased — EIS and source system are case-sensitive for UoM.
 
     Args:
         doc_revision: EIS revision code (e.g. "A37"). Must match [A-Z]\\d{2}.
@@ -193,7 +195,7 @@ def export_tag_class_properties_flow(
     base_dir = Path(output_dir or _EXPORT_DIR)
 
     # Load UoM alias lookup once for both exports.
-    # Maps lower(alias) → symbol_ascii for UoM token resolution in _split_value_uom.
+    # Maps lower(alias) → symbol for UoM token resolution in _split_value_uom.
     # Returns {} safely if uom_alias table not yet migrated.
     uom_lookup = _load_uom_lookup(engine)
     logger.info(f"Loaded {len(uom_lookup)} UoM alias entries")
