@@ -32,6 +32,7 @@ if str(script_root) not in sys.path:
 try:
     from tasks.common import load_config, get_db_engine_url
     from tasks.export_transforms import transform_tag_instance_properties
+    from tasks.export_transforms import transform_tag_class_properties
     from tasks.export_pipeline import run_export_pipeline, _load_uom_lookup
 except ImportError as e:
     print(f"[SKIP] {Path(__file__).name}: Could not import task modules. Details: {e}")
@@ -117,8 +118,59 @@ WHERE t.object_status  = 'Active'
 ORDER BY t.tag_name, p.name
 """
 
-_TAG_PROP_FILE_TEMPLATE   = "JDAW-KVE-E-JA-6944-00001-010-{revision}.CSV"
-_EQUIP_PROP_FILE_TEMPLATE = "JDAW-KVE-E-JA-6944-00001-011-{revision}.CSV"
+_CLASS_SCHEMA_FILE_TEMPLATE = "JDAW-KVE-E-JA-6944-00001-009-{revision}.CSV"
+_TAG_PROP_FILE_TEMPLATE     = "JDAW-KVE-E-JA-6944-00001-010-{revision}.CSV"
+_EQUIP_PROP_FILE_TEMPLATE   = "JDAW-KVE-E-JA-6944-00001-011-{revision}.CSV"
+
+# ---------------------------------------------------------------------------
+# SQL: Tag class schema (file 009)
+# ---------------------------------------------------------------------------
+
+_TAG_CLASS_SCHEMA_SQL = """
+/*
+Purpose : Tag class schema export for EIS file 009.
+          One row per class × property mapping.
+          CLASS_NAME: human-readable name from ontology_core.class (was TAG_CLASS_NAME).
+          CONCEPT: sourced from ontology_core.class.concept (Functional / Physical /
+                   Functional Physical).
+          IS_MANDATORY: Y if mapping_presence = 'Mandatory', N otherwise.
+          VALID_VALUES: picklist / regex from ontology_core.validation_rule.validation_value.
+          INSTANCE_COUNT: active tags assigned to this class in project_core.tag.
+Gate    : cp.mapping_status = 'Active'
+          c.object_status = 'Active'
+          p.object_status = 'Active'
+Changes : 2026-04-11 — restored and extended (added CLASS_CODE, CONCEPT,
+                        INSTANCE_COUNT; renamed TAG_CLASS_NAME -> CLASS_NAME).
+*/
+SELECT
+    c.code                                          AS class_code,
+    c.name                                          AS class_name,
+    c.concept                                       AS concept,
+    p.code                                          AS property_code,
+    p.name                                          AS property_name,
+    p.data_type                                     AS data_type,
+    CASE WHEN cp.mapping_presence = 'Mandatory'
+         THEN 'Y' ELSE 'N' END                      AS is_mandatory,
+    COALESCE(vr.validation_value, '')               AS valid_values,
+    COUNT(t.id) FILTER (
+        WHERE t.object_status = 'Active'
+    )                                               AS instance_count
+FROM ontology_core.class_property cp
+JOIN ontology_core.class   c  ON c.id  = cp.class_id
+JOIN ontology_core.property p  ON p.id  = cp.property_id
+LEFT JOIN ontology_core.validation_rule vr
+       ON vr.id = p.validation_rule_id
+LEFT JOIN project_core.tag t
+       ON t.class_id = c.id
+WHERE cp.mapping_status = 'Active'
+  AND c.object_status   = 'Active'
+  AND p.object_status   = 'Active'
+GROUP BY c.code, c.name, c.concept,
+         p.code, p.name, p.data_type,
+         cp.mapping_presence,
+         vr.validation_value
+ORDER BY c.name, p.code
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +197,16 @@ def extract_equipment_property_values(engine: Engine) -> pd.DataFrame:
     return df
 
 
+@task(name="extract-tag-class-schema", retries=1, cache_policy=NO_CACHE)
+def extract_tag_class_schema(engine: Engine) -> pd.DataFrame:
+    """Extract tag class schema rows for EIS file 009."""
+    logger = get_run_logger()
+    with engine.connect() as conn:
+        df = pd.read_sql(text(_TAG_CLASS_SCHEMA_SQL), conn)
+    logger.info(f"Extracted {len(df)} class schema rows (file 009)")
+    return df
+
+
 # ---------------------------------------------------------------------------
 # Prefect flow
 # ---------------------------------------------------------------------------
@@ -155,16 +217,18 @@ def export_tag_class_properties_flow(
     output_dir: str | None = None,
 ) -> dict[str, int]:
     """
-    Export tag instance property values to EIS CSV snapshots (files 010 + 011).
-
-    Exports tag instance property values for EIS files 010 (Functional)
-    and 011 (Physical). Replaces the previous class schema export (seq 307).
+    Export tag class schema and instance property values to EIS CSV snapshots (files 009, 010, 011).
 
     Output files:
-      JDAW-KVE-E-JA-6944-00001-010-{doc_revision}.CSV  (Functional tags)
-      JDAW-KVE-E-JA-6944-00001-011-{doc_revision}.CSV  (Physical/Equipment tags)
+      JDAW-KVE-E-JA-6944-00001-009-{doc_revision}.CSV  (Class schema — ontology)
+      JDAW-KVE-E-JA-6944-00001-010-{doc_revision}.CSV  (Functional tag property values)
+      JDAW-KVE-E-JA-6944-00001-011-{doc_revision}.CSV  (Physical/Equipment tag property values)
 
-    Column schema (both files, exact EIS order):
+    File 009 column schema (exact EIS order):
+      CLASS_CODE, CLASS_NAME, CONCEPT, PROPERTY_CODE, PROPERTY_NAME,
+      DATA_TYPE, IS_MANDATORY, VALID_VALUES, INSTANCE_COUNT
+
+    Files 010 + 011 column schema (exact EIS order):
       PLANT_CODE, TAG_NAME, PROPERTY_NAME, PROPERTY_VALUE, PROPERTY_VALUE_UOM
 
     Encoding: UTF-8 BOM (utf-8-sig) for Excel/EIS compatibility.
@@ -178,11 +242,11 @@ def export_tag_class_properties_flow(
         output_dir: Destination directory. Defaults to config storage.export_dir.
 
     Returns:
-        dict with keys "exported_010", "exported_011", "violations".
+        dict with keys "exported_009", "exported_010", "exported_011", "violations".
 
     Example:
         >>> export_tag_class_properties_flow(doc_revision="A37")
-        {'exported_010': 8500, 'exported_011': 3200, 'violations': 12}
+        {'exported_009': 1850, 'exported_010': 8500, 'exported_011': 3200, 'violations': 12}
     """
     logger = get_run_logger()
 
@@ -201,6 +265,18 @@ def export_tag_class_properties_flow(
     logger.info(f"Loaded {len(uom_lookup)} UoM alias entries")
 
     transform_fn = functools.partial(transform_tag_instance_properties, uom_lookup=uom_lookup)
+
+    # --- File 009: Class schema (CLASS_CODE, CLASS_NAME, CONCEPT, ..., INSTANCE_COUNT) ---
+    output_009 = base_dir / _CLASS_SCHEMA_FILE_TEMPLATE.format(revision=doc_revision)
+    result_009 = run_export_pipeline(
+        engine=engine,
+        scope="common",
+        extract_fn=extract_tag_class_schema,
+        transform_fn=transform_tag_class_properties,
+        output_path=output_009,
+        report_name="tag_class_schema_009",
+        logger=logger,
+    )
 
     # --- File 010: Functional tag property values ---
     output_010 = base_dir / _TAG_PROP_FILE_TEMPLATE.format(revision=doc_revision)
@@ -226,13 +302,15 @@ def export_tag_class_properties_flow(
         logger=logger,
     )
 
-    total_violations = result_010["violations"] + result_011["violations"]
+    total_violations = result_009["violations"] + result_010["violations"] + result_011["violations"]
     logger.info(
-        f"Export complete: 010={result_010['exported']} rows, "
+        f"Export complete: 009={result_009['exported']} rows, "
+        f"010={result_010['exported']} rows, "
         f"011={result_011['exported']} rows, violations={total_violations}"
     )
 
     return {
+        "exported_009": result_009["exported"],
         "exported_010": result_010["exported"],
         "exported_011": result_011["exported"],
         "violations":   total_violations,

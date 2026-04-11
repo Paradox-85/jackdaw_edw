@@ -986,28 +986,39 @@ def transform_model_part(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 _TAG_CLASS_PROP_COLUMNS: list[str] = [
-    "TAG_CLASS_NAME",
+    "CLASS_CODE",
+    "CLASS_NAME",
+    "CONCEPT",
     "PROPERTY_CODE",
     "PROPERTY_NAME",
     "DATA_TYPE",
     "IS_MANDATORY",
     "VALID_VALUES",
+    "INSTANCE_COUNT",
 ]
 
 
 def transform_tag_class_properties(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Apply domain-specific transforms for EIS Tag Class Properties export (seq 307).
+    Apply domain-specific transforms for EIS Tag Class Properties export (seq 307, file 009).
 
     Layers:
     1. Normalise column names to UPPER_CASE.
-    2. Reorder columns to EIS-specified output order.
+    2. Fill INSTANCE_COUNT NaN → 0, cast to int.
+    3. Reorder columns to EIS-specified output order (silently skip absent columns).
 
-    Note: IS_MANDATORY = 'Y'/'N' (derived in SQL from mapping_presence = 'Mandatory').
-          VALID_VALUES = picklist regex from ontology_core.validation_rule (may be empty).
+    Column schema (exact EIS order):
+      CLASS_CODE, CLASS_NAME, CONCEPT, PROPERTY_CODE, PROPERTY_NAME,
+      DATA_TYPE, IS_MANDATORY, VALID_VALUES, INSTANCE_COUNT
+
+    Note:
+      IS_MANDATORY = 'Y'/'N' (derived in SQL from cp.mapping_presence = 'Mandatory').
+      VALID_VALUES = picklist regex from ontology_core.validation_rule (may be empty).
+      INSTANCE_COUNT = count of active project_core.tag rows assigned to this class.
+      CLASS_NAME was previously called TAG_CLASS_NAME (renamed in 2026-04-11 refactor).
 
     Args:
-        df: Raw DataFrame from extract_tag_class_properties SQL query.
+        df: Raw DataFrame from extract_tag_class_schema SQL query.
 
     Returns:
         Transformed DataFrame ready for write_csv().
@@ -1015,10 +1026,13 @@ def transform_tag_class_properties(df: pd.DataFrame) -> pd.DataFrame:
     Example:
         >>> result = transform_tag_class_properties(raw_df)
         >>> list(result.columns)
-        ['TAG_CLASS_NAME', 'PROPERTY_CODE', 'PROPERTY_NAME', 'DATA_TYPE', 'IS_MANDATORY', 'VALID_VALUES']
+        ['CLASS_CODE', 'CLASS_NAME', 'CONCEPT', 'PROPERTY_CODE', 'PROPERTY_NAME',
+         'DATA_TYPE', 'IS_MANDATORY', 'VALID_VALUES', 'INSTANCE_COUNT']
     """
     df = df.copy()
     df.columns = df.columns.str.upper()
+    if "INSTANCE_COUNT" in df.columns:
+        df["INSTANCE_COUNT"] = df["INSTANCE_COUNT"].fillna(0).astype(int)
     available = [c for c in _TAG_CLASS_PROP_COLUMNS if c in df.columns]
     return df[available]
 
