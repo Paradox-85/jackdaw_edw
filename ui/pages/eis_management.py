@@ -25,7 +25,7 @@ from ui.common import (
 )
 
 # Single master deployment — runs all 11 EIS export flows sequentially
-_EIS_DEPLOYMENT = "export_eis_package_data_deploy"
+_EIS_DEPLOYMENT = "export_eis_data_deploy"
 
 _REV_RE = re.compile(r"^[A-Z]\d{2}$")
 
