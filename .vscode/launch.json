@@ -1,0 +1,22 @@
+{
+    // VS Code debug launch configurations for jackdaw_edw
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "EIS Export Diff (A37 vs A36)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/tests/test_eis_export_diff.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--folder-a",
+                "C:\\Users\\ADZV\\OneDrive - Ramboll\\Ramboll_Jackdaw - Admin Team\\EIS\\Export for Shell\\Apr-26\\CSV\\eis_export_A37_20260411_0510",
+                "--folder-b",
+                "C:\\Users\\ADZV\\OneDrive - Ramboll\\Ramboll_Jackdaw - Admin Team\\EIS\\Export for Shell\\Mar-26\\CSV",
+                "--output",
+                "${workspaceFolder}/tests/eis_diff_A37_vs_A36.md"
+            ]
+        }
+    ]
+}
