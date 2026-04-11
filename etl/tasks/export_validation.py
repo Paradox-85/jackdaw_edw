@@ -1,24 +1,50 @@
 """Configurable pre-export validation engine for EIS registers.
 
-Two modes:
-  - Built-in (apply_builtin_fixes): runs during export generation; auto-fixes
-    violations where fix_expression is defined; value in DB is unchanged.
-  - Full scan (run_full_scan): runs all rules, stores results in
-    audit_core.validation_result; nothing is modified.
+Two operating modes:
+  apply_builtin_fixes  — runs during export (step 3 of run_export_pipeline).
+                         Auto-fixes violations where fix_expression is defined.
+                         Value in DB is NEVER modified — only the export DataFrame.
+  run_full_scan        — runs all rules, stores results in
+                         audit_core.validation_result. Nothing is modified.
 
-DSL — rule_expression (violation condition):
+DB-driven fix_expressions implemented in _apply_fix():
+  replace "X" "Y"         — substring replace (e.g. comma→semicolon)
+  replace_nan             — pandas nan artefact → empty string
+  remove_char "X"         — remove all occurrences of X
+  truncate N              — truncate to N characters
+  encoding_repair         — delegate to clean_engineering_text() (12-step pipeline)
+  normalize_na            — N/A, N.A., na, n/a → canonical "NA"
+  normalize_pseudo_null   — numeric sentinels (9{5,}), epoch date, single dash,
+                            all prefix variants (Tag-NA, Signal_NA…) → "NA"
+  normalize_boolean_case  — YES→Yes, NO→No (EIS picklist requirement)
+  normalize_uom_longform  — ampere→A, volt→V, pascal→Pa, hertz→Hz, kilowatt→kW
+  strip_edge_char "X"     — strip leading/trailing occurrences of char X
+  split_value_uom         — INTENTIONAL NO-OP in this engine (see note below)
+
+Why split_value_uom is a no-op here:
+  The DSL engine operates on one column (pd.Series) at a time.
+  Splitting an embedded UoM (e.g. "490mm" → "490" + "mm") requires writing
+  to TWO columns simultaneously (PROPERTY_VALUE + PROPERTY_VALUE_UOM).
+  This is structurally impossible within _apply_fix().
+  The DB rule VALUE_UOM_COMBINED_IN_CELL (fix_expression='split_value_uom')
+  therefore serves as a DETECTOR only — it fires to count and log violations.
+  Actual splitting is performed downstream in transform_tag_instance_properties()
+  via _apply_value_uom_split() using the _P1–_P4 regex pipeline.
+  The canonical UoM form (symbol_ascii) always comes from ontology_core.uom_alias
+  loaded via _load_uom_lookup() — no hardcoded alias mapping in Python.
+
+DSL — rule_expression syntax:
     <col_spec> <op> [<value>]
     <clause1> AND <clause2>
-
     col_spec: '*' (all object columns) | column name (case-insensitive)
-    operators: contains, icontains, max_length, is_null, not_null, matches_regex, equals_col
-    equals_col  — compare column to another column by name (cross-column equality)
+    operators: contains, icontains, max_length, is_null, not_null,
+               matches_regex, equals_col, has_encoding_artefacts
 
-DSL — fix_expression (auto-fix for built-in mode):
-    replace "X" "Y"   — replace all occurrences of X with Y
-    replace_nan       — replace literal 'nan'/'NaN' with empty string
-    remove_char "X"   — remove all occurrences of X
-    truncate N        — truncate string to at most N characters
+DSL — fix_expression syntax:
+    replace "X" "Y" | replace_nan | remove_char "X" | truncate N |
+    encoding_repair | normalize_na | normalize_pseudo_null |
+    normalize_boolean_case | normalize_uom_longform | strip_edge_char "X" |
+    split_value_uom (no-op — see above)
 """
 
 from __future__ import annotations
@@ -295,10 +321,14 @@ def _apply_fix(df: pd.DataFrame, col_spec: str, fix_expr: str) -> pd.DataFrame:
         if m:
             char = m.group(1)
             return s.astype(str).str.strip(char).str.strip()
-        # split_value_uom — handled at DataFrame level, not series level
-        # This fix_expression is a marker; actual splitting happens in transform functions
+        # split_value_uom — INTENTIONAL NO-OP.
+        # DSL engine works on a single pd.Series; splitting value+UoM requires
+        # writing to TWO columns (PROPERTY_VALUE + PROPERTY_VALUE_UOM) which is
+        # impossible here. This fix_expression is a violation DETECTOR only.
+        # Real split: transform_tag_instance_properties() → _apply_value_uom_split()
+        # Canonical UoM: ontology_core.uom_alias → _load_uom_lookup() → _resolve_uom_symbol()
         if fix_expr == "split_value_uom":
-            return s  # No-op: splitting handled in transform_tag/equipment_properties
+            return s
         raise ExpressionParseError(f"Unknown fix_expression: {fix_expr!r}")
 
     for col in target_cols:

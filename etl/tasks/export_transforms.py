@@ -7,29 +7,33 @@ import pandas as pd
 
 
 # ---------------------------------------------------------------------------
-# Value / UoM split patterns
+# Value / UoM split — regex patterns (_P1–_P4)
 # ---------------------------------------------------------------------------
+# These patterns handle STRUCTURAL splitting only — where to cut value from UoM.
+# They do NOT map raw UoM tokens to canonical form; that is the job of
+# _resolve_uom_symbol() which looks up ontology_core.uom_alias via uom_lookup.
+#
+# Why Python regexes instead of DB rules:
+#   The DSL validation engine (export_validation.py) operates on one pd.Series
+#   at a time and cannot write to two columns simultaneously. Splitting
+#   "490mm" → PROPERTY_VALUE="490" + PROPERTY_VALUE_UOM="mm" requires exactly
+#   that. VALUE_UOM_COMBINED_IN_CELL in audit_core.export_validation_rule
+#   (fix_expression='split_value_uom') therefore acts as a DETECTOR only.
+#   These patterns do the actual work.
+#
 # Pattern priority (evaluated top-to-bottom, first match wins):
-# P1: Inch notation — numeric followed by double-quote
-#     "6\""  → value="6",  uom="inch"
-#     No alias lookup needed; hardcoded to "inch".
-# P2: Degree-letter split — numeric (with optional sign/range) ending with °
-#     followed by optional space and letter(s)
-#     "-60°C"         → value="-60",      uom="degC"
-#     "+60° C"        → value="+60",      uom="degC"  (space between ° and C)
-#     "-50 - 450 Deg C" → NOT matched here (handled by P4 as range + UoM token)
-#     The ° sign is consumed; "C" merged to form "deg" + letter → canonical "degC"
-# P3: Percent + qualifier — numeric followed by % and optional text qualifier
-#     "0% LEL"   → value="0",  uom="% LEL"
-#     "100%"     → value="100", uom="%"
-#     Canonical: uom is kept as-is after strip; alias lookup applied.
-# P4: Standard — numeric (with optional sign prefix and range) followed by UoM token
-#     "490mm"        → value="490",    uom="mm"
-#     "4 - 50 mm"    → value="4 - 50", uom="mm"
-#     "-50 - 450 Deg C" → value="-50 - 450", uom="Deg C"
-#     "100kW"        → value="100",    uom="kW"
-#     "3.5 bar(g)"   → value="3.5",    uom="bar(g)"
-#     "25 degC"      → value="25",     uom="degC"
+# P1: Inch — numeric or fractional (e.g. "1 1/2\"") followed by double-quote
+#     value="1 1/2",  uom="inch"   (hardcoded — no alias lookup needed)
+# P2: Degree-letter — numeric ending with °, optional space then letter(s)
+#     "+60°C"  → value="+60",       uom="degC"   (via uom_lookup)
+#     "+60°"   → value="+60",       uom="degC"   (bare ° defaults to degC)
+# P3: Percent + qualifier
+#     "0% LEL" → value="0",         uom="% LEL"  (via uom_lookup)
+#     "100%"   → value="100",        uom="%"
+# P4: Standard numeric + UoM token (with or without space)
+#     "490mm"           → value="490",      uom="mm"
+#     "4 - 50 mm"       → value="4 - 50",   uom="mm"
+#     "-50 - 450 Deg C" → value="-50 - 450", uom="degC"  (via uom_lookup)
 
 # P1: inch — standalone number (incl. fractions like "1 1/2") then double-quote
 _P1_INCH_RE = _re.compile(
@@ -208,7 +212,11 @@ def _apply_value_uom_split(
         df: DataFrame containing property value columns.
         value_col: Name of the column containing values (may include embedded UoM).
         uom_col: Name of the UoM column (will be updated if empty).
-        uom_lookup: Dictionary mapping alias_lower → symbol_ascii.
+        uom_lookup: Dict alias_lower → symbol_ascii loaded from ontology_core.uom_alias
+                    via _load_uom_lookup(engine). Populated once per flow run.
+                    If None or empty, split still occurs but UoM tokens are returned
+                    as-is (no canonicalization). Raw token is NOT uppercased — canonical
+                    symbols are mixed-case (e.g. "kPa(g)", "degC", "mbar").
 
     Returns:
         DataFrame with split and normalized value/UoM columns.
@@ -1039,22 +1047,25 @@ def transform_tag_class_properties(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# Tag Instance Property Values domain transform (EIS files 010 / 011)
+# Tag Instance Property Values — transform for files 010 (Functional) and 011 (Physical)
 # ---------------------------------------------------------------------------
-# Replaces the previous class schema export (seq 307).
 # Used by:
-#   export_tag_class_properties_deploy.py — file 010 (Functional concept)
-#   export_tag_class_properties_deploy.py — file 011 (Physical concept)
-# Column contract (both files — exact order required by EIS):
-#   PLANT_CODE, TAG_NAME, PROPERTY_NAME, PROPERTY_VALUE, PROPERTY_VALUE_UOM
+#   export_tag_properties_deploy.py        → file 010  (mapping_concept ILIKE '%Functional%')
+#   export_equipment_properties_deploy.py  → file 011  (mapping_concept ILIKE '%Physical%')
+#
+# Column contract (both files — exact EIS order):
+#   file 010: PLANT_CODE, TAG_NAME,         PROPERTY_NAME, PROPERTY_VALUE, PROPERTY_VALUE_UOM
+#   file 011: PLANT_CODE, EQUIPMENT_NUMBER, PROPERTY_NAME, PROPERTY_VALUE, PROPERTY_VALUE_UOM
+#
 # PROPERTY_NAME:        human-readable property name (p.name), NOT p.code
-# PROPERTY_VALUE_UOM:   symbol_ascii with fallback to symbol (from SQL COALESCE)
-#                       May be mixed case — do NOT globally uppercase this column.
-#                       Examples of valid canonical values: "degC", "kPa(g)", "mm2"
-# UoM case note:
-#   symbol_ascii values are populated from ontology_core.uom.symbol_ascii which
-#   intentionally preserves mixed case for EIS compatibility (e.g. "degC" not "DEGC").
-#   Do NOT apply str.upper() to PROPERTY_VALUE_UOM in this transform.
+# PROPERTY_VALUE_UOM:   symbol_ascii from ontology_core.uom (mixed-case — do NOT uppercase)
+#                       Examples: "degC", "kPa(g)", "mm2", "bar(g)"
+#
+# Value/UoM split responsibility:
+#   Detection: VALUE_UOM_COMBINED_IN_CELL rule in audit_core.export_validation_rule
+#              (is_builtin=False — logs violations, fix_expression='split_value_uom' is no-op)
+#   Actual split: _apply_value_uom_split() below using _P1–_P4 regex patterns
+#   Canonical form: _resolve_uom_symbol() → ontology_core.uom_alias (via uom_lookup)
 
 _TAG_INSTANCE_PROP_COLUMNS: list[str] = [
     "PLANT_CODE",

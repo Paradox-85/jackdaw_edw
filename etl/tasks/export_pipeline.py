@@ -1,4 +1,36 @@
-"""Shared EIS export pipeline: extract → sanitize → validate → transform → write → audit."""
+"""Shared EIS export pipeline for all Reverse ETL export flows.
+
+Pipeline sequence (run_export_pipeline):
+  1. extract        — SQL query via Prefect @task, returns raw DataFrame
+  2. sanitize       — clean_engineering_text() on all string columns
+                      (encoding repair, unicode dashes, MM² artefacts)
+  3. validate+fix   — DB rules from audit_core.export_validation_rule
+                      (is_builtin=True, check_type='dsl') applied via DSL engine:
+                        normalize_pseudo_null, normalize_na, normalize_boolean_case,
+                        normalize_uom_longform, replace_nan, encoding_repair,
+                        replace, truncate, strip_edge_char, remove_char
+  4. transform      — domain-specific function from export_transforms.py:
+                        • column rename/reorder to EIS schema
+                        • _apply_value_uom_split() for files 010/011
+                          (splits "490mm"→"490"/"mm", "1 1/2\\""→"1 1/2"/"inch",
+                           "+60°C"→"+60"/"degC" etc. — cannot be done by DSL engine
+                           because it requires writing to two columns simultaneously)
+  5. write          — sanitize_dataframe() second pass + UTF-8 BOM CSV
+
+Responsibility split:
+  DB rules (step 3) — single-column text normalization, pseudo-null canonicalization,
+                      encoding repair, boolean/UoM long-form normalization.
+  Python transforms (step 4) — structural changes: column splits, column reorder,
+                               multi-column derivations (ACTION_STATUS, ACTION_DATE).
+
+UoM resolution chain (files 010/011 only):
+  ontology_core.uom_alias  →  _load_uom_lookup()  →  uom_lookup dict
+  →  _apply_value_uom_split()  →  _resolve_uom_symbol()
+  Raw token from source ("bar(g)", "DEG C") is mapped to canonical symbol_ascii
+  ("bar(g)", "degC") via the DB alias table — no hardcoded alias mapping in Python.
+  The _P1–_P4 regexes only handle the structural split (where to cut value vs UoM);
+  the canonical form of the UoM token always comes from the DB lookup.
+"""
 
 from __future__ import annotations
 
@@ -99,14 +131,28 @@ def run_export_pipeline(
 
     raw_df = extract_fn(engine)
 
-    # First sanitize pass: strip encoding artefacts before validation to avoid false-positives
+    # Step 2: sanitize — strip encoding artefacts BEFORE validation
+    # Purpose: prevent ENCODING_ARTEFACTS rule from firing on already-corrupted data
+    # that would be repaired anyway. Also normalises NaN→"" so IS_NULL checks
+    # in step 3 work correctly on string columns.
     sanitized_df = sanitize_dataframe(raw_df)
 
+    # Step 3: DB-driven validation + auto-fix
+    # Rules loaded from audit_core.export_validation_rule (is_builtin=True, check_type='dsl').
+    # scope IN ('common', <scope>) — both common and register-specific rules apply.
+    # VALUE_UOM_COMBINED_IN_CELL (fix_expression='split_value_uom') is is_builtin=False
+    # and therefore NOT loaded here — detection only, no fix at this stage.
+    # Actual value/UoM splitting happens in transform_fn (step 4) below.
     builtin_rules = load_validation_rules(engine, scope=scope, builtin_only=True)
     fixed_df, all_violations = apply_builtin_fixes(
         sanitized_df, builtin_rules, report_name, logger
     )
 
+    # Step 4: domain transform — column reorder, multi-column derivations,
+    # and (for files 010/011) value/UoM split via _apply_value_uom_split().
+    # Step 5: write — sanitize_dataframe() second pass + UTF-8 BOM CSV.
+    # Second sanitize pass is mandatory: transform may reintroduce artefacts
+    # via column renames or derived string concatenations.
     clean_df = transform_fn(fixed_df)
     row_count = write_csv(clean_df, output_path)
     logger.info(f"[{report_name}] Exported {row_count} rows to {output_path}")
