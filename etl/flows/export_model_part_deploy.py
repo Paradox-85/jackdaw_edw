@@ -44,20 +44,17 @@ Changes: 2026-03-13 — Initial implementation.
                       added MANUFACTURER_COMPANY_NAME, EQUIPMENT_CLASS_NAME, MODEL_DESCRIPTION.
          2026-04-11 — Added DISTINCT ON (mp.id) to deduplicate
                       multi-tag references to the same model_part.
+         2026-04-13 — Columns reduced to EIS spec: PLANT_CODE and MODEL_PART_CODE removed.
 */
 SELECT DISTINCT ON (mp.id)
-    COALESCE(pl.code, 'JDA')            AS PLANT_CODE,
-    mp.code                             AS MODEL_PART_CODE,
     COALESCE(c_mfr.name, '')            AS MANUFACTURER_COMPANY_NAME,
     COALESCE(mp.name, '')               AS MODEL_PART_NAME,
-    COALESCE(cls.name, '')              AS EQUIPMENT_CLASS_NAME,
     COALESCE(mp.definition, '')         AS MODEL_DESCRIPTION,
-    mp.object_status
+    COALESCE(cls.name, '')              AS EQUIPMENT_CLASS_NAME
 FROM project_core.tag t
 INNER JOIN reference_core.model_part mp  ON t.model_id         = mp.id
 LEFT  JOIN reference_core.company c_mfr  ON mp.manufacturer_id = c_mfr.id
 LEFT  JOIN ontology_core.class cls       ON t.class_id         = cls.id
-LEFT  JOIN reference_core.plant pl       ON t.plant_id         = pl.id
 WHERE t.object_status = 'Active'
   AND UPPER(COALESCE(t.tag_status, '')) NOT IN ('VOID', '')
   AND t.model_id IS NOT NULL

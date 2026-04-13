@@ -275,17 +275,17 @@ TAG_DESCRIPTION · ACTION_STATUS · ACTION_DATE
 | `PROCESS_UNIT_CODE` | `process_unit.code` | FK resolve; empty if unmatched |
 | `TAG_CLASS_NAME` | `tag_class.class_name` | FK resolve |
 | `TAG_STATUS` | `tag.tag_status` | e.g. `Active`, `Retired`, `Void` |
-| `REQUISITION_CODE` | `tag.requisition_code` | |
+| `REQUISITION_CODE` | `COALESCE(art.name, art.code)` via `reference_core.article` | article name; falls back to code |
 | `DESIGNED_BY_COMPANY_NAME` | `company.name` (via `tag.design_company_id`) | FK resolve |
-| `COMPANY_NAME` | `company.name` (via `tag.company_id`) | manufacturing company |
-| `PO_CODE` | `purchase_order.code` | FK resolve; empty if unmatched |
-| `PRODUCTION_CRITICAL_ITEM` | `tag.production_critical_flag` | Boolean (Y/N) |
-| `SAFETY_CRITICAL_ITEM` | `tag.safety_critical_flag` | Boolean (Y/N) |
-| `SAFETY_CRITICAL_ITEM_GROUP` | aggregated subquery | via `mapping.tag_sece` |
-| `SAFETY_CRITICAL_ITEM_REASON_AWARDED` | `tag.safety_critical_reason` | free text |
+| `COMPANY_NAME` | `company.name` (via `po.issuer_id → company`) | issuing company of linked PO |
+| `PO_CODE` | `COALESCE(po.name, po.code)` | PO name first, falls back to code |
+| `PRODUCTION_CRITICAL_ITEM` | `tag.production_critical_item` | Boolean (Y/N) |
+| `SAFETY_CRITICAL_ITEM` | `tag.safety_critical_item` | Boolean (Y/N) |
+| `SAFETY_CRITICAL_ITEM_GROUP` | aggregated correlated subquery | via `mapping.tag_sece`; space-separated codes |
+| `SAFETY_CRITICAL_ITEM_REASON_AWARDED` | `tag.safety_critical_item_reason_awarded` | free text |
 | `TAG_DESCRIPTION` | `tag.description` | |
-| `ACTION_STATUS` | `tag.sync_status` | SCD status: `New`, `Updated`, `Unchanged`, `Deleted` |
-| `ACTION_DATE` | `tag.sync_timestamp` | formatted `YYYY-MM-DD` |
+| `ACTION_STATUS` | `tag.sync_status` (renamed by transform) | SCD status: `New`, `Updated`, `No Changes`, `Deleted` |
+| `ACTION_DATE` | MAX(`audit_core.tag_status_history.sync_timestamp`) | correlated subquery; formatted `YYYY-MM-DD` |
 
 **SCD Tracking**: All tag changes logged to `project_core.tag_history` (Status = New/Updated/Deleted).
 
@@ -294,18 +294,28 @@ TAG_DESCRIPTION · ACTION_STATUS · ACTION_DATE
 #### EIS Seq 206 — Equipment Register
 **File**: `JDAW-KVE-E-JA-6944-00001-004-{revision}.CSV`
 **Flow**: `export_equipment_register_flow`
-**Source**: `project_core.equipment` WHERE `object_status = 'Active'`
+**Source**: `project_core.tag` WHERE `object_status = 'Active'` AND `equip_no IS NOT NULL`
 
 | Column | Source | Notes |
 |---|---|---|
-| `PLANT_CODE` | `plant.code` | |
-| `EQUIPMENT_NUMBER` | `equipment.equipment_number` | format: `Equip_{tag_name}` |
-| `EQUIPMENT_NAME` | `equipment.name` | |
-| `MODEL_PART_CODE` | `model_part.code` (FK resolve) | empty if unmatched |
-| `MANUFACTURER` | `company.name` (via `equipment.manufacturer_id`) | FK resolve |
-| `VENDOR` | `company.name` (via `equipment.vendor_id`) | FK resolve |
-| `SERIAL_NUMBER` | `equipment.serial_number` | |
-| `EQUIPMENT_STATUS` | `equipment.status` | e.g. `Active`, `Spare` |
+| `EQUIPMENT_NUMBER` | `tag.equip_no` | equipment identifier |
+| `PLANT_CODE` | `plant.code` via `tag.plant_id` | LEFT JOIN; empty if NULL |
+| `TAG_NAME` | `tag.tag_name` | linked tag name |
+| `EQUIPMENT_CLASS_NAME` | `class.name` via `tag.class_id` | LEFT JOIN; empty if FK NULL |
+| `MANUFACTURER_COMPANY_NAME` | `company.name` via `tag.manufacturer_id` | LEFT JOIN; empty if FK NULL |
+| `MODEL_PART_NAME` | `model_part.name` via `tag.model_id` | LEFT JOIN; empty if FK NULL |
+| `MANUFACTURER_SERIAL_NUMBER` | `tag.serial_no` | |
+| `PURCHASE_DATE` | `purchase_order.po_date` via `tag.po_id` | TEXT; DD.MM.YYYY format |
+| `VENDOR_COMPANY_NAME` | `company.name` via `tag.vendor_id` | LEFT JOIN; empty if FK NULL |
+| `INSTALLATION_DATE` | `tag.install_date` | |
+| `STARTUP_DATE` | hardcoded `'NA'` | not available in source |
+| `PRICE` | hardcoded `'NA'` | not available in source |
+| `WARRANTY_END_DATE` | hardcoded `'NA'` | not available in source |
+| `PART_OF` | `po_package.code` via `po.package_id` | LEFT JOIN chain; empty if unresolved |
+| `TECHIDENTNO` | hardcoded `'NA'` | not available in source |
+| `ALIAS` | hardcoded `'NA'` | not available in source |
+| `EQUIPMENT_DESCRIPTION` | `tag.description` | |
+| `ACTION_DATE` | MAX(`audit_core.tag_status_history.sync_timestamp`) | correlated subquery; formatted `YYYY-MM-DD` |
 
 ---
 
@@ -313,16 +323,15 @@ TAG_DESCRIPTION · ACTION_STATUS · ACTION_DATE
 **File**: `JDAW-KVE-E-JA-6944-00001-005-{revision}.CSV`
 **Flow**: `export_model_part_flow`
 **Source**: `project_core.tag` INNER JOIN `reference_core.model_part` ON `tag.model_id = model_part.id`
-WHERE `tag.object_status = 'Active'` AND `tag.tag_status NOT IN ('VOID', '')`
+WHERE `tag.object_status = 'Active'` AND `tag.tag_status NOT IN ('VOID', '')`;
+DISTINCT ON `model_part.id` to deduplicate multi-tag references.
 
 | Column | Source | Notes |
 |---|---|---|
-| `PLANT_CODE` | `plant.code` via `tag.plant_id` | LEFT JOIN; empty if NULL |
-| `MODEL_PART_CODE` | `model_part.code` | unique identifier |
 | `MANUFACTURER_COMPANY_NAME` | `company.name` via `model_part.manufacturer_id` | LEFT JOIN; empty if FK NULL |
 | `MODEL_PART_NAME` | `model_part.name` | |
-| `EQUIPMENT_CLASS_NAME` | `class.name` via `tag.class_id` | LEFT JOIN; empty if FK NULL |
 | `MODEL_DESCRIPTION` | `model_part.definition` | empty string if NULL |
+| `EQUIPMENT_CLASS_NAME` | `class.name` via `tag.class_id` | LEFT JOIN; empty if FK NULL |
 
 ---
 
@@ -368,19 +377,30 @@ WHERE `pv.object_status = 'Active'`
 
 ---
 
-#### EIS Seq 307 — Tag Class Properties (Schema Definition)
+#### EIS Seq 307 — Tag Class Properties (file 009)
 **File**: `JDAW-KVE-E-JA-6944-00001-009-{revision}.CSV`
-**Flow**: `export_tag_class_properties_flow`
-**Source**: `ontology_core.tag_class_property` WHERE `object_status = 'Active'`
+**Flow**: `export_tag_class_properties_flow` (`etl/flows/export_schema_deploy.py`)
+**Source**: `ontology_core.class_property` JOIN `ontology_core.class` JOIN `ontology_core.property`
+WHERE `mapping_concept ILIKE '%Functional%'` AND class has ≥1 active tag in `project_core.tag`
 
 | Column | Source | Notes |
 |---|---|---|
-| `TAG_CLASS_NAME` | `tag_class.class_name` | e.g., Pressure Transmitter, Valve |
-| `PROPERTY_CODE` | `tag_class_property.code` | CFIHOS code or internal ID |
-| `PROPERTY_NAME` | `tag_class_property.name` | human-readable name |
-| `DATA_TYPE` | `tag_class_property.data_type` | String, Number, Boolean, Enum |
-| `IS_MANDATORY` | `tag_class_property.is_mandatory` | Boolean |
-| `VALID_VALUES` | `tag_class_property.valid_values_json` | JSON enum or free-form |
+| `TAG_CLASS_NAME` | `ontology_core.class.name` | e.g., Pressure Transmitter, Valve |
+| `TAG_PROPERTY_NAME` | `ontology_core.property.name` | human-readable property name |
+
+---
+
+#### Equipment Class Properties (file 009b — stub, not deployed)
+**File**: `JDAW-KVE-E-JA-6944-00001-009b-{revision}.CSV`
+**Flow**: `export_equipment_class_properties_flow` (`etl/flows/export_schema_deploy.py`)
+**Source**: `ontology_core.class_property` JOIN `ontology_core.class` JOIN `ontology_core.property`
+WHERE `mapping_concept ILIKE '%Physical%'` AND class has ≥1 active tag in `project_core.tag`
+**Status**: stub — not deployed to Prefect, no EIS sequence number assigned yet
+
+| Column | Source | Notes |
+|---|---|---|
+| `EQUIPMENT_CLASS_NAME` | `ontology_core.class.name` | e.g., Rotating Machinery, Static Equipment |
+| `EQUIPMENT_PROPERTY_NAME` | `ontology_core.property.name` | human-readable property name |
 
 ---
 
@@ -406,11 +426,11 @@ WHERE `pv.object_status = 'Active'`
 
 | Column | Source | Notes |
 |---|---|---|
-| `PLANT_CODE` | `plant.code` | |
-| `PO_CODE` | `purchase_order.code` | unique identifier |
-| `PO_TITLE` | `purchase_order.title` | |
-| `PO_DATE` | `purchase_order.po_date` | formatted `YYYY-MM-DD` |
-| `PO_STATUS` | `purchase_order.status` | e.g., Active, Closed |
+| `COMPANY_NAME` | `company.name` via `purchase_order.issuer_id` | LEFT JOIN; empty if FK NULL |
+| `PO_CODE` | `purchase_order.name` | PO name (hyphenated format e.g. `JA-EE047-1000`) |
+| `PO_DESCRIPTION` | `purchase_order.definition` | free-text description |
+| `PO_RECEIVER_COMPANY_NAME` | `company.name` via `purchase_order.receiver_id` | LEFT JOIN; empty if FK NULL |
+| `PO_DATE` | `purchase_order.po_date` | TEXT; format DD.MM.YYYY (stored verbatim, no reformat) |
 
 ---
 
@@ -463,6 +483,7 @@ WHERE `pv.object_status = 'Active'`
 | Column | Source | Notes |
 |---|---|---|
 | `DOCUMENT_NUMBER` | `document.doc_number` | |
+| `PLANT_CODE` | `plant.code` via `tag.plant_id` | LEFT JOIN; empty if unresolved; DISTINCT |
 | `PROCESS_UNIT_CODE` | `process_unit.code` via `tag.process_unit_id` | LEFT JOIN; empty if FK NULL; DISTINCT |
 
 ---

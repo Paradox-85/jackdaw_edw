@@ -1,4 +1,10 @@
-"""Reverse ETL export flow: Purchase Order Register (EIS seq 214)."""
+"""Reverse ETL export flow: Purchase Order Register (EIS seq 214).
+
+Output columns: COMPANY_NAME, PO_CODE, PO_DESCRIPTION, PO_RECEIVER_COMPANY_NAME, PO_DATE.
+COMPANY_NAME = issuing company (purchase_order.issuer_id → reference_core.company).
+PO_RECEIVER_COMPANY_NAME = receiving company (purchase_order.receiver_id → reference_core.company).
+PO_DATE = stored as TEXT in DD.MM.YYYY format — passed as-is.
+"""
 
 import re
 import sys
@@ -37,23 +43,28 @@ _PURCHASE_ORDER_SQL = """
 /*
 Purpose: Purchase Order Register full extract for EIS snapshot export (seq 214).
 Gate:    po.object_status = 'Active'
-Note:    purchase_order has no plant_id FK — PLANT_CODE hardcoded to 'JDA' (Jackdaw plant).
-         po_date stored as TEXT in source format (DD.MM.YYYY) — passed as-is.
-         issuer/receiver company raw included for validation rules, dropped by transform.
+Note:    po_date stored as TEXT in DD.MM.YYYY format — passed as-is (no reformatting).
+         COMPANY_NAME = issuing company resolved via purchase_order.issuer_id FK.
+         PO_RECEIVER_COMPANY_NAME = receiving company via purchase_order.receiver_id FK.
+         Both LEFT JOIN — empty string if FK unresolved.
 Changes: 2026-03-13 — Initial implementation.
+         2026-04-13 — Schema aligned to EIS spec: 5 canonical columns.
+                      Removed PLANT_CODE, PO_TITLE, PO_STATUS, issuer/receiver_company_raw.
+                      Added company JOINs for COMPANY_NAME, PO_RECEIVER_COMPANY_NAME.
+                      ORDER BY po.name (was po.code).
 */
 SELECT
-    'JDA'                               AS PLANT_CODE,
-    po.code                             AS PO_CODE,
-    COALESCE(po.name, '')               AS PO_TITLE,
+    COALESCE(c_iss.name, '')            AS COMPANY_NAME,
+    COALESCE(po.name, '')               AS PO_CODE,
+    COALESCE(po.definition, '')         AS PO_DESCRIPTION,
+    COALESCE(c_rcv.name, '')            AS PO_RECEIVER_COMPANY_NAME,
     COALESCE(po.po_date, '')            AS PO_DATE,
-    po.object_status                    AS PO_STATUS,
-    -- raw FK fields for validation rules (dropped by transform before CSV write)
-    po.issuer_company_raw,
-    po.receiver_company_raw
+    po.object_status
 FROM reference_core.purchase_order po
+LEFT JOIN reference_core.company c_iss ON c_iss.id = po.issuer_id
+LEFT JOIN reference_core.company c_rcv ON c_rcv.id = po.receiver_id
 WHERE po.object_status = 'Active'
-ORDER BY po.code
+ORDER BY po.name
 """
 
 _FILE_TEMPLATE = "JDAW-KVE-E-JA-6944-00001-008-{revision}.CSV"

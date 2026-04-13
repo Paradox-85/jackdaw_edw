@@ -909,11 +909,11 @@ def transform_process_unit(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 _PURCHASE_ORDER_COLUMNS: list[str] = [
-    "PLANT_CODE",
+    "COMPANY_NAME",
     "PO_CODE",
-    "PO_TITLE",
+    "PO_DESCRIPTION",
+    "PO_RECEIVER_COMPANY_NAME",
     "PO_DATE",
-    "PO_STATUS",
 ]
 
 
@@ -923,9 +923,11 @@ def transform_purchase_order(df: pd.DataFrame) -> pd.DataFrame:
 
     Layers:
     1. Normalise column names to UPPER_CASE.
-    2. Drop raw FK columns used by validation rules (issuer/receiver company raw).
-    3. Drop OBJECT_STATUS (already output as PO_STATUS, column aliased in SQL).
-    4. Reorder columns to EIS-specified output order.
+    2. Drop OBJECT_STATUS (gate filter column, not in EIS output).
+    3. Reorder columns to EIS-specified output order.
+
+    Column schema (exact EIS order):
+      COMPANY_NAME, PO_CODE, PO_DESCRIPTION, PO_RECEIVER_COMPANY_NAME, PO_DATE
 
     Args:
         df: Raw DataFrame from extract_purchase_order SQL query.
@@ -936,12 +938,11 @@ def transform_purchase_order(df: pd.DataFrame) -> pd.DataFrame:
     Example:
         >>> result = transform_purchase_order(raw_df)
         >>> list(result.columns)
-        ['PLANT_CODE', 'PO_CODE', 'PO_TITLE', 'PO_DATE', 'PO_STATUS']
+        ['COMPANY_NAME', 'PO_CODE', 'PO_DESCRIPTION', 'PO_RECEIVER_COMPANY_NAME', 'PO_DATE']
     """
     df = df.copy()
     df.columns = df.columns.str.upper()
-    internal_cols = ["ISSUER_COMPANY_RAW", "RECEIVER_COMPANY_RAW"]
-    df = df.drop(columns=internal_cols, errors="ignore")
+    df = df.drop(columns=["OBJECT_STATUS"], errors="ignore")
     available = [c for c in _PURCHASE_ORDER_COLUMNS if c in df.columns]
     return df[available]
 
@@ -953,8 +954,8 @@ def transform_purchase_order(df: pd.DataFrame) -> pd.DataFrame:
 _MODEL_PART_COLUMNS: list[str] = [
     "MANUFACTURER_COMPANY_NAME",
     "MODEL_PART_NAME",
-    "EQUIPMENT_CLASS_NAME",
     "MODEL_DESCRIPTION",
+    "EQUIPMENT_CLASS_NAME",
 ]
 
 
@@ -979,7 +980,7 @@ def transform_model_part(df: pd.DataFrame) -> pd.DataFrame:
     Example:
         >>> result = transform_model_part(raw_df)
         >>> list(result.columns)
-        ['MANUFACTURER_COMPANY_NAME', 'MODEL_PART_NAME', 'EQUIPMENT_CLASS_NAME', 'MODEL_DESCRIPTION']
+        ['MANUFACTURER_COMPANY_NAME', 'MODEL_PART_NAME', 'MODEL_DESCRIPTION', 'EQUIPMENT_CLASS_NAME']
     """
     df = df.copy()
     df.columns = df.columns.str.upper()
@@ -1041,6 +1042,64 @@ def transform_tag_class_properties(df: pd.DataFrame) -> pd.DataFrame:
     if "INSTANCE_COUNT" in df.columns:
         df["INSTANCE_COUNT"] = df["INSTANCE_COUNT"].fillna(0).astype(int)
     available = [c for c in _TAG_CLASS_PROP_COLUMNS if c in df.columns]
+    return df[available]
+
+
+# ---------------------------------------------------------------------------
+# Tag Class Schema domain transforms (file 009 / 009b) — 2-column stub outputs
+# ---------------------------------------------------------------------------
+
+_TAG_CLASS_SCHEMA_COLUMNS: list[str] = ["TAG_CLASS_NAME", "TAG_PROPERTY_NAME"]
+_EQUIP_CLASS_SCHEMA_COLUMNS: list[str] = ["EQUIPMENT_CLASS_NAME", "EQUIPMENT_PROPERTY_NAME"]
+
+
+def transform_tag_class_schema(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS file 009 (Functional tag class schema).
+
+    Layers:
+    1. Normalise column names to UPPER_CASE.
+    2. Reorder to EIS-specified output: TAG_CLASS_NAME, TAG_PROPERTY_NAME.
+
+    Args:
+        df: Raw DataFrame from extract_tag_class_schema SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Example:
+        >>> result = transform_tag_class_schema(raw_df)
+        >>> list(result.columns)
+        ['TAG_CLASS_NAME', 'TAG_PROPERTY_NAME']
+    """
+    df = df.copy()
+    df.columns = df.columns.str.upper()
+    available = [c for c in _TAG_CLASS_SCHEMA_COLUMNS if c in df.columns]
+    return df[available]
+
+
+def transform_equipment_class_schema(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply domain-specific transforms for EIS file 009b (Physical equipment class schema).
+
+    Layers:
+    1. Normalise column names to UPPER_CASE.
+    2. Reorder to EIS-specified output: EQUIPMENT_CLASS_NAME, EQUIPMENT_PROPERTY_NAME.
+
+    Args:
+        df: Raw DataFrame from extract_equipment_class_schema SQL query.
+
+    Returns:
+        Transformed DataFrame ready for write_csv().
+
+    Example:
+        >>> result = transform_equipment_class_schema(raw_df)
+        >>> list(result.columns)
+        ['EQUIPMENT_CLASS_NAME', 'EQUIPMENT_PROPERTY_NAME']
+    """
+    df = df.copy()
+    df.columns = df.columns.str.upper()
+    available = [c for c in _EQUIP_CLASS_SCHEMA_COLUMNS if c in df.columns]
     return df[available]
 
 
