@@ -1199,12 +1199,14 @@ def transform_tag_instance_properties(
         # Step 5: auto-clear UOM for sentinel and placeholder values
         # NA = pseudo-null (no meaningful value, no meaningful UoM)
         # TBC = to be confirmed (valid export row, UoM would be speculative)
-        mask = df["PROPERTY_VALUE"].fillna("").str.strip().str.upper().isin(["NA", "TBC"])
+        # astype(str) required: SQL may return NUMERIC dtype (float64) for PROPERTY_VALUE;
+        # .str accessor raises AttributeError on non-object dtype without explicit cast.
+        mask = df["PROPERTY_VALUE"].fillna("").astype(str).str.strip().str.upper().isin(["NA", "TBC"])
         df.loc[mask, "PROPERTY_VALUE_UOM"] = ""
 
     # Step 5b: lowercase UOM — canonical EIS format per A36 specification
     if "PROPERTY_VALUE_UOM" in df.columns:
-        df["PROPERTY_VALUE_UOM"] = df["PROPERTY_VALUE_UOM"].str.lower()
+        df["PROPERTY_VALUE_UOM"] = df["PROPERTY_VALUE_UOM"].fillna("").astype(str).str.lower()
 
     available = [c for c in _TAG_INSTANCE_PROP_COLUMNS if c in df.columns]
     return df[available]
@@ -1275,12 +1277,13 @@ def transform_equipment_instance_properties(
             uom_lookup=uom_lookup,
         )
         # Step 5: auto-clear UOM for sentinel and placeholder values
-        mask = df["PROPERTY_VALUE"].fillna("").str.strip().str.upper().isin(["NA", "TBC"])
+        # astype(str): same guard as transform_tag_instance_properties — NUMERIC dtype safety.
+        mask = df["PROPERTY_VALUE"].fillna("").astype(str).str.strip().str.upper().isin(["NA", "TBC"])
         df.loc[mask, "PROPERTY_VALUE_UOM"] = ""
 
     # Step 5b: lowercase UOM — canonical EIS format per A36 specification
     if "PROPERTY_VALUE_UOM" in df.columns:
-        df["PROPERTY_VALUE_UOM"] = df["PROPERTY_VALUE_UOM"].str.lower()
+        df["PROPERTY_VALUE_UOM"] = df["PROPERTY_VALUE_UOM"].fillna("").astype(str).str.lower()
 
     available = [c for c in _EQUIPMENT_INSTANCE_PROP_COLUMNS if c in df.columns]
     return df[available]
