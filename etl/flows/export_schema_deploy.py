@@ -55,36 +55,28 @@ _EQUIP_CLASS_FILE_TEMPLATE = "JDAW-KVE-E-JA-6944-00001-009b-{revision}.CSV"
 
 _TAG_CLASS_SCHEMA_SQL = """
 /*
-Purpose : Tag class schema export for EIS file 009.
-          One row per Functional class x property mapping.
-          Only classes with at least one active tag in project_core.tag are included.
-          Output columns: TAG_CLASS_NAME, TAG_PROPERTY_NAME.
-Gate    : cp.mapping_status = 'Active'  (case-insensitive via UPPER())
-          c.object_status  = 'Active'   (case-insensitive via UPPER())
-          p.object_status  = 'Active'   (case-insensitive via UPPER())
-          cp.mapping_concept LIKE '%FUNCTIONAL%' (case-insensitive via UPPER())
-Note    : ontology_core.class stores object_status as 'ACTIVE' (all-caps).
-          UPPER() guards match existing pattern in codebase.
-Changes : 2026-04-11 — restored and extended (added CLASS_CODE, CONCEPT,
-                        INSTANCE_COUNT; renamed TAG_CLASS_NAME -> CLASS_NAME).
-          2026-04-11 — added UPPER() case-insensitive guards on all status filters.
-          2026-04-13 — columns reduced to TAG_CLASS_NAME/TAG_PROPERTY_NAME;
-                        added Functional mapping_concept filter and HAVING active-tag guard.
+Purpose : Tag class-to-property mapping for EIS file 009.
+          Source: project_core.property_value (actual project data).
+          One DISTINCT row per class x property combination.
+          Only Functional classes (concept ILIKE '%Functional%') from ontology_core.class.
+          Only active mappings (property_value.object_status != 'inactive',
+          case-insensitive via UPPER()).
+Output  : TAG_CLASS_NAME, TAG_PROPERTY_NAME
+Changes : 2026-04-13 — Initial implementation sourced from ontology_core.class_property.
+          2026-04-13 — Reworked: source changed to project_core.property_value per
+                        customer correction; DISTINCT on class/property names;
+                        filter on mapping_concept_raw ILIKE '%Functional%';
+                        object_status != 'inactive' gate.
 */
-SELECT
-    c.name                                          AS TAG_CLASS_NAME,
-    p.name                                          AS TAG_PROPERTY_NAME
-FROM ontology_core.class_property cp
-JOIN ontology_core.class   c  ON c.id  = cp.class_id
-JOIN ontology_core.property p  ON p.id  = cp.property_id
-LEFT JOIN project_core.tag t
-       ON t.class_id = c.id
-WHERE UPPER(cp.mapping_status)  = 'ACTIVE'
-  AND UPPER(c.object_status)    = 'ACTIVE'
-  AND UPPER(p.object_status)    = 'ACTIVE'
-  AND UPPER(cp.mapping_concept) LIKE '%FUNCTIONAL%'
-GROUP BY c.name, p.name
-HAVING COUNT(t.id) FILTER (WHERE UPPER(t.object_status) = 'ACTIVE') > 0
+SELECT DISTINCT
+    c.name   AS TAG_CLASS_NAME,
+    p.name   AS TAG_PROPERTY_NAME
+FROM project_core.property_value pv
+JOIN ontology_core.class    c  ON c.id  = pv.class_id
+JOIN ontology_core.property p  ON p.id  = pv.property_id
+WHERE UPPER(c.concept)                  LIKE '%FUNCTIONAL%'
+  AND UPPER(pv.mapping_concept_raw)     LIKE '%FUNCTIONAL%'
+  AND UPPER(pv.object_status)          != 'INACTIVE'
 ORDER BY c.name, p.name
 """
 
@@ -94,32 +86,28 @@ ORDER BY c.name, p.name
 
 _EQUIP_CLASS_SCHEMA_SQL = """
 /*
-Purpose : Equipment class schema export for EIS file 009b (placeholder — no EIS seq assigned).
-          One row per Physical class x property mapping.
-          Only classes with at least one active tag in project_core.tag are included.
-          Output columns: EQUIPMENT_CLASS_NAME, EQUIPMENT_PROPERTY_NAME.
-Gate    : cp.mapping_status = 'Active'  (case-insensitive via UPPER())
-          c.object_status  = 'Active'   (case-insensitive via UPPER())
-          p.object_status  = 'Active'   (case-insensitive via UPPER())
-          cp.mapping_concept LIKE '%PHYSICAL%' (case-insensitive via UPPER())
-Note    : Mirror of _TAG_CLASS_SCHEMA_SQL with Physical filter.
-          UPPER() guards match existing pattern in codebase.
-Changes : 2026-04-13 — Initial implementation as Physical mirror of file 009.
+Purpose : Equipment class-to-property mapping for EIS file 009b (placeholder — stub).
+          Source: project_core.property_value (actual project data).
+          One DISTINCT row per class x property combination.
+          Only Physical classes (concept ILIKE '%Physical%') from ontology_core.class.
+          Only active mappings (property_value.object_status != 'inactive',
+          case-insensitive via UPPER()).
+Output  : EQUIPMENT_CLASS_NAME, EQUIPMENT_PROPERTY_NAME
+Status  : Stub — not deployed to Prefect.
+Changes : 2026-04-13 — Initial implementation sourced from ontology_core.class_property.
+          2026-04-13 — Reworked: source changed to project_core.property_value per
+                        customer correction; DISTINCT; mapping_concept_raw ILIKE '%Physical%';
+                        object_status != 'inactive' gate.
 */
-SELECT
-    c.name                                          AS EQUIPMENT_CLASS_NAME,
-    p.name                                          AS EQUIPMENT_PROPERTY_NAME
-FROM ontology_core.class_property cp
-JOIN ontology_core.class   c  ON c.id  = cp.class_id
-JOIN ontology_core.property p  ON p.id  = cp.property_id
-LEFT JOIN project_core.tag t
-       ON t.class_id = c.id
-WHERE UPPER(cp.mapping_status)  = 'ACTIVE'
-  AND UPPER(c.object_status)    = 'ACTIVE'
-  AND UPPER(p.object_status)    = 'ACTIVE'
-  AND UPPER(cp.mapping_concept) LIKE '%PHYSICAL%'
-GROUP BY c.name, p.name
-HAVING COUNT(t.id) FILTER (WHERE UPPER(t.object_status) = 'ACTIVE') > 0
+SELECT DISTINCT
+    c.name   AS EQUIPMENT_CLASS_NAME,
+    p.name   AS EQUIPMENT_PROPERTY_NAME
+FROM project_core.property_value pv
+JOIN ontology_core.class    c  ON c.id  = pv.class_id
+JOIN ontology_core.property p  ON p.id  = pv.property_id
+WHERE UPPER(c.concept)                  LIKE '%PHYSICAL%'
+  AND UPPER(pv.mapping_concept_raw)     LIKE '%PHYSICAL%'
+  AND UPPER(pv.object_status)          != 'INACTIVE'
 ORDER BY c.name, p.name
 """
 
@@ -269,6 +257,78 @@ def export_equipment_class_properties_flow(
         "exported": result["exported"],
         "violations": result["violations"],
     }
+
+
+@flow(name="export_schema_data", log_prints=True)
+def export_schema_flow(
+    doc_revision: str = "A37",
+    output_dir: str | None = None,
+    export_schemas: list[str] | None = None,
+) -> dict[str, int]:
+    """
+    Export class-to-property mapping CSVs for EIS.
+
+    Args:
+        doc_revision:    EIS revision code, e.g. "A37". Must match [A-Z]\\d{2}.
+        output_dir:      Destination directory. Defaults to config storage.export_dir.
+        export_schemas:  Which schemas to export. Options: "tag", "equipment".
+                         Default: ["tag"] — only file 009 (tag class properties).
+                         Pass ["tag", "equipment"] to also produce file 009b (stub/future).
+
+    Returns:
+        dict mapping schema name to exported row count.
+        e.g. {"tag": 1850} or {"tag": 1850, "equipment": 920}
+
+    Raises:
+        ValueError: If doc_revision does not match [A-Z]\\d{2} pattern.
+    """
+    logger = get_run_logger()
+
+    if not re.match(r"^[A-Z]\d{2}$", doc_revision):
+        raise ValueError(
+            f"doc_revision '{doc_revision}' is invalid. "
+            f"Expected format: [A-Z]\\d{{2}} (e.g. 'A37')."
+        )
+
+    if export_schemas is None:
+        export_schemas = ["tag"]
+
+    engine = create_engine(DB_URL)
+    results: dict[str, int] = {}
+
+    if "tag" in export_schemas:
+        output_path = (
+            Path(output_dir or _EXPORT_DIR)
+            / _TAG_CLASS_FILE_TEMPLATE.format(revision=doc_revision)
+        )
+        result = run_export_pipeline(
+            engine=engine,
+            scope="common",
+            extract_fn=extract_tag_class_schema,
+            transform_fn=transform_tag_class_schema,
+            output_path=output_path,
+            report_name="tag_class_schema_009",
+            logger=logger,
+        )
+        results["tag"] = result["exported"]
+
+    if "equipment" in export_schemas:
+        output_path = (
+            Path(output_dir or _EXPORT_DIR)
+            / _EQUIP_CLASS_FILE_TEMPLATE.format(revision=doc_revision)
+        )
+        result = run_export_pipeline(
+            engine=engine,
+            scope="common",
+            extract_fn=extract_equipment_class_schema,
+            transform_fn=transform_equipment_class_schema,
+            output_path=output_path,
+            report_name="equip_class_schema_009b",
+            logger=logger,
+        )
+        results["equipment"] = result["exported"]
+
+    return results
 
 
 # Not deployed to Prefect — stub for future use.

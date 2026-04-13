@@ -379,9 +379,15 @@ WHERE `pv.object_status = 'Active'`
 
 #### EIS Seq 307 — Tag Class Properties (file 009)
 **File**: `JDAW-KVE-E-JA-6944-00001-009-{revision}.CSV`
-**Flow**: `export_tag_class_properties_flow` (`etl/flows/export_schema_deploy.py`)
-**Source**: `ontology_core.class_property` JOIN `ontology_core.class` JOIN `ontology_core.property`
-WHERE `mapping_concept ILIKE '%Functional%'` AND class has ≥1 active tag in `project_core.tag`
+**Flow**: `export_schema_flow` (unified entry) / `export_tag_class_properties_flow` (standalone) — `etl/flows/export_schema_deploy.py`
+
+**Source table**: `project_core.property_value`
+**Scope**: DISTINCT class × property pairs where:
+- `ontology_core.class.concept ILIKE '%Functional%'`
+- `project_core.property_value.mapping_concept_raw ILIKE '%Functional%'`
+- `project_core.property_value.object_status != 'inactive'` (case-insensitive)
+
+**Status**: Active — exported in EIS full package (`export_eis_data_deploy.py`, step 11)
 
 | Column | Source | Notes |
 |---|---|---|
@@ -393,9 +399,14 @@ WHERE `mapping_concept ILIKE '%Functional%'` AND class has ≥1 active tag in `p
 #### Equipment Class Properties (file 009b — stub, not deployed)
 **File**: `JDAW-KVE-E-JA-6944-00001-009b-{revision}.CSV`
 **Flow**: `export_equipment_class_properties_flow` (`etl/flows/export_schema_deploy.py`)
-**Source**: `ontology_core.class_property` JOIN `ontology_core.class` JOIN `ontology_core.property`
-WHERE `mapping_concept ILIKE '%Physical%'` AND class has ≥1 active tag in `project_core.tag`
-**Status**: stub — not deployed to Prefect, no EIS sequence number assigned yet
+
+**Source table**: `project_core.property_value`
+**Scope**: DISTINCT class × property pairs where:
+- `ontology_core.class.concept ILIKE '%Physical%'`
+- `project_core.property_value.mapping_concept_raw ILIKE '%Physical%'`
+- `project_core.property_value.object_status != 'inactive'` (case-insensitive)
+
+**Status**: Stub — not deployed. Enable by passing `export_schemas=["tag","equipment"]` to `export_schema_flow`.
 
 | Column | Source | Notes |
 |---|---|---|

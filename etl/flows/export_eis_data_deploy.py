@@ -31,12 +31,13 @@ try:
     from flows.export_tag_properties_deploy import export_tag_properties_flow
     from flows.export_equipment_properties_deploy import export_equipment_properties_flow
     from flows.export_document_crossref_deploy import export_document_crossref_flow
+    from flows.export_schema_deploy import export_schema_flow
 except ImportError as e:
     print(f"[SKIP] {Path(__file__).name}: Could not import flow modules. Details: {e}")
     sys.exit(0)
 
 
-@flow(name="export_eis_data", log_prints=True, description="SEQUENTIAL PIPELINE: all 10 EIS export flows — registers, properties, connections, doc cross-refs.")
+@flow(name="export_eis_data", log_prints=True, description="SEQUENTIAL PIPELINE: all 11 EIS export flows — registers, properties, connections, doc cross-refs.")
 def export_eis_data_flow(doc_revision: str = "A35") -> dict[str, dict]:
     """
     Run all EIS export flows sequentially to produce a complete EIS data export.
@@ -71,6 +72,7 @@ def export_eis_data_flow(doc_revision: str = "A35") -> dict[str, dict]:
         ("purchase_order",        export_purchase_order_flow),          # seq 214
         ("area_register",         export_area_register_flow),           # seq 203
         ("process_unit",          export_process_unit_flow),            # seq 204
+        ("tag_class_schema",      export_schema_flow),                  # seq 009 — tag class properties
         # Property value exports
         ("tag_properties",        export_tag_properties_flow),          # seq 303
         ("equipment_properties",  export_equipment_properties_flow),    # seq 301
