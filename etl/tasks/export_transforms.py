@@ -221,6 +221,11 @@ def _apply_value_uom_split(
     Returns:
         DataFrame with split and normalized value/UoM columns.
 
+    Changes:
+        2026-04-13 — Fixed column assignment via zip unpacking; avoids pandas 2.x
+                     apply() column inference bug (ValueError: Columns must be same
+                     length as key).
+
     Example:
         >>> df = pd.DataFrame({'PROPERTY_VALUE': ['490mm', '3.5bar(g)', 'NA'], 'PROPERTY_VALUE_UOM': ['', '', '']})
         >>> lookup = {'mm': 'mm', 'bar(g)': 'bar(g)'}
@@ -235,19 +240,17 @@ def _apply_value_uom_split(
     if value_col not in df.columns or uom_col not in df.columns:
         return df
 
-    result = df.apply(
-        lambda r: pd.Series(
-            _split_value_uom(
-                str(r[value_col]) if pd.notna(r[value_col]) else "",
-                str(r[uom_col]) if pd.notna(r[uom_col]) else "",
-                uom_lookup,
-            ),
-            index=[value_col, uom_col],
-        ),
-        axis=1,
-    )
+    pairs = [
+        _split_value_uom(
+            str(r[value_col]) if pd.notna(r[value_col]) else "",
+            str(r[uom_col])   if pd.notna(r[uom_col])   else "",
+            uom_lookup,
+        )
+        for _, r in df.iterrows()
+    ]
     df = df.copy()
-    df[[value_col, uom_col]] = result
+    df[value_col] = [p[0] for p in pairs]
+    df[uom_col]   = [p[1] for p in pairs]
     return df
 
 
