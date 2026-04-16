@@ -161,6 +161,18 @@ SELECT MIN(sync_timestamp)::date AS min_date
 FROM audit_core.tag_status_history
 """
 
+_SQL_MAX_CURRENT_DATE = """
+SELECT MAX(sync_timestamp)::date AS max_date
+FROM project_core.tag
+WHERE object_status = 'Active'
+"""
+
+_SQL_NEAREST_BASELINE_DATE = """
+SELECT MAX(sync_timestamp)::date AS nearest_date
+FROM audit_core.tag_status_history
+WHERE sync_timestamp::date <= :target_date
+"""
+
 # ---------------------------------------------------------------------------
 # Style constants (openpyxl)
 # ---------------------------------------------------------------------------
@@ -243,6 +255,14 @@ def _autofit_columns(
         )
 
 
+def _resolve_max_current_date(engine: Engine) -> date:
+    with engine.connect() as conn:
+        row = conn.execute(text(_SQL_MAX_CURRENT_DATE)).fetchone()
+    if row is None or row[0] is None:
+        raise ValueError("project_core.tag contains no active records.")
+    return row[0]
+
+
 # ---------------------------------------------------------------------------
 # Comparison logic
 # ---------------------------------------------------------------------------
@@ -263,7 +283,7 @@ def _get_comparison_result(row: pd.Series, data_cols: list[str]) -> str:
         data_cols: Column names used for field-level comparison.
 
     Returns:
-        One of 'Modified', 'Created', 'Deleted', 'No Changes'.
+        One of 'Modified', 'Created', 'Deleted', 'No Changes', 'Unknown'.
     """
     merge_flag = row["_merge"]
     tag_status_new = _to_str(row.get("tag_status_new", ""))
@@ -286,7 +306,7 @@ def _get_comparison_result(row: pd.Series, data_cols: list[str]) -> str:
     if merge_flag == "right_only":
         return "Deleted"
 
-    return ""
+    return "Unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -478,8 +498,8 @@ def _build_changes_only_sheet(
 
     One row per changed field for Modified/Created/Deleted tags:
       - Modified: only fields where field_new != field_old
-      - Created:  all fields; VALUE_OLD = ''
-      - Deleted:  all fields; VALUE_NEW = ''
+      - Created:  non-blank fields only; VALUE_OLD = ''
+      - Deleted:  non-blank fields only; VALUE_NEW = ''
 
     Columns: SOURCE_ID | TAG_NAME | FIELD_NAME | VALUE_OLD | VALUE_NEW | Comparison_Result
 
@@ -546,12 +566,14 @@ def _build_changes_only_sheet(
         elif result == "Created":
             for field in data_cols:
                 val_new = _to_str(row.get(f"{field}_new", ""))
-                sheet2_rows.append((source_id, tag_name, field, "", val_new, result))
+                if val_new:  # skip fields that are blank even in current state
+                    sheet2_rows.append((source_id, tag_name, field, "", val_new, result))
 
         elif result == "Deleted":
             for field in data_cols:
                 val_old = _to_str(row.get(f"{field}_old", ""))
-                sheet2_rows.append((source_id, tag_name, field, val_old, "", result))
+                if val_old:  # skip fields that were blank in baseline
+                    sheet2_rows.append((source_id, tag_name, field, val_old, "", result))
 
     # Sort: SOURCE_ID ASC, FIELD_NAME ASC
     sheet2_rows.sort(key=lambda r: (r[0], r[2]))
@@ -595,6 +617,7 @@ def _build_changes_only_sheet(
 def export_tag_comparison_flow(
     current_date: Optional[date] = None,
     baseline_date: Optional[date] = None,
+    doc_revision: str = "A01",
     output_dir: Optional[str] = None,
 ) -> str:
     """
@@ -602,48 +625,103 @@ def export_tag_comparison_flow(
 
     Args:
         current_date:  Reference date for "new" state.
-                       Default: today.
+                       Default: resolved from DB as MAX(sync_timestamp)::date
+                       from project_core.tag WHERE object_status = 'Active'.
         baseline_date: Reference date for "old" (baseline) state.
-                       Default: current_date minus 1 calendar month
-                       (dateutil.relativedelta).
+                       Default: nearest available history date on or before
+                       (current_date minus 1 calendar month) — queried from
+                       audit_core.tag_status_history. Raises ValueError if no
+                       history records exist before that arithmetic target.
+        doc_revision:  Document revision code embedded in the output filename
+                       (e.g. 'A01', 'B02'). Default: 'A01'.
         output_dir:    Override output directory.
                        Default: same output root as other export flows.
 
     Returns:
         Absolute path of the written XLSX file.
 
+    Raises:
+        ValueError: If baseline_date >= current_date (comparison of a snapshot
+                    with itself produces no meaningful output).
+        ValueError: If no active tags exist in project_core.tag as of
+                    current_date (would produce misleading all-Deleted output).
+        ValueError: If current_date cannot be resolved from DB (no active tags).
+        ValueError: If baseline_date cannot be resolved from DB (no history
+                    records before the arithmetic target date).
+
     Output filename:
-        tag-comparison-{current_date_str}-vs-{baseline_date_str}.xlsx
-        Example: tag-comparison-2026-04-16-vs-2026-03-16.xlsx
+        Tag&Equipment-register_compare_{current_date_str}.xlsx
+        Example: Tag&Equipment-register_compare_2026-04-16.xlsx
 
     Example:
         >>> export_tag_comparison_flow(
         ...     current_date=date(2026, 4, 16),
         ...     baseline_date=date(2026, 3, 16),
+        ...     doc_revision="A02",
         ... )
-        '/mnt/shared-data/.../tag-comparison-2026-04-16-vs-2026-03-16.xlsx'
+        '/mnt/shared-data/.../Tag&Equipment-register_compare_2026-04-16.xlsx'
     """
     logger = get_run_logger()
 
-    # Resolve date defaults
+    # Engine must be created before date resolution (DB queries needed for defaults)
+    engine = create_engine(DB_URL)
+
+    # Resolve current_date default from DB MAX
+    _current_date_explicit = current_date is not None
     if current_date is None:
-        current_date = date.today()
+        current_date = _resolve_max_current_date(engine)
+
+    # Resolve baseline_date default using DB proximity query
+    _baseline_date_explicit = baseline_date is not None
     if baseline_date is None:
-        # One calendar month back (handles month-end edge cases correctly)
-        baseline_date = current_date - relativedelta(months=1)
+        _target = current_date - relativedelta(months=1)
+        with engine.connect() as conn:
+            row = conn.execute(
+                text(_SQL_NEAREST_BASELINE_DATE),
+                {"target_date": str(_target)}
+            ).fetchone()
+        if row is None or row[0] is None:
+            raise ValueError(
+                f"No tag history found on or before {_target} "
+                f"(1 month before current_date={current_date}). "
+                f"Cannot resolve default baseline_date."
+            )
+        baseline_date = row[0]
+        if baseline_date != _target:
+            logger.warning(
+                f"No history on exact target {_target}; "
+                f"using nearest available date: {baseline_date}"
+            )
+
+    # Guard: baseline must be strictly before current
+    if baseline_date >= current_date:
+        raise ValueError(
+            f"baseline_date ({baseline_date}) must be strictly before "
+            f"current_date ({current_date}). "
+            f"Comparison of a snapshot with itself produces no meaningful output."
+        )
 
     current_date_str = current_date.strftime("%Y-%m-%d")
-    baseline_date_str = baseline_date.strftime("%Y-%m-%d")
-    filename = f"tag-comparison-{current_date_str}-vs-{baseline_date_str}.xlsx"
+    filename = f"Tag&Equipment-register_compare_{current_date_str}.xlsx"
     output_path = Path(output_dir or _EXPORT_DIR) / filename
-
-    engine = create_engine(DB_URL)
 
     # Load both states
     df_new = load_current_tags(engine, current_date)
+
+    if df_new.empty:
+        raise ValueError(
+            f"No active tags found in project_core.tag as of {current_date}. "
+            f"Aborting to prevent misleading 'all Deleted' output."
+        )
+
     df_old = load_baseline_tags(engine, baseline_date)
 
-    logger.info(f"Baseline date: {baseline_date} | Current date: {current_date}")
+    logger.info(
+        f"Current date: {current_date} "
+        f"({'explicit' if _current_date_explicit else 'resolved from DB MAX'})"
+        f" | Baseline date: {baseline_date} "
+        f"({'explicit' if _baseline_date_explicit else 'resolved from DB nearest'})"
+    )
     logger.info(
         f"Tags in current: {len(df_new)} | Tags in baseline: {len(df_old)}"
     )
