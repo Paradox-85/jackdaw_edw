@@ -222,7 +222,7 @@ All export CSVs use standard naming: `JDAW-KVE-E-JA-6944-00001-{SEQ}-{REVISION}.
 ### 2.1 Spatial Reference Exports
 
 #### EIS Seq 203 — Area Register
-**File**: `JDAW-KVE-E-JA-6944-00001-017-{revision}.CSV`
+**File**: `JDAW-KVE-E-JA-6944-00001-001-{revision}.CSV`
 **Flow**: `export_area_register_flow`
 **Source**: `reference_core.area` WHERE `object_status = 'Active'`
 
@@ -237,7 +237,7 @@ All export CSVs use standard naming: `JDAW-KVE-E-JA-6944-00001-{SEQ}-{REVISION}.
 ---
 
 #### EIS Seq 204 — Process Unit Register
-**File**: `JDAW-KVE-E-JA-6944-00001-018-{revision}.CSV`
+**File**: `JDAW-KVE-E-JA-6944-00001-002-{revision}.CSV`
 **Flow**: `export_process_unit_flow`
 **Source**: `reference_core.process_unit` WHERE `object_status = 'Active'`
 
@@ -571,8 +571,8 @@ Unified mapping between EIS sequence numbers, input sources, and output codes:
 
 | EIS Seq | Source XLSX | Output CSV Code | Output Filename | Semantic Content | Data Layer |
 |---|---|---|---|---|---|
-| 203 | 203-Area.xlsx | `-017-` | Area.CSV | Area spatial hierarchy | reference |
-| 204 | 204-ProcessUnit.xlsx | `-018-` | ProcessUnit.CSV | Process unit breakdown | reference |
+| 203 | 203-Area.xlsx | `-001-` | Area.CSV | Area spatial hierarchy | reference |
+| 204 | 204-ProcessUnit.xlsx | `-002-` | ProcessUnit.CSV | Process unit breakdown | reference |
 | 205 | 205-Tag-register.xlsx | `-003-` | Tag-register.CSV | **Tag master data** | **project** |
 | 206 | 206-Equipment-register.xlsx | `-004-` | Equipment.CSV | Equipment assets | project |
 | 209 | 209-Model-Part-register.xlsx | `-005-` | ModelPart.CSV | Component catalog | reference |
@@ -611,8 +611,8 @@ Unified mapping between EIS sequence numbers, input sources, and output codes:
 ```python
 doc_revision = "A36"
 eis_registers = {
-    "203-Area.xlsx": "JDAW-KVE-E-JA-6944-00001-017-{0}.CSV",
-    "204-ProcessUnit.xlsx": "JDAW-KVE-E-JA-6944-00001-018-{0}.CSV",
+    "203-Area.xlsx": "JDAW-KVE-E-JA-6944-00001-001-{0}.CSV",
+    "204-ProcessUnit.xlsx": "JDAW-KVE-E-JA-6944-00001-002-{0}.CSV",
     "205-Tag-register.xlsx": "JDAW-KVE-E-JA-6944-00001-003-{0}.CSV",
     "206-Equipment-register.xlsx": "JDAW-KVE-E-JA-6944-00001-004-{0}.CSV",
     "209-Model-Part-register.xlsx": "JDAW-KVE-E-JA-6944-00001-005-{0}.CSV",

@@ -54,7 +54,7 @@ WHERE a.object_status = 'Active'
 ORDER BY a.plant_code_raw, a.code
 """
 
-_FILE_TEMPLATE = "JDAW-KVE-E-JA-6944-00001-017-{revision}.CSV"
+_FILE_TEMPLATE = "JDAW-KVE-E-JA-6944-00001-001-{revision}.CSV"
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +91,7 @@ def export_area_register_flow(
     """
     Export Area Register to EIS CSV snapshot (seq 203).
 
-    Output file: JDAW-KVE-E-JA-6944-00001-017-{doc_revision}.CSV
+    Output file: JDAW-KVE-E-JA-6944-00001-001-{doc_revision}.CSV
     Encoding:    UTF-8 BOM (utf-8-sig) for Excel/EIS compatibility.
     Filter gate: object_status = 'Active' (SQL layer).
     Audit:       Start/end recorded in audit_core.sync_run_stats.

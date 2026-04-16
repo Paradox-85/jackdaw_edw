@@ -55,7 +55,7 @@ GROUP BY u.plant_code_raw, u.id, u.code, u.name
 ORDER BY u.plant_code_raw, u.code
 """
 
-_FILE_TEMPLATE = "JDAW-KVE-E-JA-6944-00001-018-{revision}.CSV"
+_FILE_TEMPLATE = "JDAW-KVE-E-JA-6944-00001-002-{revision}.CSV"
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +92,7 @@ def export_process_unit_flow(
     """
     Export Process Unit Register to EIS CSV snapshot (seq 204).
 
-    Output file: JDAW-KVE-E-JA-6944-00001-018-{doc_revision}.CSV
+    Output file: JDAW-KVE-E-JA-6944-00001-002-{doc_revision}.CSV
     Encoding:    UTF-8 BOM (utf-8-sig) for Excel/EIS compatibility.
     Filter gate: object_status = 'Active' (SQL layer).
     Audit:       Start/end recorded in audit_core.sync_run_stats.
