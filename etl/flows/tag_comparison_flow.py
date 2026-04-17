@@ -263,6 +263,14 @@ def _resolve_max_current_date(engine: Engine) -> date:
     return row[0]
 
 
+def _numeric_sort_key(val: str) -> tuple:
+    """Sort key that orders numeric strings numerically, non-numeric strings last."""
+    try:
+        return (0, int(val))
+    except (ValueError, TypeError):
+        return (1, val)
+
+
 # ---------------------------------------------------------------------------
 # Comparison logic
 # ---------------------------------------------------------------------------
@@ -457,9 +465,13 @@ def _build_full_comparison_sheet(
     df_sorted["_sort_key"] = df_sorted["Comparison_Result"].map(
         lambda r: _RESULT_SORT_ORDER.get(r, 99)
     )
-    df_sorted.sort_values(
-        ["_sort_key", "source_id"], na_position="last", inplace=True
+    df_sorted["_source_id_int"] = pd.to_numeric(
+        df_sorted["source_id"], errors="coerce"
     )
+    df_sorted.sort_values(
+        ["_sort_key", "_source_id_int"], na_position="last", inplace=True
+    )
+    df_sorted.drop(columns=["_source_id_int"], inplace=True)
     df_sorted.reset_index(drop=True, inplace=True)
 
     # --- Data rows ---
@@ -576,7 +588,7 @@ def _build_changes_only_sheet(
                     sheet2_rows.append((source_id, tag_name, field, val_old, "", result))
 
     # Sort: SOURCE_ID ASC, FIELD_NAME ASC
-    sheet2_rows.sort(key=lambda r: (r[0], r[2]))
+    sheet2_rows.sort(key=lambda r: (_numeric_sort_key(r[0]), r[2]))
 
     _row_fill: dict[str, PatternFill] = {
         "Modified": _FILL_YELLOW,
