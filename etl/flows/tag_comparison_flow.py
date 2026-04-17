@@ -664,7 +664,7 @@ def export_tag_comparison_flow(
     logger = get_run_logger()
 
     # Engine must be created before date resolution (DB queries needed for defaults)
-    engine = create_engine(DB_URL)
+    engine = create_engine(DB_URL, pool_pre_ping=True)
 
     # Resolve current_date default from DB MAX
     _current_date_explicit = current_date is not None
@@ -677,8 +677,7 @@ def export_tag_comparison_flow(
         _target = current_date - relativedelta(months=1)
         with engine.connect() as conn:
             row = conn.execute(
-                text(_SQL_NEAREST_BASELINE_DATE),
-                {"target_date": str(_target)}
+                text(_SQL_NEAREST_BASELINE_DATE).bindparams(target_date=str(_target))
             ).fetchone()
         if row is None or row[0] is None:
             raise ValueError(
@@ -745,6 +744,7 @@ def export_tag_comparison_flow(
         how="outer",
         indicator=True,
     )
+    merged["source_id"] = merged["source_id"].fillna("").astype(str)
 
     # Classify every row
     merged["Comparison_Result"] = merged.apply(
