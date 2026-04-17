@@ -49,7 +49,6 @@ _TAG_COLUMNS: list[str] = [
     "discipline_code_raw",
     "po_code_raw",
     "design_company_name_raw",
-    "company_raw",
     "manufacturer_company_raw",
     "vendor_company_raw",
     "article_code_raw",
@@ -95,6 +94,7 @@ _SQL_CURRENT = """
 Purpose: Load current tag state for comparison report.
 Gate:    object_status = 'Active', sync_timestamp <= current_date.
 Changes: 2026-04-16 — Initial implementation.
+         2026-04-17 — Removed company_raw (column does not exist in schema).
 */
 SELECT
     source_id,
@@ -108,7 +108,6 @@ SELECT
     discipline_code_raw,
     po_code_raw,
     design_company_name_raw,
-    company_raw,
     manufacturer_company_raw,
     vendor_company_raw,
     article_code_raw,

@@ -57,7 +57,7 @@ _STATE_COLOR = {
     "PENDING":    "#8B949E",
 }
 
-_TOTAL_STEPS = 11
+_TOTAL_STEPS = 12
 
 # Exact Prefect deployment name for CRS classification
 # Registered by etl/flows/classify_crs_comments_deploy.py
@@ -410,11 +410,12 @@ def render() -> None:
 
         with col_l:
             st.caption(
-                "Triggers **EIS Full Package Export** — all 11 export flows run sequentially: "
+                "Triggers **EIS Full Package Export** — all 12 export flows run sequentially: "
                 "Tag Register (003) · Equipment Register (004) · Model Part (209) · "
                 "Tag Connections (212) · Purchase Order (214) · Area Register (203) · "
                 "Process Unit (204) · Tag Properties (303) · Equipment Properties (301) · "
-                "Tag Class Properties (307) · Document Cross-References (408–420)."
+                "Tag Class Properties (307) · Document Cross-References (408–420) · "
+                "Tag Comparison Report."
             )
 
         with col_r:
