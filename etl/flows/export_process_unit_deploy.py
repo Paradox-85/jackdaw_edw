@@ -37,21 +37,15 @@ _PROCESS_UNIT_SQL = """
 /*
 Purpose: Process Unit Register full extract for EIS snapshot export (seq 204).
 Gate:    u.object_status = 'Active'
-Note:    COUNT_OF_TAGS counts only Active tags — informational field per EIS spec.
-         plant_code_raw is denormalised in each process_unit row.
 Changes: 2026-03-13 — Initial implementation.
+         2026-04-17 — Removed COUNT_OF_TAGS (not required by EIS spec).
 */
 SELECT
     u.plant_code_raw                    AS PLANT_CODE,
     u.code                              AS PROCESS_UNIT_CODE,
-    u.name                              AS PROCESS_UNIT_NAME,
-    COUNT(t.id)                         AS COUNT_OF_TAGS
+    u.name                              AS PROCESS_UNIT_NAME
 FROM reference_core.process_unit u
--- Why LEFT JOIN: units with zero tags must still appear in the register
-LEFT JOIN project_core.tag t
-    ON t.process_unit_id = u.id AND t.object_status = 'Active'
 WHERE u.object_status = 'Active'
-GROUP BY u.plant_code_raw, u.id, u.code, u.name
 ORDER BY u.plant_code_raw, u.code
 """
 

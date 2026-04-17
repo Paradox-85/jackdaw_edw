@@ -6,7 +6,7 @@ Discovers every *_deploy.py file in etl/flows/, runs it as a subprocess
 
 Registered deployments:
   - import_*_deploy.py  — all ETL import flows
-  - export_eis_data_deploy.py — master EIS export (runs all 11 sub-flows sequentially)
+  - export_eis_data_deploy.py — master EIS export (runs all 12 sub-flows sequentially)
 
 Individual export_*_deploy.py flows are intentionally excluded — they are
 orchestrated by export_eis_data_deploy.py and do not need their own deployments.

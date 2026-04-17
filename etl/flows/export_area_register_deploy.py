@@ -37,19 +37,15 @@ _AREA_REGISTER_SQL = """
 /*
 Purpose: Area Register full extract for EIS snapshot export (seq 203).
 Gate:    a.object_status = 'Active'
-Note:    plant_code_raw is denormalised into each area row — JOIN to plant
-         is needed only to resolve the plant display name (PLANT_REF).
 Changes: 2026-03-13 — Initial implementation.
+         2026-04-17 — Removed PLANT_REF column (not required by EIS spec).
 */
 SELECT
     a.plant_code_raw                    AS PLANT_CODE,
     a.code                              AS AREA_CODE,
     a.name                              AS AREA_NAME,
-    COALESCE(a.main_area_code, '')      AS MAIN_AREA_CODE,
-    COALESCE(pl.name, '')               AS PLANT_REF
+    COALESCE(a.main_area_code, '')      AS MAIN_AREA_CODE
 FROM reference_core.area a
--- Why LEFT JOIN: area must not disappear if plant FK is missing (data integrity guard)
-LEFT JOIN reference_core.plant pl ON pl.code = a.plant_code_raw
 WHERE a.object_status = 'Active'
 ORDER BY a.plant_code_raw, a.code
 """

@@ -232,7 +232,6 @@ All export CSVs use standard naming: `JDAW-KVE-E-JA-6944-00001-{SEQ}-{REVISION}.
 | `AREA_CODE` | `area.code` | unique per plant |
 | `AREA_NAME` | `area.name` | |
 | `MAIN_AREA_CODE` | `parent_area.code` (self-join) | hierarchy parent; empty if NULL |
-| `PLANT_REF` | computed `'PLANT-' \|\| plant.code` | `PLANT-JDA` |
 
 ---
 
@@ -244,9 +243,8 @@ All export CSVs use standard naming: `JDAW-KVE-E-JA-6944-00001-{SEQ}-{REVISION}.
 | Column | Source | Notes |
 |---|---|---|
 | `PLANT_CODE` | `plant.code` | always `JDA` |
-| `PROCESS_UNIT_CODE` | `process_unit.code` | integer identifier |
+| `PROCESS_UNIT_CODE` | `process_unit.code` | zero-padded to 2 chars (e.g. `01`, `06`, `29`) |
 | `PROCESS_UNIT_NAME` | `process_unit.name` | |
-| `COUNT_OF_TAGS` | SELECT COUNT(*) FROM `project_core.tag` | informational |
 
 ---
 
@@ -565,6 +563,69 @@ WHERE `pv.object_status = 'Active'`
 
 ---
 
+### 2.6 Tag Comparison Report
+
+#### Tag Comparison — Two-Sheet XLSX Report
+**File**: `Tag&Equipment-register_compare_{current_date}.xlsx`
+**Flow**: `export_tag_comparison_flow` (`etl/flows/export_tag_comparison_deploy.py`)
+**Source**: `project_core.tag` (current state) + `audit_core.tag_status_history` (baseline snapshot)
+
+Generates a two-sheet XLSX comparing tag state between two dates.
+Default: current_date = MAX(sync_timestamp) from project_core.tag;
+baseline_date = nearest available date ≤ (current_date − 1 calendar month).
+
+**Parameters**:
+| Parameter | Default | Description |
+|---|---|---|
+| `current_date` | MAX(sync_timestamp) from DB | Reference date for "new" state |
+| `baseline_date` | Nearest DB date ≤ current − 1 month | Reference date for "old" (baseline) state |
+| `doc_revision` | `A01` | Revision code (stored in flow metadata) |
+| `output_dir` | config `storage.export_dir` | Override output path |
+
+**Sheet 1 — Full Comparison**:
+
+| Column group | Colour | Description |
+|---|---|---|
+| `{field}_new` (×33) | Green header | Current state for all 33 tag fields |
+| `source_id` | Grey header | Immutable source system identifier |
+| `{field}_old` (×33) | Blue header | Baseline snapshot for all 33 tag fields |
+| `Comparison_Result` | Grey header | `Modified` / `Created` / `Deleted` / `No Changes` |
+
+Cell-level highlights: yellow (#FFEB9C) on changed cells (Modified rows);
+green (#E2EFDA) on _new cells (Created rows); red (#FCE4D6) on _old cells (Deleted rows).
+Sort: Modified → Created → Deleted → No Changes, then source_id numeric ASC.
+
+**Sheet 2 — Changes Only** (compact, one row per changed field):
+
+| Column | Description |
+|---|---|
+| `SOURCE_ID` | Tag source ID |
+| `TAG_NAME` | Tag name (from new or old state) |
+| `FIELD_NAME` | Name of the changed field |
+| `VALUE_OLD` | Baseline value (blue header) |
+| `VALUE_NEW` | Current value (green header) |
+| `Comparison_Result` | Row-level status |
+
+Only Modified/Created/Deleted tags included; Created/Deleted show only non-blank fields.
+Sort: SOURCE_ID numeric ASC, FIELD_NAME ASC.
+
+**Comparison fields** (33 total, all from `_DATA_COLS`):
+`tag_name`, `tag_status`, `description`, `parent_tag_raw`, `tag_class_raw`,
+`area_code_raw`, `process_unit_raw`, `discipline_code_raw`, `po_code_raw`,
+`design_company_name_raw`, `company_raw`, `manufacturer_company_raw`,
+`vendor_company_raw`, `article_code_raw`, `model_part_raw`,
+`safety_critical_item`, `safety_critical_item_reason_awarded`,
+`production_critical_item`, `serial_no`, `install_date`, `startup_date`,
+`warranty_end_date`, `price`, `tech_id`, `ip_grade`, `ex_class`,
+`mc_package_code`, `equip_no`, `alias`, `from_tag_raw`, `to_tag_raw`, `plant_raw`
+
+**Guards**:
+- Raises `ValueError` if `baseline_date >= current_date`
+- Raises `ValueError` if no active tags found as of `current_date`
+- Raises `ValueError` if no history records found before arithmetic baseline target
+
+---
+
 ## JDAW EIS Code Matrix
 
 Unified mapping between EIS sequence numbers, input sources, and output codes:
@@ -589,6 +650,7 @@ Unified mapping between EIS sequence numbers, input sources, and output codes:
 | 413 | 413-Document_References_to_Equipment.xlsx | `-019-` | DocToEquipment.CSV | Doc↔Equipment links | mapping |
 | 414 | 414-Document_References_to_ModelPart.xlsx | `-020-` | DocToModelPart.CSV | Doc↔ModelPart links | mapping |
 | 420 | 420-Document_References_to_PurchaseOrder.xlsx | `-022-` | DocToPurchaseOrder.CSV | Doc↔PO links | mapping |
+| — | — | — | `Tag&Equipment-register_compare_{date}.xlsx` | Tag state comparison (two-sheet XLSX) | project |
 
 ---
 

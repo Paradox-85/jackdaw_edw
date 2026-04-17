@@ -841,7 +841,6 @@ _AREA_REGISTER_COLUMNS: list[str] = [
     "AREA_CODE",
     "AREA_NAME",
     "MAIN_AREA_CODE",
-    "PLANT_REF",
 ]
 
 
@@ -862,7 +861,7 @@ def transform_area_register(df: pd.DataFrame) -> pd.DataFrame:
     Example:
         >>> result = transform_area_register(raw_df)
         >>> list(result.columns)
-        ['PLANT_CODE', 'AREA_CODE', 'AREA_NAME', 'MAIN_AREA_CODE', 'PLANT_REF']
+        ['PLANT_CODE', 'AREA_CODE', 'AREA_NAME', 'MAIN_AREA_CODE']
     """
     df = df.copy()
     df.columns = df.columns.str.upper()
@@ -878,7 +877,6 @@ _PROCESS_UNIT_COLUMNS: list[str] = [
     "PLANT_CODE",
     "PROCESS_UNIT_CODE",
     "PROCESS_UNIT_NAME",
-    "COUNT_OF_TAGS",
 ]
 
 
@@ -888,7 +886,8 @@ def transform_process_unit(df: pd.DataFrame) -> pd.DataFrame:
 
     Layers:
     1. Normalise column names to UPPER_CASE.
-    2. Reorder columns to EIS-specified output order.
+    2. Zero-pad PROCESS_UNIT_CODE to 2 digits (e.g. "1" → "01").
+    3. Reorder columns to EIS-specified output order.
 
     Args:
         df: Raw DataFrame from extract_process_unit SQL query.
@@ -899,10 +898,13 @@ def transform_process_unit(df: pd.DataFrame) -> pd.DataFrame:
     Example:
         >>> result = transform_process_unit(raw_df)
         >>> list(result.columns)
-        ['PLANT_CODE', 'PROCESS_UNIT_CODE', 'PROCESS_UNIT_NAME', 'COUNT_OF_TAGS']
+        ['PLANT_CODE', 'PROCESS_UNIT_CODE', 'PROCESS_UNIT_NAME']
     """
     df = df.copy()
     df.columns = df.columns.str.upper()
+    df["PROCESS_UNIT_CODE"] = df["PROCESS_UNIT_CODE"].apply(
+        lambda v: str(v).zfill(2) if str(v).isdigit() else str(v)
+    )
     available = [c for c in _PROCESS_UNIT_COLUMNS if c in df.columns]
     return df[available]
 

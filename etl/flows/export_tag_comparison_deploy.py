@@ -793,7 +793,7 @@ if __name__ == "__main__":
     _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
     export_tag_comparison_flow.from_source(
         source=str(_REPO_ROOT),
-        entrypoint="etl/flows/tag_comparison_flow.py:export_tag_comparison_flow",
+        entrypoint="etl/flows/export_tag_comparison_deploy.py:export_tag_comparison_flow",
     ).deploy(
         name="export_tag_comparison_deploy",
         work_pool_name="default-agent-pool",

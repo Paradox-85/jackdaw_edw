@@ -1,7 +1,7 @@
 """
 etl/flows/export_eis_data_deploy.py — EIS Full Package Export
 
-Sequential pipeline that runs all 10 EIS export flows in order.
+Sequential pipeline that runs all 12 EIS export flows in order.
 Mirrors the pattern of import_master_sync_deploy.py.
 
 Deployment name: export_eis_data_deploy
@@ -31,13 +31,14 @@ try:
     from flows.export_tag_properties_deploy import export_tag_properties_flow
     from flows.export_equipment_properties_deploy import export_equipment_properties_flow
     from flows.export_document_crossref_deploy import export_document_crossref_flow
+    from flows.export_tag_comparison_deploy import export_tag_comparison_flow
     from flows.export_schema_deploy import export_schema_flow
 except ImportError as e:
     print(f"[SKIP] {Path(__file__).name}: Could not import flow modules. Details: {e}")
     sys.exit(0)
 
 
-@flow(name="export_eis_data", log_prints=True, description="SEQUENTIAL PIPELINE: all 11 EIS export flows — registers, properties, connections, doc cross-refs.")
+@flow(name="export_eis_data", log_prints=True, description="SEQUENTIAL PIPELINE: all 12 EIS export flows — registers, properties, connections, doc cross-refs, comparison report.")
 def export_eis_data_flow(doc_revision: str = "A35") -> dict[str, dict]:
     """
     Run all EIS export flows sequentially to produce a complete EIS data export.
@@ -78,6 +79,7 @@ def export_eis_data_flow(doc_revision: str = "A35") -> dict[str, dict]:
         ("equipment_properties",  export_equipment_properties_flow),    # seq 301
         # Document cross-references (runs 8 sub-flows internally)
         ("document_crossref",     export_document_crossref_flow),       # seq 408-420
+        ("tag_comparison",        export_tag_comparison_flow),           # comparison report
     ]
 
     results: dict[str, dict] = {}
