@@ -661,8 +661,8 @@ def export_tag_comparison_flow(
                     records before the arithmetic target date).
 
     Output filename:
-        Tag&Equipment-register_compare_{current_date_str}.xlsx
-        Example: Tag&Equipment-register_compare_2026-04-16.xlsx
+        Tag&Equipment-register_compare_{doc_revision}.xlsx
+        Example: Tag&Equipment-register_compare_A37.xlsx
 
     Example:
         >>> export_tag_comparison_flow(
@@ -670,7 +670,7 @@ def export_tag_comparison_flow(
         ...     baseline_date=date(2026, 3, 16),
         ...     doc_revision="A02",
         ... )
-        '/mnt/shared-data/.../Tag&Equipment-register_compare_2026-04-16.xlsx'
+        '/mnt/shared-data/.../Tag&Equipment-register_compare_A02.xlsx'
     """
     logger = get_run_logger()
 
@@ -712,7 +712,7 @@ def export_tag_comparison_flow(
         )
 
     current_date_str = current_date.strftime("%Y-%m-%d")
-    filename = f"Tag&Equipment-register_compare_{current_date_str}.xlsx"
+    filename = f"Tag&Equipment-register_compare_{doc_revision}.xlsx"
     output_path = Path(output_dir or _EXPORT_DIR) / filename
 
     # Load both states

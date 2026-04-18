@@ -541,17 +541,21 @@ def render() -> None:
             st.caption(f"Revision `{rev}` · Triggered: {triggered_at} · `{last['folder']}`")
             if export_path.exists():
                 rev_upper = rev.upper()
-                all_csvs  = list(export_path.glob("*.CSV")) if export_path.exists() else []
+                all_export_files = [
+                    f for f in export_path.iterdir()
+                    if f.is_file() and f.suffix.lower() in (".csv", ".xlsx")
+                ]
 
                 # Priority 1: by revision mask in file name
-                by_rev = [f for f in all_csvs if rev_upper in f.name.upper()]
+                by_rev = [f for f in all_export_files if rev_upper in f.name.upper()]
                 # Fallback: by triggered time if mask did not yield results
                 if by_rev:
                     files = sorted(by_rev, key=lambda f: f.stat().st_mtime, reverse=True)
                 else:
                     triggered_ts = last["triggered_at"].timestamp()
                     files = sorted(
-                        [f for f in all_csvs if f.stat().st_mtime >= triggered_ts - 30],
+                        [f for f in all_export_files
+                         if f.stat().st_mtime >= triggered_ts - 30],
                         key=lambda f: f.stat().st_mtime,
                         reverse=True,
                     )
