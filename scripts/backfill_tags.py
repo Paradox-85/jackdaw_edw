@@ -59,10 +59,16 @@ def get_sorted_history(target_date: str | None = None) -> list[dict]:
     return sorted(history, key=lambda x: x["date"])
 
 
-def get_quarterly_sample(all_files: list[dict]) -> list[dict]:
-    """Select representative files: always first & last, plus first file of each quarter in between.
+def get_monthly_sample(all_files: list[dict], step_months: int = 3) -> list[dict]:
+    """Select representative files: always first & last, plus first file of each
+    N-month bucket in between.
 
-    Quarter mapping: Q1=Jan-Mar, Q2=Apr-Jun, Q3=Jul-Sep, Q4=Oct-Dec.
+    step_months=1 → monthly (one file per calendar month)
+    step_months=2 → bi-monthly (one file per 2-month window)
+    step_months=3 → quarterly (one file per quarter, matches old behaviour)
+
+    A bucket key is defined as: (year * 12 + month - 1) // step_months
+    This ensures consistent, non-overlapping buckets regardless of step size.
     """
     if len(all_files) <= 2:
         return all_files
@@ -70,18 +76,18 @@ def get_quarterly_sample(all_files: list[dict]) -> list[dict]:
     first = all_files[0]
     last = all_files[-1]
 
-    seen_quarters: set = set()
-    quarterly_firsts = []
+    seen_buckets: set = set()
+    sampled = []
     for f in all_files[1:-1]:
-        q = (f["date"].month - 1) // 3 + 1  # 1..4
-        key = (f["date"].year, q)
-        if key not in seen_quarters:
-            seen_quarters.add(key)
-            quarterly_firsts.append(f)
+        month_index = f["date"].year * 12 + f["date"].month - 1
+        bucket = month_index // step_months
+        if bucket not in seen_buckets:
+            seen_buckets.add(bucket)
+            sampled.append(f)
 
     seen_paths: set = set()
     result = []
-    for f in [first] + quarterly_firsts + [last]:
+    for f in [first] + sampled + [last]:
         if f["path"] not in seen_paths:
             seen_paths.add(f["path"])
             result.append(f)
@@ -92,6 +98,7 @@ def get_quarterly_sample(all_files: list[dict]) -> list[dict]:
 def tag_backfill_flow(
     mode: str = "history",
     debug_mode: bool = True,
+    step_months: int = 3,
     target_date: str | None = None,
 ):
     """Replay tag sync for historical snapshots or run once against the production master file.
@@ -102,6 +109,10 @@ def tag_backfill_flow(
         debug_mode: History mode only. When True and target_date is None,
             processes only the first and last available files.
             Ignored when target_date is set or mode="master".
+        step_months: History mode only. Sampling step in months (1, 2, 3, ...).
+            Controls how many calendar months each sample bucket covers.
+            1 = monthly, 2 = bi-monthly, 3 = quarterly (default).
+            Ignored when target_date is set or debug_mode=True.
         target_date: History mode only. ISO date string "YYYY-MM-DD".
             When provided, only files whose filename date matches are processed.
             Overrides debug_mode selection logic.
@@ -156,8 +167,11 @@ def tag_backfill_flow(
         targets = [all_files[0], all_files[-1]]
         mode_label = "DEBUG (first + last)"
     else:
-        targets = get_quarterly_sample(all_files)
-        mode_label = "FULL (quarterly sample)"
+        targets = get_monthly_sample(all_files, step_months=step_months)
+        step_label = {1: "monthly", 2: "bi-monthly", 3: "quarterly"}.get(
+            step_months, f"{step_months}-month"
+        )
+        mode_label = f"FULL ({step_label} sample, step={step_months}mo)"
 
     total = len(targets)
     logger.info(f"STARTING BACKFILL: mode=HISTORY/{mode_label}")
@@ -205,11 +219,17 @@ if __name__ == "__main__":
         "--no-debug", dest="debug_mode", action="store_false",
         help="History mode: run full quarterly sample instead of first+last only",
     )
+    parser.add_argument(
+        "--step", dest="step_months", type=int, default=3,
+        metavar="N",
+        help="History mode: sampling step in months (1=monthly, 2=bi-monthly, 3=quarterly). Default: 3",
+    )
     parser.set_defaults(debug_mode=True)
     args = parser.parse_args()
 
     tag_backfill_flow(
         mode=args.mode,
         debug_mode=args.debug_mode,
+        step_months=args.step_months,
         target_date=args.date,
     )
