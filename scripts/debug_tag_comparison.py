@@ -18,8 +18,8 @@ from pathlib import Path
 from sqlalchemy import create_engine, text
 import pandas as pd
 
-# ETL path setup (test/ is at root level, so parent is repo root)
-_ROOT = Path(__file__).resolve().parent
+# ETL path setup: scripts/ is one level below repo root, etl/ is at repo root
+_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "etl"))
 
 try:
