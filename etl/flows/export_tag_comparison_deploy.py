@@ -56,6 +56,8 @@ _TAG_COLUMNS: list[str] = [
     "safety_critical_item",
     "safety_critical_item_reason_awarded",
     "production_critical_item",
+    "safety_critical_item_group",
+    "purchase_date",
     "serial_no",
     "install_date",
     "startup_date",
@@ -95,6 +97,7 @@ Purpose: Load current tag state for comparison report.
 Gate:    object_status = 'Active', sync_timestamp <= current_date.
 Changes: 2026-04-16 — Initial implementation.
          2026-04-17 — Removed company_raw (column does not exist in schema).
+         2026-04-21 — Added safety_critical_item_group for comparison.
 */
 SELECT
     source_id,
@@ -115,6 +118,7 @@ SELECT
     safety_critical_item,
     safety_critical_item_reason_awarded,
     production_critical_item,
+    safety_critical_item_group,
     serial_no,
     install_date,
     startup_date,
@@ -170,6 +174,17 @@ _SQL_NEAREST_BASELINE_DATE = """
 SELECT MAX(sync_timestamp)::date AS nearest_date
 FROM audit_core.tag_status_history
 WHERE sync_timestamp::date <= :target_date
+"""
+
+_SQL_PO_DATES = """
+/*
+Purpose: Load all PO dates into memory for purchase_date derivation.
+Note:    Used to resolve purchase_date from po_code_raw for comparison.
+Changes: 2026-04-21 — Added for PURCHASE_DATE field in comparison.
+*/
+SELECT code, po_date::date AS purchase_date
+FROM reference_core.purchase_order
+WHERE po_date IS NOT NULL
 """
 
 # ---------------------------------------------------------------------------
@@ -399,9 +414,12 @@ def load_baseline_tags(engine: Engine, baseline_date: date) -> pd.DataFrame:
     # Normalise date columns from JSON strings for consistent comparison
     snapshot_expanded = _normalise_date_cols(snapshot_expanded)
 
-    # Coerce everything to str
+    # FIXED: Replace sentinel strings from older snapshots with empty string
+    _SENTINEL_VALUES = {'None', 'nan', 'NaT', 'null', 'NULL'}
     for col in snapshot_expanded.columns:
-        snapshot_expanded[col] = snapshot_expanded[col].apply(_to_str)
+        snapshot_expanded[col] = snapshot_expanded[col].apply(
+            lambda v: "" if _to_str(v).strip() in _SENTINEL_VALUES else _to_str(v).strip()
+        )
 
     # Combine anchor columns with expanded snapshot
     result_df = pd.concat(
@@ -413,6 +431,27 @@ def load_baseline_tags(engine: Engine, baseline_date: date) -> pd.DataFrame:
     )
     logger.info(f"Loaded {len(result_df)} baseline snapshots as of {baseline_date}")
     return result_df
+
+
+@task(name="load-po-dates", retries=1, cache_policy=NO_CACHE)
+def load_po_dates(engine: Engine) -> dict[str, str]:
+    """
+    Load all PO dates into memory dict for fast lookup.
+
+    Used to resolve purchase_date from po_code_raw for comparison.
+
+    Args:
+        engine: SQLAlchemy engine connected to engineering_core.
+
+    Returns:
+        Dict mapping PO code to purchase_date string (YYYY-MM-DD or "").
+    """
+    logger = get_run_logger()
+    with engine.connect() as conn:
+        df = pd.read_sql(text(_SQL_PO_DATES), conn)
+    po_dates = {row["code"]: row["purchase_date"] for _, row in df.iterrows()}
+    logger.info(f"Loaded {len(po_dates)} PO dates for purchase_date resolution")
+    return po_dates
 
 
 # ---------------------------------------------------------------------------
@@ -726,6 +765,21 @@ def export_tag_comparison_flow(
 
     df_old = load_baseline_tags(engine, baseline_date)
 
+    # Load PO dates for purchase_date derivation
+    po_dates = load_po_dates(engine)
+
+    # FIXED: Add purchase_date (derived field) to both DataFrames
+    # purchase_date is resolved from po_code_raw via reference_core.purchase_order.po_date
+    df_new["purchase_date"] = df_new["po_code_raw"].apply(
+        lambda v: po_dates.get(_to_str(v).strip(), "")
+    )
+    df_old["purchase_date"] = df_old["po_code_raw"].apply(
+        lambda v: po_dates.get(_to_str(v).strip(), "")
+    )
+
+    # Inject purchase_date into _DATA_COLS for comparison (runtime only, not module-level)
+    data_cols = list(_DATA_COLS) + ["purchase_date"]
+
     logger.info(
         f"Current date: {current_date} "
         f"({'explicit' if _current_date_explicit else 'resolved from DB MAX'})"
@@ -738,15 +792,18 @@ def export_tag_comparison_flow(
 
     # Trim to join key + row_hash + data_cols only
     new_keep = ["source_id", "row_hash"] + [
-        c for c in _DATA_COLS if c in df_new.columns
+        c for c in data_cols if c in df_new.columns
     ]
     old_keep = ["source_id", "row_hash"] + [
-        c for c in _DATA_COLS if c in df_old.columns
+        c for c in data_cols if c in df_old.columns
     ]
     df_new_trim = df_new[new_keep].copy()
     df_old_trim = df_old[old_keep].copy()
 
-    # Outer merge on the immutable source system identifier
+    # FIXED: Outer merge on source_id (stable spreadsheet identifier, not DB auto-increment id)
+    # source_id is immutable from the source spreadsheet system and is the correct join key.
+    # The DB auto-increment 'id' column is NOT used for comparison.
+    logger.info("Merging on source_id (stable spreadsheet identifier, not DB auto-increment id)")
     merged = pd.merge(
         df_new_trim,
         df_old_trim,
@@ -759,7 +816,7 @@ def export_tag_comparison_flow(
 
     # Classify every row
     merged["Comparison_Result"] = merged.apply(
-        lambda row: _get_comparison_result(row, _DATA_COLS),
+        lambda row: _get_comparison_result(row, data_cols),
         axis=1,
     )
 
@@ -776,10 +833,10 @@ def export_tag_comparison_flow(
     wb = Workbook()
     ws1 = wb.active
     ws1.title = "Full Comparison"
-    _build_full_comparison_sheet(ws1, merged, _DATA_COLS)
+    _build_full_comparison_sheet(ws1, merged, data_cols)
 
     ws2 = wb.create_sheet(title="Changes Only")
-    _build_changes_only_sheet(ws2, merged, _DATA_COLS)
+    _build_changes_only_sheet(ws2, merged, data_cols)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(str(output_path))

@@ -165,14 +165,33 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                     "pci":     clean_string(row.get('PRODUCTION_CRITICAL_ITEM')),
                 }
 
+                # FIXED: Add sece_grp for snapshot tracking (raw string from source)
+                sece_raw = clean_string(row.get('SAFETY_CRITICAL_ITEM _GROUP'))
+                params["sece_grp"] = sece_raw
+
                 _SNAPSHOT_KEYS = {
+                    "tn",
                     "t_stat", "cls_raw", "art_raw", "dco_raw", "area_raw", "unit_raw", "plt_raw",
                     "disc_raw", "po_raw", "sn", "tid", "als", "dsc", "inst", "start",
                     "warn", "prc", "m_raw", "mfr_raw", "v_raw", "prnt_raw",
                     "ex_cls", "ip_gr", "mc_pkg", "from_tag_raw", "to_tag_raw",
-                    "sci", "sci_rea", "pci",
+                    "sci", "sci_rea", "pci", "sece_grp", "eq",
                 }
-                snapshot = json.dumps({k: str(v) for k, v in params.items() if k in _SNAPSHOT_KEYS and v is not None})
+
+                # FIXED: Sanitize snapshot values to exclude sentinel strings ("None", "nan", etc.)
+                def _snap_val(v) -> str | None:
+                    """Return string value for snapshot, or None to exclude from snapshot."""
+                    if v is None:
+                        return None
+                    s = str(v).strip()
+                    # Exclude sentinel strings and empty values
+                    if s.lower() in ('none', 'nan', 'nat', 'null', ''):
+                        return None
+                    return s
+
+                snapshot = json.dumps(
+                    {k: _snap_val(v) for k, v in params.items() if k in _SNAPSHOT_KEYS and _snap_val(v) is not None}
+                )
 
                 existing = tag_registry.get(sid)
                 tag_uuid = None
@@ -242,14 +261,15 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                             manufacturer_company_raw, vendor_company_raw, class_id, parent_tag_raw,
                             po_id, process_unit_id, area_id, discipline_id, article_id, design_company_id, project_id, object_status,
                             ex_class, ip_grade, mc_package_code, from_tag_raw, to_tag_raw,
-                            plant_id, safety_critical_item, safety_critical_item_reason_awarded, production_critical_item
+                            plant_id, safety_critical_item, safety_critical_item_reason_awarded, production_critical_item,
+                            safety_critical_item_group
                         ) VALUES (
                             :tn, :sid, :h, :t_stat, 'New', :ts,
                             :cls_raw, :art_raw, :dco_raw, :area_raw, :unit_raw, :plt_raw, :disc_raw, :po_raw, :eq, :mfr,
                             :vnd, :mod, :sn, :tid, :als, :dsc, :inst, :start, :warn, :prc, :m_raw,
                             :mfr_raw, :v_raw, :cls_id, :prnt_raw, :po_id, :u_id, :a_id, :d_id, :art_id, :dco_id, :prj_id, 'Active',
                             :ex_cls, :ip_gr, :mc_pkg, :from_tag_raw, :to_tag_raw,
-                            :plt_id, :sci, :sci_rea, :pci
+                            :plt_id, :sci, :sci_rea, :pci, :sece_grp
                         ) RETURNING id
                     """), params).scalar()
                     history_to_insert.append({"tid": tag_uuid, "tn": tn, "sid": sid,
@@ -268,7 +288,7 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                             elif mi[1] != 'No Changes':
                                 doc_maps_to_update.append({"ts": sync_time, "h": lh, "dcr": dc, "tnr": tn, "id": mi[0], "did": doc_id})
 
-                    sece_raw = clean_string(row.get('SAFETY_CRITICAL_ITEM _GROUP'))
+                    # Use sece_raw already computed above (line ~169)
                     if sece_raw:
                         for sc in [s.strip() for s in sece_raw.split(' ') if s.strip()]:
                             sece_id = sece_lookup.get(sc)
@@ -303,7 +323,8 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                     ex_class=:ex_cls, ip_grade=:ip_gr, mc_package_code=:mc_pkg,
                     from_tag_raw=:from_tag_raw, to_tag_raw=:to_tag_raw,
                     plant_id=:plt_id, safety_critical_item=:sci,
-                    safety_critical_item_reason_awarded=:sci_rea, production_critical_item=:pci
+                    safety_critical_item_reason_awarded=:sci_rea, production_critical_item=:pci,
+                    safety_critical_item_group=:sece_grp
                 WHERE id=:id
             """), tags_to_update)
 

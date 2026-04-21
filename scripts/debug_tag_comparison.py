@@ -51,12 +51,13 @@ SELECT
     po_code_raw, design_company_name_raw, manufacturer_company_raw,
     vendor_company_raw, article_code_raw, model_part_raw,
     safety_critical_item, safety_critical_item_reason_awarded,
-    production_critical_item, serial_no, install_date, startup_date,
+    production_critical_item, safety_critical_item_group,
+    serial_no, install_date, startup_date,
     warranty_end_date, price, tech_id, ip_grade, ex_class,
     mc_package_code, equip_no, alias, from_tag_raw, to_tag_raw,
     plant_raw, sync_status, object_status, row_hash, sync_timestamp
 FROM project_core.tag
-WHERE tag_name = :tag_name
+WHERE id = :tag_id
   AND object_status = 'Active'
   AND sync_timestamp::date <= :current_date
 """
@@ -74,11 +75,18 @@ WHERE tag_id = :tag_id
 ORDER BY tag_id, sync_timestamp DESC
 """
 
+_SQL_PO_DATE = """
+SELECT po_date::date AS purchase_date
+FROM reference_core.purchase_order
+WHERE code = :po_code
+"""
+
 # ---------------------------------------------------------------------------
 # Mapping tables
 # ---------------------------------------------------------------------------
 
 SNAPSHOT_KEY_TO_COLUMN = {
+    "tn": "tag_name",
     "t_stat": "tag_status",
     "cls_raw": "tag_class_raw",
     "art_raw": "article_code_raw",
@@ -108,6 +116,8 @@ SNAPSHOT_KEY_TO_COLUMN = {
     "sci": "safety_critical_item",
     "sci_rea": "safety_critical_item_reason_awarded",
     "pci": "production_critical_item",
+    "sece_grp": "safety_critical_item_group",
+    "eq": "equip_no",
 }
 
 EIS_FIELDS_TO_COLUMN = {
@@ -124,15 +134,15 @@ EIS_FIELDS_TO_COLUMN = {
     "PO_CODE": "po_code_raw",
     "PRODUCTION_CRITICAL_ITEM": "production_critical_item",
     "SAFETY_CRITICAL_ITEM": "safety_critical_item",
-    "SAFETY_CRITICAL_ITEM_GROUP": None,  # NOTE: no DB column
+    "SAFETY_CRITICAL_ITEM_GROUP": "safety_critical_item_group",  # FIXED: now maps to DB column
     "SAFETY_CRITICAL_ITEM_REASON_AWARDED": "safety_critical_item_reason_awarded",
     "TAG_DESCRIPTION": "description",
-    "EQUIPMENT_NUMBER": "equip_no",  # NOTE: not in snapshot
+    "EQUIPMENT_NUMBER": "equip_no",  # FIXED: now in snapshot
     "EQUIPMENT_CLASS_NAME": "tag_class_raw",
     "MANUFACTURER_COMPANY_NAME": "manufacturer_company_raw",
     "MODEL_PART_NAME": "model_part_raw",
     "MANUFACTURER_SERIAL_NUMBER": "serial_no",
-    "PURCHASE_DATE": None,  # NOTE: no DB column
+    "PURCHASE_DATE": "__derived_po_date__",  # FIXED: derived from po_code_raw
     "VENDOR_COMPANY_NAME": "vendor_company_raw",
     "INSTALLATION_DATE": "install_date",
     "STARTUP_DATE": "startup_date",
@@ -252,38 +262,40 @@ def main():
     else:
         print(f"[INFO] baseline_date : {baseline_date} (from CLI)")
 
-    # STEP 2: Load current state from project_core.tag
-    print_header("STEP 2: LOAD CURRENT STATE")
+    # STEP 2: Resolve tag_id from tag_name (stable DB primary key)
+    print_header("STEP 2: RESOLVE TAG_ID")
 
     with engine.connect() as conn:
-        result = conn.execute(
-            text(_SQL_CURRENT_TAG).bindparams(
-                tag_name=args.tag, current_date=str(current_date)
-            )
-        ).fetchone()
+        result = conn.execute(text(_SQL_TAG_ID).bindparams(tag_name=args.tag)).fetchone()
 
     if result is None:
         print(f"[ERROR] Tag '{args.tag}' not found in project_core.tag")
         sys.exit(1)
 
+    tag_id = result[0]
+    print(f"[INFO] Resolved tag_id: {tag_id} from tag_name: {args.tag}")
+
+    # STEP 3: Load current state from project_core.tag using stable tag_id
+    print_header("STEP 3: LOAD CURRENT STATE")
+
+    with engine.connect() as conn:
+        result = conn.execute(
+            text(_SQL_CURRENT_TAG).bindparams(
+                tag_id=tag_id, current_date=str(current_date)
+            )
+        ).fetchone()
+
+    if result is None:
+        print(f"[ERROR] Tag with id={tag_id} not found in project_core.tag")
+        sys.exit(1)
+
     current_row = dict(result._mapping)
-    print(f"[INFO] Loaded current state for tag: {args.tag}")
+    print(f"[INFO] Loaded current state for tag_id: {tag_id}")
     for key, value in current_row.items():
         print(f"  {key:40} = {value!r}")
 
-    # STEP 3: Load baseline snapshot from audit_core.tag_status_history
-    print_header("STEP 3: LOAD BASELINE SNAPSHOT")
-
-    # First, get tag_id
-    with engine.connect() as conn:
-        result = conn.execute(text(_SQL_TAG_ID).bindparams(tag_name=args.tag)).fetchone()
-
-    if result is None:
-        print("[ERROR] Could not resolve tag_id")
-        sys.exit(1)
-
-    tag_id = result[0]
-    print(f"[INFO] Resolved tag_id: {tag_id}")
+    # STEP 4: Load baseline snapshot from audit_core.tag_status_history
+    print_header("STEP 4: LOAD BASELINE SNAPSHOT")
 
     # Load baseline snapshot
     with engine.connect() as conn:
@@ -369,8 +381,53 @@ def main():
             )
             continue
 
-        val_old = baseline_values.get(db_col, "")
+        # FIXED: Handle derived PURCHASE_DATE field
+        if db_col == "__derived_po_date__":
+            # Resolve purchase_date from po_code_raw via reference_core.purchase_order
+            po_code_new = current_row.get("po_code_raw", "")
+            po_code_old = baseline_snapshot.get("po_raw") if baseline_snapshot else ""
+
+            val_new = ""
+            if po_code_new:
+                with engine.connect() as conn:
+                    result = conn.execute(
+                        text(_SQL_PO_DATE).bindparams(po_code=po_code_new)
+                    ).fetchone()
+                if result and result[0]:
+                    val_new = str(result[0])
+
+            val_old = ""
+            if po_code_old:
+                with engine.connect() as conn:
+                    result = conn.execute(
+                        text(_SQL_PO_DATE).bindparams(po_code=po_code_old)
+                    ).fetchone()
+                if result and result[0]:
+                    val_old = str(result[0])
+
+            if val_old != val_new:
+                result = "✓ CHANGED"
+                display_old = val_old
+            else:
+                result = "= SAME"
+                display_old = val_old
+
+            diff_results.append(
+                {
+                    "EIS_FIELD": eis_field,
+                    "VALUE_OLD": display_old,
+                    "VALUE_NEW": val_new,
+                    "RESULT": result,
+                }
+            )
+            continue
+
+        # Regular DB columns
+        val_old_raw = baseline_values.get(db_col, "")
         val_new_raw = current_row.get(db_col, "")
+
+        # FIXED: Normalize val_old via _normalize_value() to strip whitespace and handle sentinels
+        val_old = _normalize_value(val_old_raw)
 
         # Normalize dates
         if db_col in _DATE_COLS:
