@@ -385,19 +385,19 @@ def main():
             display_old = "<empty — not in snapshot>"
         elif db_col in missing_in_snapshot:
             result = "⚠ MISSING IN SNAPSHOT"
-            display_old = val_old if val_old else "<empty — not in snapshot>"
+            display_old = _to_str(val_old) if val_old else "<empty — not in snapshot>"
         elif val_old != val_new:
             result = "✓ CHANGED"
-            display_old = val_old
+            display_old = _to_str(val_old)
         else:
             result = "= SAME"
-            display_old = val_old
+            display_old = _to_str(val_old)
 
         diff_results.append(
             {
                 "EIS_FIELD": eis_field,
-                "VALUE_OLD": display_old,
-                "VALUE_NEW": val_new,
+                "VALUE_OLD": _to_str(display_old),
+                "VALUE_NEW": _to_str(val_new),
                 "RESULT": result,
             }
         )
@@ -418,8 +418,8 @@ def main():
     # Print each row
     for row in diff_results:
         print(
-            f"{row['EIS_FIELD']:30} | {row['VALUE_OLD'][:30]:30} | "
-            f"{row['VALUE_NEW'][:30]:30} | {row['RESULT']:20}"
+            f"{row['EIS_FIELD']:30} | {str(row['VALUE_OLD'] or '')[:30]:30} | "
+            f"{str(row['VALUE_NEW'] or '')[:30]:30} | {row['RESULT']:20}"
         )
 
     # Print summary
