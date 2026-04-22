@@ -76,10 +76,11 @@ ORDER BY tag_id, sync_timestamp DESC
 """
 
 _SQL_PO_DATE = """
-SELECT po_date::date AS purchase_date
+SELECT TO_DATE(po_date, 'DD.MM.YYYY') AS purchase_date
 FROM reference_core.purchase_order
-WHERE name = :po_code
-   OR code = :po_code
+WHERE (name = :po_code OR code = :po_code)
+  AND po_date IS NOT NULL
+  AND po_date ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
 LIMIT 1
 """
 

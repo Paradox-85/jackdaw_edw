@@ -84,8 +84,46 @@ _EXCLUDE_FROM_COMPARISON: frozenset[str] = frozenset(
 # Fields used for actual field-level diffing
 _DATA_COLS: list[str] = [c for c in _TAG_COLUMNS if c not in _EXCLUDE_FROM_COMPARISON]
 
-# Date columns that need normalisation to YYYY-MM-DD for consistent comparison
+# Date columns that need normalisation to DD.MM.YYYY for consistent comparison
 _DATE_COLS: frozenset[str] = frozenset({"install_date", "startup_date", "warranty_end_date"})
+
+# Maps abbreviated snapshot JSON keys → full project_core.tag column names.
+# The ETL writes short keys to keep JSONB compact; comparison needs full names.
+SNAPSHOT_KEY_MAP: dict[str, str] = {
+    "tn":             "tag_name",
+    "t_stat":         "tag_status",
+    "dsc":            "description",
+    "cls_raw":        "tag_class_raw",
+    "area_raw":       "area_code_raw",
+    "unit_raw":       "process_unit_raw",
+    "disc_raw":       "discipline_code_raw",
+    "po_raw":         "po_code_raw",
+    "dco_raw":        "design_company_name_raw",
+    "mfr_raw":        "manufacturer_company_raw",
+    "v_raw":          "vendor_company_raw",
+    "art_raw":        "article_code_raw",
+    "m_raw":          "model_part_raw",
+    "sci":            "safety_critical_item",
+    "sece_rsn":       "safety_critical_item_reason_awarded",
+    "pci":            "production_critical_item",
+    "sece_grp":       "safety_critical_item_group",
+    "sn":             "serial_no",
+    "inst_dt":        "install_date",
+    "start_dt":       "startup_date",
+    "wrnt_dt":        "warranty_end_date",
+    "price":          "price",
+    "tech_id":        "tech_id",
+    "ip_gr":          "ip_grade",
+    "ex_cls":         "ex_class",
+    "mc_pkg":         "mc_package_code",
+    "eq":             "equip_no",
+    "alias":          "alias",
+    "from_raw":       "from_tag_raw",
+    "to_raw":         "to_tag_raw",
+    "plt_raw":        "plant_raw",
+    "par_raw":        "parent_tag_raw",
+    "tag_class_name": "tag_class_raw",   # if snapshot stores resolved class name
+}
 
 # ---------------------------------------------------------------------------
 # SQL queries
@@ -253,12 +291,12 @@ def _safe_cell(value) -> str:
 
 
 def _normalise_date_cols(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalise date columns to YYYY-MM-DD string for consistent comparison."""
+    """Normalise date columns to DD.MM.YYYY string for consistent comparison."""
     for col in _DATE_COLS:
         if col in df.columns:
             df[col] = (
                 pd.to_datetime(df[col], errors="coerce")
-                .dt.strftime("%Y-%m-%d")
+                .dt.strftime("%d.%m.%Y")
                 .fillna("")
             )
     return df
@@ -383,6 +421,14 @@ def load_baseline_tags(engine: Engine, baseline_date: date) -> pd.DataFrame:
     Expands the snapshot JSONB into columns matching project_core.tag field
     names. Missing snapshot keys default to ''.
 
+    TODO: When import_tag_deploy.py writes audit_core.tag_status_history,
+    it should also snapshot the following derived/resolved fields so they
+    are available for comparison without re-querying reference_core:
+      - purchase_date (from reference_core.purchase_order.po_date via po_code_raw)
+      - area_name (from reference_core.area.name via area_code_raw)
+      - company_name_normalized (from reference_core.company.code via vendor/mfr/design raw)
+    For now, purchase_date is resolved at comparison time via load_po_dates().
+
     Args:
         engine: SQLAlchemy engine connected to engineering_core.
         baseline_date: Upper bound (inclusive) for sync_timestamp.
@@ -413,6 +459,22 @@ def load_baseline_tags(engine: Engine, baseline_date: date) -> pd.DataFrame:
     snapshot_expanded: pd.DataFrame = df["snapshot"].apply(
         lambda s: s if isinstance(s, dict) else {}
     ).apply(pd.Series)
+
+    # Debug: log raw snapshot keys to catch future abbreviation changes
+    raw_keys = set(snapshot_expanded.columns)
+    logger.debug(f"Raw snapshot keys found: {sorted(raw_keys)}")
+
+    # Rename abbreviated keys → full _DATA_COLS names
+    snapshot_expanded = snapshot_expanded.rename(
+        columns={k: v for k, v in SNAPSHOT_KEY_MAP.items() if k in snapshot_expanded.columns}
+    )
+
+    # Debug: log which _DATA_COLS are still missing after rename
+    missing_cols = [c for c in _DATA_COLS if c not in snapshot_expanded.columns]
+    if missing_cols:
+        logger.debug(
+            f"Snapshot fields missing after rename (will be filled with ''): {missing_cols}"
+        )
 
     # Ensure all data_cols are present; fill any missing ones with ''
     for col in _DATA_COLS:
@@ -454,14 +516,14 @@ def load_po_dates(engine: Engine) -> dict[str, str]:
         engine: SQLAlchemy engine connected to engineering_core.
 
     Returns:
-        Dict mapping PO code to purchase_date string (YYYY-MM-DD or "").
+        Dict mapping PO code to purchase_date string (DD.MM.YYYY or "").
     """
     logger = get_run_logger()
     with engine.connect() as conn:
         df = pd.read_sql(text(_SQL_PO_DATES), conn)
 
     def _normalise_po_date(val) -> str:
-        """Return YYYY-MM-DD string or '' for any un-parseable value."""
+        """Return DD.MM.YYYY string or '' for any un-parseable value."""
         if val is None:
             return ""
         try:
@@ -471,13 +533,13 @@ def load_po_dates(engine: Engine) -> dict[str, str]:
             pass
         # Already a date/datetime object from TO_DATE cast
         if hasattr(val, "strftime"):
-            return val.strftime("%Y-%m-%d")
+            return val.strftime("%d.%m.%Y")
         # String fallback — try multiple formats (defensive)
         s = str(val).strip()
         for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
             try:
                 from datetime import datetime as _dt
-                return _dt.strptime(s, fmt).strftime("%Y-%m-%d")
+                return _dt.strptime(s, fmt).strftime("%d.%m.%Y")
             except ValueError:
                 continue
         return ""
@@ -583,41 +645,32 @@ def _build_changes_only_sheet(
     """
     Write Sheet 2 "Changes Only".
 
-    One row per changed field for Modified/Created/Deleted tags:
-      - Modified: only fields where field_new != field_old
-      - Created:  non-blank fields only; VALUE_OLD = ''
-      - Deleted:  non-blank fields only; VALUE_NEW = ''
+    ALL fields shown for every Modified/Created/Deleted tag.
+    RESULT = "✓ CHANGED" when values differ, "= SAME" otherwise.
+    Changed rows appear first (alphabetically), then SAME rows.
+    A blank separator row is inserted between each tag group.
 
-    Columns: SOURCE_ID | TAG_NAME | FIELD_NAME | VALUE_OLD | VALUE_NEW | Comparison_Result
+    Columns: TAG_NAME | EIS_FIELD | VALUE_OLD | VALUE_NEW | RESULT
 
     Args:
         ws: openpyxl Worksheet to write into.
         merged: Outer-merged DataFrame with Comparison_Result column.
         data_cols: Ordered list of field names used for comparison.
     """
-    headers = [
-        "SOURCE_ID",
-        "TAG_NAME",
-        "FIELD_NAME",
-        "VALUE_OLD",
-        "VALUE_NEW",
-        "Comparison_Result",
-    ]
+    headers = ["TAG_NAME", "EIS_FIELD", "VALUE_OLD", "VALUE_NEW", "RESULT"]
     header_fills = {
-        "SOURCE_ID": _FILL_GREY,
-        "TAG_NAME": _FILL_GREY,
-        "FIELD_NAME": _FILL_GREY,
+        "TAG_NAME":  _FILL_GREY,
+        "EIS_FIELD": _FILL_GREY,
         "VALUE_OLD": _FILL_BLUE_HEADER,
         "VALUE_NEW": _FILL_GREEN_HEADER,
-        "Comparison_Result": _FILL_GREY,
+        "RESULT":    _FILL_GREY,
     }
     header_fonts = {
-        "SOURCE_ID": _FONT_BLACK_BOLD,
-        "TAG_NAME": _FONT_BLACK_BOLD,
-        "FIELD_NAME": _FONT_BLACK_BOLD,
+        "TAG_NAME":  _FONT_BLACK_BOLD,
+        "EIS_FIELD": _FONT_BLACK_BOLD,
         "VALUE_OLD": _FONT_BLUE,
         "VALUE_NEW": _FONT_GREEN,
-        "Comparison_Result": _FONT_BLACK_BOLD,
+        "RESULT":    _FONT_BLACK_BOLD,
     }
 
     # --- Header row ---
@@ -627,72 +680,63 @@ def _build_changes_only_sheet(
         cell.font = header_fonts[header]
         cell.alignment = _CENTER
 
-    # --- Collect changed rows ---
     changed = merged[
         merged["Comparison_Result"].isin(["Modified", "Created", "Deleted"])
     ]
 
-    sheet2_rows: list[tuple[str, str, str, str, str, str]] = []
+    # result_col_idx is the 5th column (RESULT)
+    result_col_idx = 5
+
+    excel_row = 2
 
     for _, row in changed.iterrows():
-        source_id = _to_str(row.get("source_id", ""))
-        result = _to_str(row.get("Comparison_Result", ""))
+        comparison = _to_str(row.get("Comparison_Result", ""))
         tag_name = _to_str(row.get("tag_name_new", "")) or _to_str(
             row.get("tag_name_old", "")
         )
 
-        if result == "Modified":
-            for field in data_cols:
+        # Build (field, val_old, val_new, is_changed) for every field
+        tag_field_rows: list[tuple[str, str, str, bool]] = []
+        for field in data_cols:
+            if comparison == "Created":
+                val_old = ""
                 val_new = _to_str(row.get(f"{field}_new", ""))
+            elif comparison == "Deleted":
                 val_old = _to_str(row.get(f"{field}_old", ""))
-                if val_new != val_old:
-                    sheet2_rows.append(
-                        (source_id, tag_name, field, val_old, val_new, result)
-                    )
-
-        elif result == "Created":
-            for field in data_cols:
+                val_new = ""
+            else:  # Modified
+                val_old = _to_str(row.get(f"{field}_old", ""))
                 val_new = _to_str(row.get(f"{field}_new", ""))
-                if val_new:  # skip fields that are blank even in current state
-                    sheet2_rows.append((source_id, tag_name, field, "", val_new, result))
 
-        elif result == "Deleted":
-            for field in data_cols:
-                val_old = _to_str(row.get(f"{field}_old", ""))
-                if val_old:  # skip fields that were blank in baseline
-                    sheet2_rows.append((source_id, tag_name, field, val_old, "", result))
+            is_changed = (val_old != val_new)
+            tag_field_rows.append((field, val_old, val_new, is_changed))
 
-    # Sort: SOURCE_ID ASC, FIELD_NAME ASC
-    sheet2_rows.sort(key=lambda r: (_numeric_sort_key(r[0]), r[2]))
+        # Sort: CHANGED first (alpha), then SAME (alpha)
+        tag_field_rows.sort(key=lambda r: (not r[3], r[0]))
 
-    _row_fill: dict[str, PatternFill] = {
-        "Modified": _FILL_YELLOW,
-        "Created": _FILL_ROW_GREEN,
-        "Deleted": _FILL_ROW_RED,
-    }
+        for field, val_old, val_new, is_changed in tag_field_rows:
+            result_str = "✓ CHANGED" if is_changed else "= SAME"
+            row_values = [
+                tag_name,
+                field.upper(),
+                _escape_formula(val_old),
+                _escape_formula(val_new),
+                result_str,
+            ]
+            for col_idx, val in enumerate(row_values, start=1):
+                cell = ws.cell(row=excel_row, column=col_idx, value=val)
+                cell.font = _FONT_DEFAULT
+                # Yellow fill only on RESULT column for changed fields
+                if col_idx == result_col_idx and is_changed:
+                    cell.fill = _FILL_YELLOW
+            excel_row += 1
 
-    # --- Data rows ---
-    for excel_row, (src_id, tag_nm, field, val_old, val_new, result) in enumerate(
-        sheet2_rows, start=2
-    ):
-        values = [
-            src_id,
-            tag_nm,
-            field,
-            _escape_formula(val_old),
-            _escape_formula(val_new),
-            result,
-        ]
-        fill = _row_fill.get(result)
-        for col_idx, val in enumerate(values, start=1):
-            cell = ws.cell(row=excel_row, column=col_idx, value=val)
-            cell.font = _FONT_DEFAULT
-            if fill:
-                cell.fill = fill
+        # Blank separator row between tag groups
+        excel_row += 1
 
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = ws.dimensions
-    _autofit_columns(ws)
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
+    _autofit_columns(ws, min_width=15, max_width=60, padding=2)
 
 
 # ---------------------------------------------------------------------------
@@ -801,6 +845,11 @@ def export_tag_comparison_flow(
         )
 
     df_old = load_baseline_tags(engine, baseline_date)
+
+    # Sanity: confirm baseline snapshot keys were resolved correctly
+    if not df_old.empty:
+        sample = df_old[["tag_name", "tag_class_raw", "area_code_raw"]].head(3)
+        logger.info(f"Baseline snapshot sample (first 3 rows):\n{sample.to_string(index=False)}")
 
     # Load PO dates for purchase_date derivation
     po_dates = load_po_dates(engine)
