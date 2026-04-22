@@ -142,13 +142,8 @@ Purpose: Most recent per-tag snapshot on or before target_date.
 Gate:    sync_timestamp::date <= target_date.
 Note:    DISTINCT ON picks the latest history record per tag.
          Used for BOTH current and baseline states.
-Changes: 2026-04-22 — Renamed from _SQL_BASELINE, now used for both sides.
-*/
-/*
-Purpose: Most recent per-tag snapshot on or before baseline_date.
-Gate:    sync_timestamp::date <= baseline_date.
-Note:    DISTINCT ON picks the latest history record per tag.
-Changes: 2026-04-16 — Initial implementation.
+Changes: 2026-04-22 — Unified query replacing separate _SQL_BASELINE.
+         2026-04-22 — Fixed bound parameter name: :baseline_date → :target_date.
 */
 SELECT DISTINCT ON (source_id)
     source_id,
@@ -157,7 +152,7 @@ SELECT DISTINCT ON (source_id)
     snapshot,
     sync_timestamp
 FROM audit_core.tag_status_history
-WHERE sync_timestamp::date <= :baseline_date
+WHERE sync_timestamp::date <= :target_date
 ORDER BY source_id, sync_timestamp DESC
 """
 
