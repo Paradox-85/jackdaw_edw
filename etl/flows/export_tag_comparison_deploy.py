@@ -398,6 +398,8 @@ def load_snapshot_for_date(engine: Engine, target_date: date) -> pd.DataFrame:
     snapshot_expanded = _normalise_date_cols(snapshot_expanded)
 
     # Replace sentinel strings with empty string
+    # 'NA' and 'N/A' are intentionally excluded — they are valid EIS data values
+    # (e.g. ip_grade="N/A") and must be preserved through the full ETL pipeline.
     _SENTINEL_VALUES = {'None', 'nan', 'NaT', 'null', 'NULL'}
     for col in snapshot_expanded.columns:
         snapshot_expanded[col] = snapshot_expanded[col].apply(
@@ -513,7 +515,7 @@ def _build_changes_only_sheet(
     - Created: rows where val_new != ''
     - Deleted: rows where val_old != ''
 
-    Columns: TAG_NAME | EIS_FIELD | VALUE_OLD | VALUE_NEW | STATUS | _TYPE (hidden)
+    Columns: TAG_NAME | EIS_FIELD | VALUE_OLD | VALUE_NEW | Comparison_Result | _TYPE (hidden)
     _TYPE (col F) holds the comparison type (Modified/Created/Deleted) and drives
     conditional formatting rules so colours survive Excel filtering.
 
@@ -522,22 +524,22 @@ def _build_changes_only_sheet(
         merged: Outer-merged DataFrame with Comparison_Result column.
         data_cols: Ordered list of field names used for comparison.
     """
-    headers = ["TAG_NAME", "EIS_FIELD", "VALUE_OLD", "VALUE_NEW", "STATUS", "_TYPE"]
+    headers = ["TAG_NAME", "EIS_FIELD", "VALUE_OLD", "VALUE_NEW", "Comparison_Result", "_TYPE"]
     header_fills = {
-        "TAG_NAME":  _FILL_GREY,
-        "EIS_FIELD": _FILL_GREY,
-        "VALUE_OLD": _FILL_BLUE_HEADER,
-        "VALUE_NEW": _FILL_GREEN_HEADER,
-        "STATUS":    _FILL_GREY,
-        "_TYPE":     _FILL_GREY,
+        "TAG_NAME":          _FILL_GREY,
+        "EIS_FIELD":         _FILL_GREY,
+        "VALUE_OLD":         _FILL_BLUE_HEADER,
+        "VALUE_NEW":         _FILL_GREEN_HEADER,
+        "Comparison_Result": _FILL_GREY,
+        "_TYPE":             _FILL_GREY,
     }
     header_fonts = {
-        "TAG_NAME":  _FONT_BLACK_BOLD,
-        "EIS_FIELD": _FONT_BLACK_BOLD,
-        "VALUE_OLD": _FONT_BLUE,
-        "VALUE_NEW": _FONT_GREEN,
-        "STATUS":    _FONT_BLACK_BOLD,
-        "_TYPE":     _FONT_BLACK_BOLD,
+        "TAG_NAME":          _FONT_BLACK_BOLD,
+        "EIS_FIELD":         _FONT_BLACK_BOLD,
+        "VALUE_OLD":         _FONT_BLUE,
+        "VALUE_NEW":         _FONT_GREEN,
+        "Comparison_Result": _FONT_BLACK_BOLD,
+        "_TYPE":             _FONT_BLACK_BOLD,
     }
 
     # --- Header row ---
@@ -586,16 +588,13 @@ def _build_changes_only_sheet(
                 field.upper(),
                 _escape_formula(val_old),
                 _escape_formula(val_new),
-                "✓ CHANGED",
+                comparison,
                 comparison,
             ]
             for col_idx, val in enumerate(row_values, start=1):
                 cell = ws.cell(row=excel_row, column=col_idx, value=val)
                 cell.font = _FONT_DEFAULT
             excel_row += 1
-
-        # Blank separator row between tag groups
-        excel_row += 1
 
     # Apply FormulaRule-based conditional formatting so colours survive filtering
     if excel_row > 2:
