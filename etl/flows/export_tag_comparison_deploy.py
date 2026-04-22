@@ -8,6 +8,7 @@ from typing import Optional
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 from openpyxl import Workbook
+from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from prefect import flow, task, get_run_logger
@@ -89,40 +90,40 @@ _DATE_COLS: frozenset[str] = frozenset({"install_date", "startup_date", "warrant
 
 # Maps abbreviated snapshot JSON keys → full project_core.tag column names.
 # The ETL writes short keys to keep JSONB compact; comparison needs full names.
+# Source of truth: _SNAPSHOT_KEYS set in import_tag_data_deploy.py.
 SNAPSHOT_KEY_MAP: dict[str, str] = {
-    "tn":             "tag_name",
-    "t_stat":         "tag_status",
-    "dsc":            "description",
-    "cls_raw":        "tag_class_raw",
-    "area_raw":       "area_code_raw",
-    "unit_raw":       "process_unit_raw",
-    "disc_raw":       "discipline_code_raw",
-    "po_raw":         "po_code_raw",
-    "dco_raw":        "design_company_name_raw",
-    "mfr_raw":        "manufacturer_company_raw",
-    "v_raw":          "vendor_company_raw",
-    "art_raw":        "article_code_raw",
-    "m_raw":          "model_part_raw",
-    "sci":            "safety_critical_item",
-    "sece_rsn":       "safety_critical_item_reason_awarded",
-    "pci":            "production_critical_item",
-    "sece_grp":       "safety_critical_item_group",
-    "sn":             "serial_no",
-    "inst_dt":        "install_date",
-    "start_dt":       "startup_date",
-    "wrnt_dt":        "warranty_end_date",
-    "price":          "price",
-    "tech_id":        "tech_id",
-    "ip_gr":          "ip_grade",
-    "ex_cls":         "ex_class",
-    "mc_pkg":         "mc_package_code",
-    "eq":             "equip_no",
-    "alias":          "alias",
-    "from_raw":       "from_tag_raw",
-    "to_raw":         "to_tag_raw",
-    "plt_raw":        "plant_raw",
-    "par_raw":        "parent_tag_raw",
-    "tag_class_name": "tag_class_raw",   # if snapshot stores resolved class name
+    "tn":           "tag_name",
+    "t_stat":       "tag_status",
+    "dsc":          "description",
+    "cls_raw":      "tag_class_raw",
+    "area_raw":     "area_code_raw",
+    "unit_raw":     "process_unit_raw",
+    "disc_raw":     "discipline_code_raw",
+    "po_raw":       "po_code_raw",
+    "dco_raw":      "design_company_name_raw",
+    "mfr_raw":      "manufacturer_company_raw",
+    "v_raw":        "vendor_company_raw",
+    "art_raw":      "article_code_raw",
+    "m_raw":        "model_part_raw",
+    "sci":          "safety_critical_item",
+    "sci_rea":      "safety_critical_item_reason_awarded",
+    "pci":          "production_critical_item",
+    "sece_grp":     "safety_critical_item_group",
+    "sn":           "serial_no",
+    "inst":         "install_date",
+    "start":        "startup_date",
+    "warn":         "warranty_end_date",
+    "prc":          "price",
+    "tid":          "tech_id",
+    "ip_gr":        "ip_grade",
+    "ex_cls":       "ex_class",
+    "mc_pkg":       "mc_package_code",
+    "eq":           "equip_no",
+    "als":          "alias",
+    "from_tag_raw": "from_tag_raw",
+    "to_tag_raw":   "to_tag_raw",
+    "plt_raw":      "plant_raw",
+    "prnt_raw":     "parent_tag_raw",
 }
 
 # ---------------------------------------------------------------------------
@@ -645,32 +646,36 @@ def _build_changes_only_sheet(
     """
     Write Sheet 2 "Changes Only".
 
-    ALL fields shown for every Modified/Created/Deleted tag.
-    RESULT = "✓ CHANGED" when values differ, "= SAME" otherwise.
-    Changed rows appear first (alphabetically), then SAME rows.
-    A blank separator row is inserted between each tag group.
+    Only fields that actually changed are shown per Modified/Created/Deleted tag:
+    - Modified: rows where val_old != val_new
+    - Created: rows where val_new != ''
+    - Deleted: rows where val_old != ''
 
-    Columns: TAG_NAME | EIS_FIELD | VALUE_OLD | VALUE_NEW | RESULT
+    Columns: TAG_NAME | EIS_FIELD | VALUE_OLD | VALUE_NEW | STATUS | _TYPE (hidden)
+    _TYPE (col F) holds the comparison type (Modified/Created/Deleted) and drives
+    conditional formatting rules so colours survive Excel filtering.
 
     Args:
         ws: openpyxl Worksheet to write into.
         merged: Outer-merged DataFrame with Comparison_Result column.
         data_cols: Ordered list of field names used for comparison.
     """
-    headers = ["TAG_NAME", "EIS_FIELD", "VALUE_OLD", "VALUE_NEW", "RESULT"]
+    headers = ["TAG_NAME", "EIS_FIELD", "VALUE_OLD", "VALUE_NEW", "STATUS", "_TYPE"]
     header_fills = {
         "TAG_NAME":  _FILL_GREY,
         "EIS_FIELD": _FILL_GREY,
         "VALUE_OLD": _FILL_BLUE_HEADER,
         "VALUE_NEW": _FILL_GREEN_HEADER,
-        "RESULT":    _FILL_GREY,
+        "STATUS":    _FILL_GREY,
+        "_TYPE":     _FILL_GREY,
     }
     header_fonts = {
         "TAG_NAME":  _FONT_BLACK_BOLD,
         "EIS_FIELD": _FONT_BLACK_BOLD,
         "VALUE_OLD": _FONT_BLUE,
         "VALUE_NEW": _FONT_GREEN,
-        "RESULT":    _FONT_BLACK_BOLD,
+        "STATUS":    _FONT_BLACK_BOLD,
+        "_TYPE":     _FONT_BLACK_BOLD,
     }
 
     # --- Header row ---
@@ -684,9 +689,6 @@ def _build_changes_only_sheet(
         merged["Comparison_Result"].isin(["Modified", "Created", "Deleted"])
     ]
 
-    # result_col_idx is the 5th column (RESULT)
-    result_col_idx = 5
-
     excel_row = 2
 
     for _, row in changed.iterrows():
@@ -695,47 +697,65 @@ def _build_changes_only_sheet(
             row.get("tag_name_old", "")
         )
 
-        # Build (field, val_old, val_new, is_changed) for every field
-        tag_field_rows: list[tuple[str, str, str, bool]] = []
-        for field in data_cols:
+        # Collect only truly changed fields (alphabetical order)
+        tag_field_rows: list[tuple[str, str, str]] = []
+        for field in sorted(data_cols):
             if comparison == "Created":
                 val_old = ""
                 val_new = _to_str(row.get(f"{field}_new", ""))
+                if val_new == "":
+                    continue
             elif comparison == "Deleted":
                 val_old = _to_str(row.get(f"{field}_old", ""))
                 val_new = ""
+                if val_old == "":
+                    continue
             else:  # Modified
                 val_old = _to_str(row.get(f"{field}_old", ""))
                 val_new = _to_str(row.get(f"{field}_new", ""))
+                if val_old == val_new:
+                    continue
 
-            is_changed = (val_old != val_new)
-            tag_field_rows.append((field, val_old, val_new, is_changed))
+            tag_field_rows.append((field, val_old, val_new))
 
-        # Sort: CHANGED first (alpha), then SAME (alpha)
-        tag_field_rows.sort(key=lambda r: (not r[3], r[0]))
-
-        for field, val_old, val_new, is_changed in tag_field_rows:
-            result_str = "✓ CHANGED" if is_changed else "= SAME"
+        for field, val_old, val_new in tag_field_rows:
             row_values = [
                 tag_name,
                 field.upper(),
                 _escape_formula(val_old),
                 _escape_formula(val_new),
-                result_str,
+                "✓ CHANGED",
+                comparison,
             ]
             for col_idx, val in enumerate(row_values, start=1):
                 cell = ws.cell(row=excel_row, column=col_idx, value=val)
                 cell.font = _FONT_DEFAULT
-                # Yellow fill only on RESULT column for changed fields
-                if col_idx == result_col_idx and is_changed:
-                    cell.fill = _FILL_YELLOW
             excel_row += 1
 
         # Blank separator row between tag groups
         excel_row += 1
 
+    # Apply FormulaRule-based conditional formatting so colours survive filtering
+    if excel_row > 2:
+        max_row = excel_row - 1
+        ws.conditional_formatting.add(
+            f"C2:D{max_row}",
+            FormulaRule(formula=['=$F2="Modified"'], fill=_FILL_YELLOW),
+        )
+        ws.conditional_formatting.add(
+            f"D2:D{max_row}",
+            FormulaRule(formula=['=$F2="Created"'], fill=_FILL_ROW_GREEN),
+        )
+        ws.conditional_formatting.add(
+            f"C2:C{max_row}",
+            FormulaRule(formula=['=$F2="Deleted"'], fill=_FILL_ROW_RED),
+        )
+
+    # Hide the helper column used by FormulaRule
+    ws.column_dimensions["F"].hidden = True
+
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
+    ws.auto_filter.ref = f"A1:{get_column_letter(5)}1"
     _autofit_columns(ws, min_width=15, max_width=60, padding=2)
 
 
