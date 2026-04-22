@@ -181,10 +181,17 @@ _SQL_PO_DATES = """
 Purpose: Load all PO dates into memory for purchase_date derivation.
 Note:    Used to resolve purchase_date from po_code_raw for comparison.
 Changes: 2026-04-21 — Added for PURCHASE_DATE field in comparison.
+         2026-04-22 — Changed cast to use TO_DATE with explicit format mask
+                      because po_date is stored as TEXT in DD.MM.YYYY format.
+                      Direct ::date cast fails on values like '28.04.2023'
+                      when PostgreSQL DateStyle is ISO/MDY.
 */
-SELECT code, po_date::date AS purchase_date
+SELECT
+    code,
+    TO_DATE(po_date, 'DD.MM.YYYY') AS purchase_date
 FROM reference_core.purchase_order
 WHERE po_date IS NOT NULL
+  AND po_date ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
 """
 
 # ---------------------------------------------------------------------------
@@ -449,7 +456,34 @@ def load_po_dates(engine: Engine) -> dict[str, str]:
     logger = get_run_logger()
     with engine.connect() as conn:
         df = pd.read_sql(text(_SQL_PO_DATES), conn)
-    po_dates = {row["code"]: row["purchase_date"] for _, row in df.iterrows()}
+
+    def _normalise_po_date(val) -> str:
+        """Return YYYY-MM-DD string or '' for any un-parseable value."""
+        if val is None:
+            return ""
+        try:
+            if pd.isna(val):
+                return ""
+        except (TypeError, ValueError):
+            pass
+        # Already a date/datetime object from TO_DATE cast
+        if hasattr(val, "strftime"):
+            return val.strftime("%Y-%m-%d")
+        # String fallback — try multiple formats (defensive)
+        s = str(val).strip()
+        for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
+            try:
+                from datetime import datetime as _dt
+                return _dt.strptime(s, fmt).strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+        return ""
+
+    po_dates = {
+        str(row["code"]).strip(): _normalise_po_date(row["purchase_date"])
+        for _, row in df.iterrows()
+        if row["code"] is not None
+    }
     logger.info(f"Loaded {len(po_dates)} PO dates for purchase_date resolution")
     return po_dates
 
