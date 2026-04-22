@@ -143,7 +143,7 @@ Gate:    sync_timestamp::date <= target_date.
 Note:    DISTINCT ON picks the latest history record per tag.
          Used for BOTH current and baseline states.
 Changes: 2026-04-22 — Unified query replacing separate _SQL_BASELINE.
-         2026-04-22 — Fixed bound parameter name: :baseline_date → :target_date.
+         2026-04-22 — Fixed bound parameter name: baseline_date -> target_date.
 */
 SELECT DISTINCT ON (source_id)
     source_id,
