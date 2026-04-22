@@ -164,11 +164,18 @@ def calculate_row_hash(row):
     return hashlib.md5(content.encode()).hexdigest()
 
 def clean_string(val):
-    """Trims and removes tabs/newlines, keeping internal spaces."""
-    if pd.isna(val) or str(val).strip().upper() in ['NAN', 'NA', '', 'UNSET']:
+    """Trims and removes tabs/newlines, keeping internal spaces.
+
+    'NA' and 'N/A' are intentionally preserved — they are valid EIS field
+    values (e.g. REQUISITION_CODE='NA', ip_grade='N/A') and must survive
+    the full ETL pipeline, appearing in snapshots and exports unchanged.
+    """
+    if pd.isna(val):
         return None
-    s = str(val)
-    s = re.sub(r'[\t\n\r]', ' ', s) 
+    s = str(val).strip()
+    if s.upper() in ('NAN', '', 'UNSET'):
+        return None
+    s = re.sub(r'[\t\n\r]', ' ', s)
     return s.strip()
 
 def normalize_to_id_code(text_val):

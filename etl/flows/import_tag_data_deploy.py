@@ -143,9 +143,9 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                     "tid": clean_string(row.get('TECHIDENTNO')),
                     "als": clean_string(row.get('ALIAS')),
                     "dsc": clean_string(row.get('TAG_DESCRIPTION')),
-                    "inst": to_dt(row.get('INSTALLATION_DATE')) if pd.notna(row.get('INSTALLATION_DATE')) else None,
-                    "start": to_dt(row.get('STARTUP_DATE')) if pd.notna(row.get('STARTUP_DATE')) else None,
-                    "warn": to_dt(row.get('WARRANTY_END_DATE')) if pd.notna(row.get('WARRANTY_END_DATE')) else None,
+                    "inst": to_dt(row.get('INSTALLATION_DATE')),
+                    "start": to_dt(row.get('STARTUP_DATE')),
+                    "warn": to_dt(row.get('WARRANTY_END_DATE')),
                     "prc": clean_string(row.get('PRICE')),
                     "m_raw": clean_string(row.get('MODEL_PART_NAME')),
                     "mfr_raw": clean_string(row.get('MANUFACTURER_COMPANY_NAME')),
@@ -183,14 +183,17 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                     "purch_dt", "co_raw", "req_raw", "part_of_raw",
                 }
 
-                # FIXED: Sanitize snapshot values to exclude sentinel strings ("None", "nan", etc.)
                 def _snap_val(v) -> str | None:
-                    """Return string value for snapshot, or None to exclude from snapshot."""
+                    """Return string value for snapshot, or None to exclude from snapshot.
+
+                    Preserves 'NA' and 'N/A' — valid EIS values that must appear in
+                    snapshots unchanged. Only true pandas-internal sentinel strings are
+                    excluded (case-sensitive to avoid catching 'NA' via 'nan').
+                    """
                     if v is None:
                         return None
                     s = str(v).strip()
-                    # Exclude sentinel strings and empty values
-                    if s.lower() in ('none', 'nan', 'nat', 'null', ''):
+                    if s in ('', 'None', 'NaN', 'NaT', 'NULL', 'null', 'nan', 'nat'):
                         return None
                     return s
 
