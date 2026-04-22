@@ -12,7 +12,7 @@ Usage:
 import argparse
 import json
 import sys
-from datetime import date, datetime
+from datetime import date
 from dateutil.relativedelta import relativedelta
 from pathlib import Path
 from sqlalchemy import create_engine, text
@@ -428,9 +428,6 @@ def main():
         if db_col not in baseline_values:
             result = "⚠ MISSING IN SNAPSHOT"
             display_old = "<empty — not in snapshot>"
-        elif db_col in missing_db_cols:
-            result = "⚠ MISSING IN SNAPSHOT"
-            display_old = _to_str(val_old) if val_old else "<empty — not in snapshot>"
         elif val_old != val_new:
             result = "✓ CHANGED"
             display_old = _to_str(val_old)
