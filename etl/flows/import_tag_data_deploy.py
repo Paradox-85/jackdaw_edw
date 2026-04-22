@@ -163,6 +163,10 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                     "sci":     clean_string(row.get('SAFETY_CRITICAL_ITEM')),
                     "sci_rea": clean_string(row.get('SAFETY_CRITICAL_ITEM _REASON_AWARDED')),
                     "pci":     clean_string(row.get('PRODUCTION_CRITICAL_ITEM')),
+                    "purch_dt": clean_string(row.get('PURCHASE_DATE')),
+                    "co_raw":   clean_string(row.get('COMPANY_NAME')),
+                    "req_raw":  clean_string(row.get('REQUISITION_CODE')),
+                    "part_of_raw": clean_string(row.get('PART_OF')),
                 }
 
                 # FIXED: Add sece_grp for snapshot tracking (raw string from source)
@@ -176,6 +180,7 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                     "warn", "prc", "m_raw", "mfr_raw", "v_raw", "prnt_raw",
                     "ex_cls", "ip_gr", "mc_pkg", "from_tag_raw", "to_tag_raw",
                     "sci", "sci_rea", "pci", "sece_grp", "eq",
+                    "purch_dt", "co_raw", "req_raw", "part_of_raw",
                 }
 
                 # FIXED: Sanitize snapshot values to exclude sentinel strings ("None", "nan", etc.)
@@ -262,14 +267,14 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                             po_id, process_unit_id, area_id, discipline_id, article_id, design_company_id, project_id, object_status,
                             ex_class, ip_grade, mc_package_code, from_tag_raw, to_tag_raw,
                             plant_id, safety_critical_item, safety_critical_item_reason_awarded, production_critical_item,
-                            safety_critical_item_group
+                            safety_critical_item_group, purchase_date_raw, company_raw, requisition_code_raw, part_of_raw
                         ) VALUES (
                             :tn, :sid, :h, :t_stat, 'New', :ts,
                             :cls_raw, :art_raw, :dco_raw, :area_raw, :unit_raw, :plt_raw, :disc_raw, :po_raw, :eq, :mfr,
                             :vnd, :mod, :sn, :tid, :als, :dsc, :inst, :start, :warn, :prc, :m_raw,
                             :mfr_raw, :v_raw, :cls_id, :prnt_raw, :po_id, :u_id, :a_id, :d_id, :art_id, :dco_id, :prj_id, 'Active',
                             :ex_cls, :ip_gr, :mc_pkg, :from_tag_raw, :to_tag_raw,
-                            :plt_id, :sci, :sci_rea, :pci, :sece_grp
+                            :plt_id, :sci, :sci_rea, :pci, :sece_grp, :purch_dt, :co_raw, :req_raw, :part_of_raw
                         ) RETURNING id
                     """), params).scalar()
                     history_to_insert.append({"tid": tag_uuid, "tn": tn, "sid": sid,
@@ -324,7 +329,8 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                     from_tag_raw=:from_tag_raw, to_tag_raw=:to_tag_raw,
                     plant_id=:plt_id, safety_critical_item=:sci,
                     safety_critical_item_reason_awarded=:sci_rea, production_critical_item=:pci,
-                    safety_critical_item_group=:sece_grp
+                    safety_critical_item_group=:sece_grp, purchase_date_raw=:purch_dt, company_raw=:co_raw,
+                    requisition_code_raw=:req_raw, part_of_raw=:part_of_raw
                 WHERE id=:id
             """), tags_to_update)
 

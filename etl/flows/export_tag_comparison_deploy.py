@@ -58,7 +58,9 @@ _TAG_COLUMNS: list[str] = [
     "safety_critical_item_reason_awarded",
     "production_critical_item",
     "safety_critical_item_group",
-    "purchase_date",
+    "company_raw",
+    "requisition_code_raw",
+    "part_of",
     "serial_no",
     "install_date",
     "startup_date",
@@ -86,7 +88,7 @@ _EXCLUDE_FROM_COMPARISON: frozenset[str] = frozenset(
 _DATA_COLS: list[str] = [c for c in _TAG_COLUMNS if c not in _EXCLUDE_FROM_COMPARISON]
 
 # Date columns that need normalisation to DD.MM.YYYY for consistent comparison
-_DATE_COLS: frozenset[str] = frozenset({"install_date", "startup_date", "warranty_end_date"})
+_DATE_COLS: frozenset[str] = frozenset({"install_date", "startup_date", "warranty_end_date", "purchase_date"})
 
 # Maps abbreviated snapshot JSON keys → full project_core.tag column names.
 # The ETL writes short keys to keep JSONB compact; comparison needs full names.
@@ -124,6 +126,10 @@ SNAPSHOT_KEY_MAP: dict[str, str] = {
     "to_tag_raw":   "to_tag_raw",
     "plt_raw":      "plant_raw",
     "prnt_raw":     "parent_tag_raw",
+    "purch_dt":    "purchase_date",
+    "co_raw":      "company_raw",
+    "req_raw":     "requisition_code_raw",
+    "part_of_raw": "part_of",
 }
 
 # ---------------------------------------------------------------------------
@@ -137,6 +143,7 @@ Gate:    object_status = 'Active', sync_timestamp <= current_date.
 Changes: 2026-04-16 — Initial implementation.
          2026-04-17 — Removed company_raw (column does not exist in schema).
          2026-04-21 — Added safety_critical_item_group for comparison.
+         2026-04-22 — Added company_raw, requisition_code_raw, part_of for Bug 1-2.
 */
 SELECT
     source_id,
@@ -158,6 +165,9 @@ SELECT
     safety_critical_item_reason_awarded,
     production_critical_item,
     safety_critical_item_group,
+    company_raw,
+    requisition_code_raw,
+    part_of_raw AS part_of,
     serial_no,
     install_date,
     startup_date,
@@ -215,27 +225,6 @@ FROM audit_core.tag_status_history
 WHERE sync_timestamp::date <= :target_date
 """
 
-_SQL_PO_DATES = """
-/*
-Purpose: Load all PO dates into memory for purchase_date derivation.
-Note:    Used to resolve purchase_date from po_code_raw for comparison.
-Changes: 2026-04-21 — Added for PURCHASE_DATE field in comparison.
-         2026-04-22 — Changed cast to use TO_DATE with explicit format mask
-                      because po_date is stored as TEXT in DD.MM.YYYY format.
-                      Direct ::date cast fails on values like '28.04.2023'
-                      when PostgreSQL DateStyle is ISO/MDY.
-         2026-04-22 — Changed key from code to name (with code fallback)
-                      because po_code_raw stores the name value (e.g. 'JA-ER254-1000'),
-                      not the normalized code (e.g. 'JAER2541000').
-*/
-SELECT
-    COALESCE(name, code) AS po_key,
-    TO_DATE(po_date, 'DD.MM.YYYY') AS purchase_date
-FROM reference_core.purchase_order
-WHERE po_date IS NOT NULL
-  AND po_date ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
-"""
-
 # ---------------------------------------------------------------------------
 # Style constants (openpyxl)
 # ---------------------------------------------------------------------------
@@ -286,6 +275,22 @@ def _escape_formula(value: str) -> str:
     return value
 
 
+def _fmt_date(v) -> str:
+    """Normalise any date string to DD.MM.YYYY; return '' if unparseable."""
+    if not v:
+        return ""
+    s = str(v).strip()
+    if not s:
+        return ""
+    from datetime import datetime as _dt
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
+        try:
+            return _dt.strptime(s, fmt).strftime("%d.%m.%Y")
+        except ValueError:
+            continue
+    return s
+
+
 def _safe_cell(value) -> str:
     """Convert value to safe cell string (None→'', formula-escaped)."""
     return _escape_formula(_to_str(value))
@@ -295,11 +300,7 @@ def _normalise_date_cols(df: pd.DataFrame) -> pd.DataFrame:
     """Normalise date columns to DD.MM.YYYY string for consistent comparison."""
     for col in _DATE_COLS:
         if col in df.columns:
-            df[col] = (
-                pd.to_datetime(df[col], errors="coerce")
-                .dt.strftime("%d.%m.%Y")
-                .fillna("")
-            )
+            df[col] = df[col].apply(_fmt_date)
     return df
 
 
@@ -504,54 +505,6 @@ def load_baseline_tags(engine: Engine, baseline_date: date) -> pd.DataFrame:
     )
     logger.info(f"Loaded {len(result_df)} baseline snapshots as of {baseline_date}")
     return result_df
-
-
-@task(name="load-po-dates", retries=1, cache_policy=NO_CACHE)
-def load_po_dates(engine: Engine) -> dict[str, str]:
-    """
-    Load all PO dates into memory dict for fast lookup.
-
-    Used to resolve purchase_date from po_code_raw for comparison.
-
-    Args:
-        engine: SQLAlchemy engine connected to engineering_core.
-
-    Returns:
-        Dict mapping PO code to purchase_date string (DD.MM.YYYY or "").
-    """
-    logger = get_run_logger()
-    with engine.connect() as conn:
-        df = pd.read_sql(text(_SQL_PO_DATES), conn)
-
-    def _normalise_po_date(val) -> str:
-        """Return DD.MM.YYYY string or '' for any un-parseable value."""
-        if val is None:
-            return ""
-        try:
-            if pd.isna(val):
-                return ""
-        except (TypeError, ValueError):
-            pass
-        # Already a date/datetime object from TO_DATE cast
-        if hasattr(val, "strftime"):
-            return val.strftime("%d.%m.%Y")
-        # String fallback — try multiple formats (defensive)
-        s = str(val).strip()
-        for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
-            try:
-                from datetime import datetime as _dt
-                return _dt.strptime(s, fmt).strftime("%d.%m.%Y")
-            except ValueError:
-                continue
-        return ""
-
-    po_dates = {
-        str(row["po_key"]).strip(): _normalise_po_date(row["purchase_date"])
-        for _, row in df.iterrows()
-        if row["po_key"] is not None
-    }
-    logger.info(f"Loaded {len(po_dates)} PO dates for purchase_date resolution")
-    return po_dates
 
 
 # ---------------------------------------------------------------------------
@@ -871,21 +824,6 @@ def export_tag_comparison_flow(
         sample = df_old[["tag_name", "tag_class_raw", "area_code_raw"]].head(3)
         logger.info(f"Baseline snapshot sample (first 3 rows):\n{sample.to_string(index=False)}")
 
-    # Load PO dates for purchase_date derivation
-    po_dates = load_po_dates(engine)
-
-    # FIXED: Add purchase_date (derived field) to both DataFrames
-    # purchase_date is resolved from po_code_raw via reference_core.purchase_order.po_date
-    df_new["purchase_date"] = df_new["po_code_raw"].apply(
-        lambda v: po_dates.get(_to_str(v).strip(), "")
-    )
-    df_old["purchase_date"] = df_old["po_code_raw"].apply(
-        lambda v: po_dates.get(_to_str(v).strip(), "")
-    )
-
-    # Inject purchase_date into _DATA_COLS for comparison (runtime only, not module-level)
-    data_cols = list(_DATA_COLS) + ["purchase_date"]
-
     logger.info(
         f"Current date: {current_date} "
         f"({'explicit' if _current_date_explicit else 'resolved from DB MAX'})"
@@ -896,12 +834,12 @@ def export_tag_comparison_flow(
         f"Tags in current: {len(df_new)} | Tags in baseline: {len(df_old)}"
     )
 
-    # Trim to join key + row_hash + data_cols only
+    # Trim to join key + row_hash + _DATA_COLS only
     new_keep = ["source_id", "row_hash"] + [
-        c for c in data_cols if c in df_new.columns
+        c for c in _DATA_COLS if c in df_new.columns
     ]
     old_keep = ["source_id", "row_hash"] + [
-        c for c in data_cols if c in df_old.columns
+        c for c in _DATA_COLS if c in df_old.columns
     ]
     df_new_trim = df_new[new_keep].copy()
     df_old_trim = df_old[old_keep].copy()
@@ -922,7 +860,7 @@ def export_tag_comparison_flow(
 
     # Classify every row
     merged["Comparison_Result"] = merged.apply(
-        lambda row: _get_comparison_result(row, data_cols),
+        lambda row: _get_comparison_result(row, _DATA_COLS),
         axis=1,
     )
 
@@ -939,10 +877,10 @@ def export_tag_comparison_flow(
     wb = Workbook()
     ws1 = wb.active
     ws1.title = "Full Comparison"
-    _build_full_comparison_sheet(ws1, merged, data_cols)
+    _build_full_comparison_sheet(ws1, merged, _DATA_COLS)
 
     ws2 = wb.create_sheet(title="Changes Only")
-    _build_changes_only_sheet(ws2, merged, data_cols)
+    _build_changes_only_sheet(ws2, merged, _DATA_COLS)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(str(output_path))
