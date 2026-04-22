@@ -34,8 +34,7 @@ except ImportError as e:
 
 _SQL_MAX_CURRENT_DATE = """
 SELECT MAX(sync_timestamp)::date AS max_date
-FROM project_core.tag
-WHERE object_status = 'Active'
+FROM audit_core.tag_status_history
 """
 
 _SQL_NEAREST_BASELINE_DATE = """
@@ -44,44 +43,23 @@ FROM audit_core.tag_status_history
 WHERE sync_timestamp::date <= :target_date
 """
 
-_SQL_CURRENT_TAG = """
-SELECT
-    source_id, tag_name, tag_status, description, parent_tag_raw,
-    tag_class_raw, area_code_raw, process_unit_raw, discipline_code_raw,
-    po_code_raw, design_company_name_raw, manufacturer_company_raw,
-    vendor_company_raw, article_code_raw, model_part_raw,
-    safety_critical_item, safety_critical_item_reason_awarded,
-    production_critical_item, safety_critical_item_group,
-    serial_no, install_date, startup_date,
-    warranty_end_date, price, tech_id, ip_grade, ex_class,
-    mc_package_code, equip_no, alias, from_tag_raw, to_tag_raw,
-    plant_raw, sync_status, object_status, row_hash, sync_timestamp
-FROM project_core.tag
-WHERE id = :tag_id
-  AND object_status = 'Active'
-  AND sync_timestamp::date <= :current_date
-"""
-
-_SQL_TAG_ID = """
-SELECT id FROM project_core.tag WHERE tag_name = :tag_name
-"""
-
-_SQL_BASELINE_SNAPSHOT = """
-SELECT DISTINCT ON (tag_id)
-    tag_id, tag_name, row_hash, snapshot, sync_timestamp, sync_status
+_SQL_SNAPSHOT_FOR_DATE = """
+/*
+Purpose: Most recent per-tag snapshot on or before target_date.
+Gate:    sync_timestamp::date <= target_date.
+Note:    DISTINCT ON picks the latest history record per tag.
+         Used for BOTH current and baseline states.
+Changes: 2026-04-22 — Renamed from _SQL_BASELINE_SNAPSHOT, now used for both sides.
+*/
+SELECT DISTINCT ON (source_id)
+    source_id,
+    tag_name,
+    row_hash,
+    snapshot,
+    sync_timestamp
 FROM audit_core.tag_status_history
-WHERE tag_id = :tag_id
-  AND sync_timestamp::date <= :baseline_date
-ORDER BY tag_id, sync_timestamp DESC
-"""
-
-_SQL_PO_DATE = """
-SELECT TO_DATE(po_date, 'DD.MM.YYYY') AS purchase_date
-FROM reference_core.purchase_order
-WHERE (name = :po_code OR code = :po_code)
-  AND po_date IS NOT NULL
-  AND po_date ~ '^\\d{2}\\.\\d{2}\\.\\d{4}$'
-LIMIT 1
+WHERE sync_timestamp::date <= :target_date
+ORDER BY source_id, sync_timestamp DESC
 """
 
 # ---------------------------------------------------------------------------
@@ -121,6 +99,10 @@ SNAPSHOT_KEY_TO_COLUMN = {
     "pci": "production_critical_item",
     "sece_grp": "safety_critical_item_group",
     "eq": "equip_no",
+    # ADD: 3 new mappings for Bug 1-2-3
+    "purch_dt": "purchase_date",      # ADD: Bug 3
+    "co_raw": "company_raw",          # ADD: Bug 1
+    "part_of_raw": "part_of",         # ADD: Bug 2
 }
 
 EIS_FIELDS_TO_COLUMN = {
@@ -133,30 +115,33 @@ EIS_FIELDS_TO_COLUMN = {
     "TAG_STATUS": "tag_status",
     "REQUISITION_CODE": "po_code_raw",
     "DESIGNED_BY_COMPANY_NAME": "design_company_name_raw",
-    "COMPANY_NAME": "design_company_name_raw",  # NOTE: maps to design_company_name_raw
+    # FIX Bug 1: COMPANY_NAME should map to company_raw (not design_company_name_raw)
+    "COMPANY_NAME": "company_raw",
     "PO_CODE": "po_code_raw",
     "PRODUCTION_CRITICAL_ITEM": "production_critical_item",
     "SAFETY_CRITICAL_ITEM": "safety_critical_item",
-    "SAFETY_CRITICAL_ITEM_GROUP": "safety_critical_item_group",  # FIXED: now maps to DB column
+    "SAFETY_CRITICAL_ITEM_GROUP": "safety_critical_item_group",
     "SAFETY_CRITICAL_ITEM_REASON_AWARDED": "safety_critical_item_reason_awarded",
     "TAG_DESCRIPTION": "description",
-    "EQUIPMENT_NUMBER": "equip_no",  # FIXED: now in snapshot
+    "EQUIPMENT_NUMBER": "equip_no",
     "EQUIPMENT_CLASS_NAME": "tag_class_raw",
     "MANUFACTURER_COMPANY_NAME": "manufacturer_company_raw",
     "MODEL_PART_NAME": "model_part_raw",
     "MANUFACTURER_SERIAL_NUMBER": "serial_no",
-    "PURCHASE_DATE": "__derived_po_date__",  # FIXED: derived from po_code_raw
+    # FIX Bug 3: PURCHASE_DATE should map to purchase_date (not derived field)
+    "PURCHASE_DATE": "purchase_date",
     "VENDOR_COMPANY_NAME": "vendor_company_raw",
     "INSTALLATION_DATE": "install_date",
     "STARTUP_DATE": "startup_date",
     "PRICE": "price",
     "WARRANTY_END_DATE": "warranty_end_date",
-    "PART_OF": "parent_tag_raw",
+    # FIX Bug 2: PART_OF should map to part_of (not parent_tag_raw)
+    "PART_OF": "part_of",
     "TECHIDENTNO": "tech_id",
     "ALIAS": "alias",
 }
 
-_DATE_COLS = {"install_date", "startup_date", "warranty_end_date"}
+_DATE_COLS = {"install_date", "startup_date", "warranty_end_date", "purchase_date"}  # ADD: purchase_date
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -278,24 +263,59 @@ def main():
     tag_id = result[0]
     print(f"[INFO] Resolved tag_id: {tag_id} from tag_name: {args.tag}")
 
-    # STEP 3: Load current state from project_core.tag using stable tag_id
-    print_header("STEP 3: LOAD CURRENT STATE")
+    # STEP 3: Load current state from snapshot
+    print_header("STEP 3: LOAD CURRENT SNAPSHOT")
 
+    # Load current snapshot (same logic as baseline)
     with engine.connect() as conn:
         result = conn.execute(
-            text(_SQL_CURRENT_TAG).bindparams(
-                tag_id=tag_id, current_date=str(current_date)
+            text(_SQL_SNAPSHOT_FOR_DATE).bindparams(
+                target_date=str(current_date)
             )
         ).fetchone()
 
     if result is None:
-        print(f"[ERROR] Tag with id={tag_id} not found in project_core.tag")
-        sys.exit(1)
+        print(f"[WARNING] No current snapshot found for source_id={args.tag} on or before {current_date}")
+        print("[INFO] All fields will appear as Created (no current snapshot)")
+        current_snapshot = None
+        current_row_hash = None
+        current_sync_status = None
+        current_timestamp = None
+    else:
+        current_row = dict(result._mapping)
+        current_snapshot = current_row.get("snapshot")
+        current_row_hash = current_row.get("row_hash")
+        current_sync_status = current_row.get("sync_status")
+        current_timestamp = current_row.get("sync_timestamp")
 
-    current_row = dict(result._mapping)
-    print(f"[INFO] Loaded current state for tag_id: {tag_id}")
-    for key, value in current_row.items():
-        print(f"  {key:40} = {value!r}")
+        print(
+            f"[INFO] Current snapshot found: sync_timestamp={current_timestamp}, "
+            f"sync_status={current_sync_status}"
+        )
+        print(f"[INFO] row_hash (current): {current_row_hash}")
+
+        if isinstance(current_snapshot, dict):
+            print(
+                f"[DEBUG] Raw snapshot keys: {sorted(current_snapshot.keys())}"
+            )
+            print("[DEBUG] Raw snapshot content:")
+            print(json.dumps(current_snapshot, indent=2))
+        else:
+            print(f"[DEBUG] Snapshot is not a dict: {type(current_snapshot)}")
+
+    # STEP 3: Map snapshot keys to project_core.tag column names
+    print_header("STEP 3: MAP CURRENT SNAPSHOT KEYS")
+
+    current_values = {}
+    if current_snapshot:
+        for snapshot_key, db_col in SNAPSHOT_KEY_TO_COLUMN.items():
+            current_values[db_col] = current_snapshot.get(snapshot_key)
+
+        print(f"[INFO] Current snapshot contains {len(current_values)} fields after key mapping.")
+        for db_col, value in sorted(current_values.items()):
+            print(f"  {db_col:40} = {value!r}")
+    else:
+        print("[INFO] No snapshot to map (current not found)")
 
     # STEP 4: Load baseline snapshot from audit_core.tag_status_history
     print_header("STEP 4: LOAD BASELINE SNAPSHOT")
@@ -303,14 +323,14 @@ def main():
     # Load baseline snapshot
     with engine.connect() as conn:
         result = conn.execute(
-            text(_SQL_BASELINE_SNAPSHOT).bindparams(
-                tag_id=tag_id, baseline_date=str(baseline_date)
+            text(_SQL_SNAPSHOT_FOR_DATE).bindparams(
+                target_date=str(baseline_date)
             )
         ).fetchone()
 
     if result is None:
         print(
-            f"[WARNING] No baseline snapshot found for tag_id={tag_id} on or before {baseline_date}"
+            f"[WARNING] No baseline snapshot found for source_id={args.tag} on or before {baseline_date}"
         )
         print("[INFO] All fields will appear as Created (no baseline)")
         baseline_snapshot = None
@@ -329,8 +349,8 @@ def main():
             f"sync_status={baseline_sync_status}"
         )
         print(f"[INFO] row_hash (baseline): {baseline_row_hash}")
-        print(f"[INFO] row_hash (current) : {current_row.get('row_hash')}")
-        hashes_match = baseline_row_hash == current_row.get("row_hash")
+        print(f"[INFO] row_hash (current) : {current_row_hash}")
+        hashes_match = baseline_row_hash == current_row_hash
         print(f"[INFO] Hashes match: {'YES' if hashes_match else 'NO'}")
 
         if isinstance(baseline_snapshot, dict):
@@ -343,14 +363,14 @@ def main():
             print(f"[DEBUG] Snapshot is not a dict: {type(baseline_snapshot)}")
 
     # STEP 4: Map snapshot keys to project_core.tag column names
-    print_header("STEP 4: MAP SNAPSHOT KEYS")
+    print_header("STEP 4: MAP BASELINE SNAPSHOT KEYS")
 
     baseline_values = {}
     if baseline_snapshot:
         for snapshot_key, db_col in SNAPSHOT_KEY_TO_COLUMN.items():
             baseline_values[db_col] = baseline_snapshot.get(snapshot_key)
 
-        print(f"[INFO] Snapshot contains {len(baseline_values)} fields after key mapping.")
+        print(f"[INFO] Baseline snapshot contains {len(baseline_values)} fields after key mapping.")
         for db_col, value in sorted(baseline_values.items()):
             print(f"  {db_col:40} = {value!r}")
     else:
@@ -384,52 +404,11 @@ def main():
             )
             continue
 
-        # FIXED: Handle derived PURCHASE_DATE field
-        if db_col == "__derived_po_date__":
-            # Resolve purchase_date from po_code_raw via reference_core.purchase_order
-            po_code_new = current_row.get("po_code_raw", "")
-            po_code_old = baseline_snapshot.get("po_raw") if baseline_snapshot else ""
-
-            val_new = ""
-            if po_code_new:
-                with engine.connect() as conn:
-                    result = conn.execute(
-                        text(_SQL_PO_DATE).bindparams(po_code=po_code_new)
-                    ).fetchone()
-                if result and result[0]:
-                    val_new = str(result[0])
-
-            val_old = ""
-            if po_code_old:
-                with engine.connect() as conn:
-                    result = conn.execute(
-                        text(_SQL_PO_DATE).bindparams(po_code=po_code_old)
-                    ).fetchone()
-                if result and result[0]:
-                    val_old = str(result[0])
-
-            if val_old != val_new:
-                result = "✓ CHANGED"
-                display_old = val_old
-            else:
-                result = "= SAME"
-                display_old = val_old
-
-            diff_results.append(
-                {
-                    "EIS_FIELD": eis_field,
-                    "VALUE_OLD": display_old,
-                    "VALUE_NEW": val_new,
-                    "RESULT": result,
-                }
-            )
-            continue
-
         # Regular DB columns
         val_old_raw = baseline_values.get(db_col, "")
-        val_new_raw = current_row.get(db_col, "")
+        val_new_raw = current_values.get(db_col, "")  # CHANGED: from current_row to current_values
 
-        # FIXED: Normalize val_old via _normalize_value() to strip whitespace and handle sentinels
+        # Normalize val_old via _normalize_value() to strip whitespace and handle sentinels
         val_old = _normalize_value(val_old_raw)
 
         # Normalize dates

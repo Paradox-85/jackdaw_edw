@@ -136,61 +136,14 @@ SNAPSHOT_KEY_MAP: dict[str, str] = {
 # SQL queries
 # ---------------------------------------------------------------------------
 
-_SQL_CURRENT = """
+_SQL_SNAPSHOT_FOR_DATE = """
 /*
-Purpose: Load current tag state for comparison report.
-Gate:    object_status = 'Active', sync_timestamp <= current_date.
-Changes: 2026-04-16 — Initial implementation.
-         2026-04-17 — Removed company_raw (column does not exist in schema).
-         2026-04-21 — Added safety_critical_item_group for comparison.
-         2026-04-22 — Added company_raw, requisition_code_raw, part_of for Bug 1-2.
+Purpose: Most recent per-tag snapshot on or before target_date.
+Gate:    sync_timestamp::date <= target_date.
+Note:    DISTINCT ON picks the latest history record per tag.
+         Used for BOTH current and baseline states.
+Changes: 2026-04-22 — Renamed from _SQL_BASELINE, now used for both sides.
 */
-SELECT
-    source_id,
-    tag_name,
-    tag_status,
-    description,
-    parent_tag_raw,
-    tag_class_raw,
-    area_code_raw,
-    process_unit_raw,
-    discipline_code_raw,
-    po_code_raw,
-    design_company_name_raw,
-    manufacturer_company_raw,
-    vendor_company_raw,
-    article_code_raw,
-    model_part_raw,
-    safety_critical_item,
-    safety_critical_item_reason_awarded,
-    production_critical_item,
-    safety_critical_item_group,
-    company_raw,
-    requisition_code_raw,
-    part_of_raw AS part_of,
-    serial_no,
-    install_date,
-    startup_date,
-    warranty_end_date,
-    price,
-    tech_id,
-    ip_grade,
-    ex_class,
-    mc_package_code,
-    equip_no,
-    alias,
-    from_tag_raw,
-    to_tag_raw,
-    plant_raw,
-    sync_status,
-    object_status,
-    row_hash
-FROM project_core.tag
-WHERE object_status = 'Active'
-  AND sync_timestamp::date <= :current_date
-"""
-
-_SQL_BASELINE = """
 /*
 Purpose: Most recent per-tag snapshot on or before baseline_date.
 Gate:    sync_timestamp::date <= baseline_date.
@@ -215,8 +168,7 @@ FROM audit_core.tag_status_history
 
 _SQL_MAX_CURRENT_DATE = """
 SELECT MAX(sync_timestamp)::date AS max_date
-FROM project_core.tag
-WHERE object_status = 'Active'
+FROM audit_core.tag_status_history
 """
 
 _SQL_NEAREST_BASELINE_DATE = """
@@ -386,65 +338,27 @@ def _get_comparison_result(row: pd.Series, data_cols: list[str]) -> str:
 # ---------------------------------------------------------------------------
 
 
-@task(name="load-current-tags", retries=1, cache_policy=NO_CACHE)
-def load_current_tags(engine: Engine, current_date: date) -> pd.DataFrame:
+@task(name="load-snapshot-for-date", retries=1, cache_policy=NO_CACHE)
+def load_snapshot_for_date(engine: Engine, target_date: date) -> pd.DataFrame:
     """
-    Load all active tags as of current_date from project_core.tag.
+    Load the most recent snapshot per tag recorded on or before target_date.
 
-    All values are coerced to str; date columns normalised to YYYY-MM-DD.
+    Uses identical logic for both current and baseline states.
 
     Args:
         engine: SQLAlchemy engine connected to engineering_core.
-        current_date: Upper bound (inclusive) for sync_timestamp.
-
-    Returns:
-        DataFrame keyed on source_id with all comparison columns.
-    """
-    logger = get_run_logger()
-    with engine.connect() as conn:
-        df = pd.read_sql(
-            text(_SQL_CURRENT).bindparams(current_date=str(current_date)),
-            conn,
-        )
-    df = _normalise_date_cols(df)
-    # Coerce all columns (except the merge key) to str
-    for col in df.columns:
-        if col != "source_id":
-            df[col] = df[col].apply(_to_str)
-    logger.info(f"Loaded {len(df)} current tags as of {current_date}")
-    return df
-
-
-@task(name="load-baseline-tags", retries=1, cache_policy=NO_CACHE)
-def load_baseline_tags(engine: Engine, baseline_date: date) -> pd.DataFrame:
-    """
-    Load the most recent snapshot per tag recorded on or before baseline_date.
-
-    Expands the snapshot JSONB into columns matching project_core.tag field
-    names. Missing snapshot keys default to ''.
-
-    TODO: When import_tag_deploy.py writes audit_core.tag_status_history,
-    it should also snapshot the following derived/resolved fields so they
-    are available for comparison without re-querying reference_core:
-      - purchase_date (from reference_core.purchase_order.po_date via po_code_raw)
-      - area_name (from reference_core.area.name via area_code_raw)
-      - company_name_normalized (from reference_core.company.code via vendor/mfr/design raw)
-    For now, purchase_date is resolved at comparison time via load_po_dates().
-
-    Args:
-        engine: SQLAlchemy engine connected to engineering_core.
-        baseline_date: Upper bound (inclusive) for sync_timestamp.
+        target_date: Upper bound (inclusive) for sync_timestamp.
 
     Returns:
         DataFrame keyed on source_id with row_hash and all data_cols.
 
     Raises:
-        ValueError: If no history records exist on or before baseline_date.
+        ValueError: If no history records exist on or before target_date.
     """
     logger = get_run_logger()
     with engine.connect() as conn:
         df = pd.read_sql(
-            text(_SQL_BASELINE).bindparams(baseline_date=str(baseline_date)),
+            text(_SQL_SNAPSHOT_FOR_DATE).bindparams(target_date=str(target_date)),
             conn,
         )
 
@@ -453,7 +367,7 @@ def load_baseline_tags(engine: Engine, baseline_date: date) -> pd.DataFrame:
             row = conn.execute(text(_SQL_MIN_HISTORY_DATE)).fetchone()
         min_ts = row[0] if row else "unknown"
         raise ValueError(
-            f"No history records found on or before {baseline_date}. "
+            f"No history records found on or before {target_date}. "
             f"Earliest available: {min_ts}"
         )
 
@@ -462,7 +376,7 @@ def load_baseline_tags(engine: Engine, baseline_date: date) -> pd.DataFrame:
         lambda s: s if isinstance(s, dict) else {}
     ).apply(pd.Series)
 
-    # Debug: log raw snapshot keys to catch future abbreviation changes
+    # Debug: log raw snapshot keys
     raw_keys = set(snapshot_expanded.columns)
     logger.debug(f"Raw snapshot keys found: {sorted(raw_keys)}")
 
@@ -471,7 +385,7 @@ def load_baseline_tags(engine: Engine, baseline_date: date) -> pd.DataFrame:
         columns={k: v for k, v in SNAPSHOT_KEY_MAP.items() if k in snapshot_expanded.columns}
     )
 
-    # Debug: log which _DATA_COLS are still missing after rename
+    # Debug: log which _DATA_COLS are missing after rename
     missing_cols = [c for c in _DATA_COLS if c not in snapshot_expanded.columns]
     if missing_cols:
         logger.debug(
@@ -485,10 +399,10 @@ def load_baseline_tags(engine: Engine, baseline_date: date) -> pd.DataFrame:
 
     snapshot_expanded = snapshot_expanded.reindex(columns=_DATA_COLS, fill_value="")
 
-    # Normalise date columns from JSON strings for consistent comparison
+    # Normalise date columns from JSON strings
     snapshot_expanded = _normalise_date_cols(snapshot_expanded)
 
-    # FIXED: Replace sentinel strings from older snapshots with empty string
+    # Replace sentinel strings with empty string
     _SENTINEL_VALUES = {'None', 'nan', 'NaT', 'null', 'NULL'}
     for col in snapshot_expanded.columns:
         snapshot_expanded[col] = snapshot_expanded[col].apply(
@@ -503,7 +417,7 @@ def load_baseline_tags(engine: Engine, baseline_date: date) -> pd.DataFrame:
         ],
         axis=1,
     )
-    logger.info(f"Loaded {len(result_df)} baseline snapshots as of {baseline_date}")
+    logger.info(f"Loaded {len(result_df)} snapshots as of {target_date}")
     return result_df
 
 
@@ -809,15 +723,9 @@ def export_tag_comparison_flow(
     output_path = Path(output_dir or _EXPORT_DIR) / filename
 
     # Load both states
-    df_new = load_current_tags(engine, current_date)
-
-    if df_new.empty:
-        raise ValueError(
-            f"No active tags found in project_core.tag as of {current_date}. "
-            f"Aborting to prevent misleading 'all Deleted' output."
-        )
-
-    df_old = load_baseline_tags(engine, baseline_date)
+    # Load both states from snapshots
+    df_new = load_snapshot_for_date(engine, current_date)
+    df_old = load_snapshot_for_date(engine, baseline_date)
 
     # Sanity: confirm baseline snapshot keys were resolved correctly
     if not df_old.empty:
