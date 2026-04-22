@@ -62,6 +62,26 @@ WHERE sync_timestamp::date <= :target_date
 ORDER BY source_id, sync_timestamp DESC
 """
 
+_SQL_SNAPSHOT_FOR_TAG = """
+/*
+Purpose: Most recent snapshot for a specific tag on or before target_date.
+Gate:    sync_timestamp::date <= target_date, tag_name = :tag_name.
+Note:    DISTINCT ON picks the latest history record for the specific tag.
+         Used for debug script to isolate a single tag's state.
+Changes: 2026-04-22 — Added for debug_tag_comparison.py snapshot filtering.
+*/
+SELECT DISTINCT ON (source_id)
+    source_id,
+    tag_name,
+    row_hash,
+    snapshot,
+    sync_timestamp
+FROM audit_core.tag_status_history
+WHERE sync_timestamp::date <= :target_date
+  AND tag_name = :tag_name
+ORDER BY source_id, sync_timestamp DESC
+"""
+
 # ---------------------------------------------------------------------------
 # Mapping tables
 # ---------------------------------------------------------------------------
@@ -250,27 +270,14 @@ def main():
     else:
         print(f"[INFO] baseline_date : {baseline_date} (from CLI)")
 
-    # STEP 2: Resolve tag_id from tag_name (stable DB primary key)
-    print_header("STEP 2: RESOLVE TAG_ID")
-
-    with engine.connect() as conn:
-        result = conn.execute(text(_SQL_TAG_ID).bindparams(tag_name=args.tag)).fetchone()
-
-    if result is None:
-        print(f"[ERROR] Tag '{args.tag}' not found in project_core.tag")
-        sys.exit(1)
-
-    tag_id = result[0]
-    print(f"[INFO] Resolved tag_id: {tag_id} from tag_name: {args.tag}")
-
-    # STEP 3: Load current state from snapshot
-    print_header("STEP 3: LOAD CURRENT SNAPSHOT")
+    # STEP 2: Load current state from snapshot
+    print_header("STEP 2: LOAD CURRENT SNAPSHOT")
 
     # Load current snapshot (same logic as baseline)
     with engine.connect() as conn:
         result = conn.execute(
-            text(_SQL_SNAPSHOT_FOR_DATE).bindparams(
-                target_date=str(current_date)
+            text(_SQL_SNAPSHOT_FOR_TAG).bindparams(
+                target_date=str(current_date), tag_name=args.tag
             )
         ).fetchone()
 
@@ -323,8 +330,8 @@ def main():
     # Load baseline snapshot
     with engine.connect() as conn:
         result = conn.execute(
-            text(_SQL_SNAPSHOT_FOR_DATE).bindparams(
-                target_date=str(baseline_date)
+            text(_SQL_SNAPSHOT_FOR_TAG).bindparams(
+                target_date=str(baseline_date), tag_name=args.tag
             )
         ).fetchone()
 
@@ -363,7 +370,7 @@ def main():
             print(f"[DEBUG] Snapshot is not a dict: {type(baseline_snapshot)}")
 
     # STEP 4: Map snapshot keys to project_core.tag column names
-    print_header("STEP 4: MAP BASELINE SNAPSHOT KEYS")
+    print_header("STEP 5: MAP BASELINE SNAPSHOT KEYS")
 
     baseline_values = {}
     if baseline_snapshot:
@@ -388,7 +395,7 @@ def main():
             print(f"  {eis_field:30} → {db_col}")
 
     # STEP 5: Field-level diff
-    print_header("STEP 5: FIELD-LEVEL COMPARISON")
+    print_header("STEP 6: FIELD-LEVEL COMPARISON")
 
     diff_results = []
     for eis_field, db_col in sorted(EIS_FIELDS_TO_COLUMN.items()):
@@ -441,7 +448,8 @@ def main():
             }
         )
 
-    # STEP 6: Output results
+    # STEP 7: Output results
+    print_header("STEP 7: OUTPUT RESULTS")
     print_separator()
     print(f"COMPARISON RESULT for tag: {args.tag}")
     print(f"current_date: {current_date}  |  baseline_date: {baseline_date}")
