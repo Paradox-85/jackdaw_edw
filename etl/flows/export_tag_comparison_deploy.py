@@ -75,6 +75,7 @@ _TAG_COLUMNS: list[str] = [
     "from_tag_raw",
     "to_tag_raw",
     "plant_raw",
+    "purchase_date",
     "sync_status",
     "object_status",
 ]
@@ -131,6 +132,55 @@ SNAPSHOT_KEY_MAP: dict[str, str] = {
     "req_raw":     "requisition_code_raw",
     "part_of_raw": "part_of",
 }
+
+# Maps internal DB column names → EIS display names for the comparison report.
+# Columns absent from this dict are excluded from the report output.
+# Order of items defines the strict column order in Full Comparison sheet.
+_REPORT_COLUMN_MAP: dict[str, str] = {
+    "plant_raw":                           "PLANT_CODE",
+    "tag_name":                            "TAG_NAME",
+    "parent_tag_raw":                      "PARENT_TAG_NAME",
+    "area_code_raw":                       "AREA_CODE",
+    "process_unit_raw":                    "PROCESS_UNIT_CODE",
+    "tag_class_raw":                       "TAG_CLASS_NAME",
+    "tag_status":                          "TAG_STATUS",
+    "article_code_raw":                    "REQUISITION_CODE",
+    "design_company_name_raw":             "DESIGNED_BY_COMPANY_NAME",
+    "company_raw":                         "COMPANY_NAME",
+    "po_code_raw":                         "PO_CODE",
+    "production_critical_item":            "PRODUCTION_CRITICAL_ITEM",
+    "safety_critical_item":                "SAFETY_CRITICAL_ITEM",
+    "safety_critical_item_group":          "SAFETY_CRITICAL_ITEM_GROUP",
+    "safety_critical_item_reason_awarded": "SAFETY_CRITICAL_ITEM_REASON_AWARDED",
+    "description":                         "TAG_DESCRIPTION",
+    "equip_no":                            "EQUIPMENT_NUMBER",
+    "manufacturer_company_raw":            "MANUFACTURER_COMPANY_NAME",
+    "model_part_raw":                      "MODEL_PART_NAME",
+    "serial_no":                           "MANUFACTURER_SERIAL_NUMBER",
+    "purchase_date":                       "PURCHASE_DATE",
+    "vendor_company_raw":                  "VENDOR_COMPANY_NAME",
+    "install_date":                        "INSTALLATION_DATE",
+    "startup_date":                        "STARTUP_DATE",
+    "price":                               "PRICE",
+    "warranty_end_date":                   "WARRANTY_END_DATE",
+    "part_of":                             "PART_OF",
+    "tech_id":                             "TECHIDENTNO",
+    "alias":                               "ALIAS",
+}
+
+# DB columns excluded from the report output entirely
+_REPORT_EXCLUDED_COLS: frozenset[str] = frozenset({
+    "discipline_code_raw",
+    "requisition_code_raw",
+    "ip_grade",
+    "ex_class",
+    "mc_package_code",
+    "from_tag_raw",
+    "to_tag_raw",
+})
+
+# Ordered list of DB column names included in report (drives both rename and column order)
+_REPORT_COLS: list[str] = list(_REPORT_COLUMN_MAP.keys())
 
 # ---------------------------------------------------------------------------
 # SQL queries
@@ -444,9 +494,18 @@ def _build_full_comparison_sheet(
         merged: Outer-merged DataFrame with Comparison_Result column.
         data_cols: Ordered list of field names used for comparison.
     """
-    new_headers = [f"{c}_new" for c in data_cols]
-    old_headers = [f"{c}_old" for c in data_cols]
+    # Only include columns present in _REPORT_COLUMN_MAP; order follows _REPORT_COLS strictly
+    report_cols = [c for c in _REPORT_COLS if c in data_cols]
+
+    # Display headers: EIS names with _new/_old suffix
+    new_headers = [f"{_REPORT_COLUMN_MAP[c]}_new" for c in report_cols]
+    old_headers = [f"{_REPORT_COLUMN_MAP[c]}_old" for c in report_cols]
     all_headers = new_headers + ["source_id"] + old_headers + ["Comparison_Result"]
+
+    # DB column names used to read values from merged DataFrame
+    new_db_cols = [f"{c}_new" for c in report_cols]
+    old_db_cols = [f"{c}_old" for c in report_cols]
+    all_db_cols = new_db_cols + ["source_id"] + old_db_cols + ["Comparison_Result"]
 
     # --- Header row ---
     for col_idx, header in enumerate(all_headers, start=1):
@@ -480,23 +539,25 @@ def _build_full_comparison_sheet(
     for excel_row, (_, row) in enumerate(df_sorted.iterrows(), start=2):
         result = _to_str(row.get("Comparison_Result", ""))
 
-        for col_idx, header in enumerate(all_headers, start=1):
-            cell_val = _safe_cell(row.get(header, ""))
+        for col_idx, (display_header, db_col) in enumerate(
+            zip(all_headers, all_db_cols), start=1
+        ):
+            cell_val = _safe_cell(row.get(db_col, ""))
             cell = ws.cell(row=excel_row, column=col_idx, value=cell_val)
             cell.font = _FONT_DEFAULT
 
             # Cell-level fill
             if result == "Modified":
                 # Highlight only cells where the field actually changed
-                if header.endswith("_new") or header.endswith("_old"):
-                    base = header[:-4]  # strip '_new' or '_old'
-                    val_new = _to_str(row.get(f"{base}_new", ""))
-                    val_old = _to_str(row.get(f"{base}_old", ""))
+                if display_header.endswith("_new") or display_header.endswith("_old"):
+                    base_db = db_col[:-4]  # strip '_new' or '_old'
+                    val_new = _to_str(row.get(f"{base_db}_new", ""))
+                    val_old = _to_str(row.get(f"{base_db}_old", ""))
                     if val_new != val_old:
                         cell.fill = _FILL_YELLOW
-            elif result == "Created" and header.endswith("_new"):
+            elif result == "Created" and display_header.endswith("_new"):
                 cell.fill = _FILL_ROW_GREEN
-            elif result == "Deleted" and header.endswith("_old"):
+            elif result == "Deleted" and display_header.endswith("_old"):
                 cell.fill = _FILL_ROW_RED
 
     ws.freeze_panes = "A2"
@@ -561,31 +622,35 @@ def _build_changes_only_sheet(
             row.get("tag_name_old", "")
         )
 
-        # Collect only truly changed fields (alphabetical order)
+        # Collect only truly changed fields in _REPORT_COLS order (excludes internal cols)
         tag_field_rows: list[tuple[str, str, str]] = []
-        for field in sorted(data_cols):
+        for db_col in _REPORT_COLS:
+            if db_col not in data_cols:
+                continue
+            eis_field = _REPORT_COLUMN_MAP[db_col]
+
             if comparison == "Created":
                 val_old = ""
-                val_new = _to_str(row.get(f"{field}_new", ""))
+                val_new = _to_str(row.get(f"{db_col}_new", ""))
                 if val_new == "":
                     continue
             elif comparison == "Deleted":
-                val_old = _to_str(row.get(f"{field}_old", ""))
+                val_old = _to_str(row.get(f"{db_col}_old", ""))
                 val_new = ""
                 if val_old == "":
                     continue
             else:  # Modified
-                val_old = _to_str(row.get(f"{field}_old", ""))
-                val_new = _to_str(row.get(f"{field}_new", ""))
+                val_old = _to_str(row.get(f"{db_col}_old", ""))
+                val_new = _to_str(row.get(f"{db_col}_new", ""))
                 if val_old == val_new:
                     continue
 
-            tag_field_rows.append((field, val_old, val_new))
+            tag_field_rows.append((eis_field, val_old, val_new))
 
-        for field, val_old, val_new in tag_field_rows:
+        for eis_field, val_old, val_new in tag_field_rows:
             row_values = [
                 tag_name,
-                field.upper(),
+                eis_field,
                 _escape_formula(val_old),
                 _escape_formula(val_new),
                 comparison,
