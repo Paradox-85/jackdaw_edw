@@ -32,6 +32,8 @@ except ImportError as e:
 # SQL queries
 # ---------------------------------------------------------------------------
 
+# FIX Bug 4: Comment now correctly references audit_core.tag_status_history
+# (current_date is resolved as MAX(sync_timestamp) from history, not project_core.tag)
 _SQL_MAX_CURRENT_DATE = """
 SELECT MAX(sync_timestamp)::date AS max_date
 FROM audit_core.tag_status_history
@@ -62,6 +64,8 @@ WHERE sync_timestamp::date <= :target_date
 ORDER BY source_id, sync_timestamp DESC
 """
 
+# FIX Bug 2: Removed sync_status from SELECT — column does not exist in
+# audit_core.tag_status_history; reading it via result._mapping caused KeyError.
 _SQL_SNAPSHOT_FOR_TAG = """
 /*
 Purpose: Most recent snapshot for a specific tag on or before target_date.
@@ -69,6 +73,7 @@ Gate:    sync_timestamp::date <= target_date, tag_name = :tag_name.
 Note:    DISTINCT ON picks the latest history record for the specific tag.
          Used for debug script to isolate a single tag's state.
 Changes: 2026-04-22 — Added for debug_tag_comparison.py snapshot filtering.
+         2026-04-22 — Removed sync_status (not a column in tag_status_history).
 */
 SELECT DISTINCT ON (source_id)
     source_id,
@@ -119,10 +124,9 @@ SNAPSHOT_KEY_TO_COLUMN = {
     "pci": "production_critical_item",
     "sece_grp": "safety_critical_item_group",
     "eq": "equip_no",
-    # ADD: 3 new mappings for Bug 1-2-3
-    "purch_dt": "purchase_date",      # ADD: Bug 3
-    "co_raw": "company_raw",          # ADD: Bug 1
-    "part_of_raw": "part_of",         # ADD: Bug 2
+    "purch_dt": "purchase_date",
+    "co_raw": "company_raw",
+    "part_of_raw": "part_of",
 }
 
 EIS_FIELDS_TO_COLUMN = {
@@ -135,7 +139,6 @@ EIS_FIELDS_TO_COLUMN = {
     "TAG_STATUS": "tag_status",
     "REQUISITION_CODE": "po_code_raw",
     "DESIGNED_BY_COMPANY_NAME": "design_company_name_raw",
-    # FIX Bug 1: COMPANY_NAME should map to company_raw (not design_company_name_raw)
     "COMPANY_NAME": "company_raw",
     "PO_CODE": "po_code_raw",
     "PRODUCTION_CRITICAL_ITEM": "production_critical_item",
@@ -148,20 +151,18 @@ EIS_FIELDS_TO_COLUMN = {
     "MANUFACTURER_COMPANY_NAME": "manufacturer_company_raw",
     "MODEL_PART_NAME": "model_part_raw",
     "MANUFACTURER_SERIAL_NUMBER": "serial_no",
-    # FIX Bug 3: PURCHASE_DATE should map to purchase_date (not derived field)
     "PURCHASE_DATE": "purchase_date",
     "VENDOR_COMPANY_NAME": "vendor_company_raw",
     "INSTALLATION_DATE": "install_date",
     "STARTUP_DATE": "startup_date",
     "PRICE": "price",
     "WARRANTY_END_DATE": "warranty_end_date",
-    # FIX Bug 2: PART_OF should map to part_of (not parent_tag_raw)
     "PART_OF": "part_of",
     "TECHIDENTNO": "tech_id",
     "ALIAS": "alias",
 }
 
-_DATE_COLS = {"install_date", "startup_date", "warranty_end_date", "purchase_date"}  # ADD: purchase_date
+_DATE_COLS = {"install_date", "startup_date", "warranty_end_date", "purchase_date"}
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -246,10 +247,10 @@ def main():
         with engine.connect() as conn:
             row = conn.execute(text(_SQL_MAX_CURRENT_DATE)).fetchone()
         if row is None or row[0] is None:
-            print("[ERROR] project_core.tag contains no active records.")
+            print("[ERROR] audit_core.tag_status_history contains no records.")
             sys.exit(1)
         current_date = row[0]
-        print(f"[INFO] current_date  : {current_date} (resolved from DB MAX)")
+        print(f"[INFO] current_date  : {current_date} (resolved from MAX sync_timestamp in history)")
     else:
         print(f"[INFO] current_date  : {current_date} (from CLI)")
 
@@ -273,7 +274,6 @@ def main():
     # STEP 2: Load current state from snapshot
     print_header("STEP 2: LOAD CURRENT SNAPSHOT")
 
-    # Load current snapshot (same logic as baseline)
     with engine.connect() as conn:
         result = conn.execute(
             text(_SQL_SNAPSHOT_FOR_TAG).bindparams(
@@ -282,22 +282,20 @@ def main():
         ).fetchone()
 
     if result is None:
-        print(f"[WARNING] No current snapshot found for source_id={args.tag} on or before {current_date}")
+        print(f"[WARNING] No current snapshot found for tag={args.tag} on or before {current_date}")
         print("[INFO] All fields will appear as Created (no current snapshot)")
         current_snapshot = None
         current_row_hash = None
-        current_sync_status = None
         current_timestamp = None
     else:
         current_row = dict(result._mapping)
         current_snapshot = current_row.get("snapshot")
         current_row_hash = current_row.get("row_hash")
-        current_sync_status = current_row.get("sync_status")
+        # FIX Bug 2: sync_status removed — field does not exist in tag_status_history
         current_timestamp = current_row.get("sync_timestamp")
 
         print(
-            f"[INFO] Current snapshot found: sync_timestamp={current_timestamp}, "
-            f"sync_status={current_sync_status}"
+            f"[INFO] Current snapshot found: sync_timestamp={current_timestamp}"
         )
         print(f"[INFO] row_hash (current): {current_row_hash}")
 
@@ -325,9 +323,10 @@ def main():
         print("[INFO] No snapshot to map (current not found)")
 
     # STEP 4: Load baseline snapshot from audit_core.tag_status_history
+    # FIX Bug 3: was labelled STEP 4 twice — baseline load is now correctly STEP 4,
+    # key mapping below is STEP 5.
     print_header("STEP 4: LOAD BASELINE SNAPSHOT")
 
-    # Load baseline snapshot
     with engine.connect() as conn:
         result = conn.execute(
             text(_SQL_SNAPSHOT_FOR_TAG).bindparams(
@@ -337,23 +336,21 @@ def main():
 
     if result is None:
         print(
-            f"[WARNING] No baseline snapshot found for source_id={args.tag} on or before {baseline_date}"
+            f"[WARNING] No baseline snapshot found for tag={args.tag} on or before {baseline_date}"
         )
         print("[INFO] All fields will appear as Created (no baseline)")
         baseline_snapshot = None
         baseline_row_hash = None
-        baseline_sync_status = None
         baseline_timestamp = None
     else:
         baseline_row = dict(result._mapping)
         baseline_snapshot = baseline_row.get("snapshot")
         baseline_row_hash = baseline_row.get("row_hash")
-        baseline_sync_status = baseline_row.get("sync_status")
+        # FIX Bug 2: sync_status removed — field does not exist in tag_status_history
         baseline_timestamp = baseline_row.get("sync_timestamp")
 
         print(
-            f"[INFO] Baseline record found: sync_timestamp={baseline_timestamp}, "
-            f"sync_status={baseline_sync_status}"
+            f"[INFO] Baseline record found: sync_timestamp={baseline_timestamp}"
         )
         print(f"[INFO] row_hash (baseline): {baseline_row_hash}")
         print(f"[INFO] row_hash (current) : {current_row_hash}")
@@ -369,7 +366,8 @@ def main():
         else:
             print(f"[DEBUG] Snapshot is not a dict: {type(baseline_snapshot)}")
 
-    # STEP 4: Map snapshot keys to project_core.tag column names
+    # STEP 5: Map baseline snapshot keys to project_core.tag column names
+    # FIX Bug 3: header was "STEP 4" (duplicate) — corrected to STEP 5.
     print_header("STEP 5: MAP BASELINE SNAPSHOT KEYS")
 
     baseline_values = {}
@@ -383,24 +381,27 @@ def main():
     else:
         print("[INFO] No snapshot to map (baseline not found)")
 
-    # Check which fields are NOT in snapshot
-    missing_in_snapshot = set()
+    # FIX Bug 1 & 5: missing_in_snapshot was set[tuple[str,str]] but used in
+    # `db_col in missing_in_snapshot` which compares str to tuple — always False.
+    # Now built as set[str] (db_col only) so membership check works correctly.
+    missing_db_cols: set[str] = set()
     for eis_field, db_col in EIS_FIELDS_TO_COLUMN.items():
         if db_col and db_col not in baseline_values:
-            missing_in_snapshot.add((eis_field, db_col))
+            missing_db_cols.add(db_col)
 
-    if missing_in_snapshot:
-        print("[INFO] Fields NOT in snapshot (will appear as blank in comparison):")
-        for eis_field, db_col in sorted(missing_in_snapshot):
-            print(f"  {eis_field:30} → {db_col}")
+    if missing_db_cols:
+        print("[INFO] DB columns NOT found in baseline snapshot (will appear as blank):")
+        for db_col in sorted(missing_db_cols):
+            # Show which EIS field(s) map to each missing db_col
+            eis_names = [f for f, c in EIS_FIELDS_TO_COLUMN.items() if c == db_col]
+            print(f"  {db_col:40} ← EIS: {', '.join(eis_names)}")
 
-    # STEP 5: Field-level diff
+    # STEP 6: Field-level diff
     print_header("STEP 6: FIELD-LEVEL COMPARISON")
 
     diff_results = []
     for eis_field, db_col in sorted(EIS_FIELDS_TO_COLUMN.items()):
         if db_col is None:
-            # EIS field has no DB column
             diff_results.append(
                 {
                     "EIS_FIELD": eis_field,
@@ -411,25 +412,23 @@ def main():
             )
             continue
 
-        # Regular DB columns
         val_old_raw = baseline_values.get(db_col, "")
-        val_new_raw = current_values.get(db_col, "")  # CHANGED: from current_row to current_values
+        val_new_raw = current_values.get(db_col, "")
 
-        # Normalize val_old via _normalize_value() to strip whitespace and handle sentinels
         val_old = _normalize_value(val_old_raw)
 
-        # Normalize dates
         if db_col in _DATE_COLS:
             val_old = _normalize_date(val_old)
             val_new = _normalize_date(val_new_raw)
         else:
             val_new = _normalize_value(val_new_raw)
 
-        # Check if field is missing in snapshot
+        # FIX Bug 1 & 5: use missing_db_cols (set[str]) for membership check —
+        # previously missing_in_snapshot was set[tuple] so `db_col in ...` was always False.
         if db_col not in baseline_values:
             result = "⚠ MISSING IN SNAPSHOT"
             display_old = "<empty — not in snapshot>"
-        elif db_col in missing_in_snapshot:
+        elif db_col in missing_db_cols:
             result = "⚠ MISSING IN SNAPSHOT"
             display_old = _to_str(val_old) if val_old else "<empty — not in snapshot>"
         elif val_old != val_new:
@@ -456,20 +455,17 @@ def main():
     print_separator()
     print()
 
-    # Print table header
     print(
         f"{'EIS_FIELD':30} | {'VALUE_OLD':30} | {'VALUE_NEW':30} | {'RESULT':20}"
     )
     print("-" * 100)
 
-    # Print each row
     for row in diff_results:
         print(
             f"{row['EIS_FIELD']:30} | {str(row['VALUE_OLD'] or '')[:30]:30} | "
             f"{str(row['VALUE_NEW'] or '')[:30]:30} | {row['RESULT']:20}"
         )
 
-    # Print summary
     print()
     print_separator()
     print("[SUMMARY]")
@@ -477,28 +473,24 @@ def main():
     total_checked = len(diff_results)
     changed = sum(1 for r in diff_results if r["RESULT"] == "✓ CHANGED")
     same = sum(1 for r in diff_results if r["RESULT"] == "= SAME")
-    missing_in_snapshot_count = sum(
-        1 for r in diff_results if r["RESULT"] == "⚠ MISSING IN SNAPSHOT"
-    )
-    no_db_column = sum(
-        1 for r in diff_results if r["RESULT"] == "⚠ NO DB COLUMN"
-    )
+    missing_count = sum(1 for r in diff_results if r["RESULT"] == "⚠ MISSING IN SNAPSHOT")
+    no_db_column = sum(1 for r in diff_results if r["RESULT"] == "⚠ NO DB COLUMN")
 
     print(f"Total EIS fields checked : {total_checked}")
     print(f"CHANGED                  : {changed}")
     print(f"SAME                     : {same}")
-    print(f"MISSING IN SNAPSHOT      : {missing_in_snapshot_count}")
+    print(f"MISSING IN SNAPSHOT      : {missing_count}")
     print(f"NO DB COLUMN             : {no_db_column}")
 
-    snapshot_covers_current = missing_in_snapshot_count == 0
+    snapshot_complete = missing_count == 0
     print(
-        f"SNAPSHOT COVERS CURRENT  : {'YES' if snapshot_covers_current else 'NO'} "
-        f"({'YES' if snapshot_covers_current else f'NO — {missing_in_snapshot_count} fields missing'})"
+        f"SNAPSHOT COVERS CURRENT  : {'YES' if snapshot_complete else 'NO'} "
+        f"({'YES' if snapshot_complete else f'NO — {missing_count} fields missing'})"
     )
 
     print()
     print("[EXPLANATION]")
-    if missing_in_snapshot_count > 0:
+    if missing_count > 0:
         print(
             "⚠ Some fields are missing from the snapshot. This is the ROOT CAUSE of "
             "false 'Modified' results in export_tag_comparison_deploy.py."
