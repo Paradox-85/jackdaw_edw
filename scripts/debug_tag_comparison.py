@@ -78,7 +78,9 @@ ORDER BY tag_id, sync_timestamp DESC
 _SQL_PO_DATE = """
 SELECT po_date::date AS purchase_date
 FROM reference_core.purchase_order
-WHERE code = :po_code
+WHERE name = :po_code
+   OR code = :po_code
+LIMIT 1
 """
 
 # ---------------------------------------------------------------------------

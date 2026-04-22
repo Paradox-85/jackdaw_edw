@@ -185,9 +185,12 @@ Changes: 2026-04-21 — Added for PURCHASE_DATE field in comparison.
                       because po_date is stored as TEXT in DD.MM.YYYY format.
                       Direct ::date cast fails on values like '28.04.2023'
                       when PostgreSQL DateStyle is ISO/MDY.
+         2026-04-22 — Changed key from code to name (with code fallback)
+                      because po_code_raw stores the name value (e.g. 'JA-ER254-1000'),
+                      not the normalized code (e.g. 'JAER2541000').
 */
 SELECT
-    code,
+    COALESCE(name, code) AS po_key,
     TO_DATE(po_date, 'DD.MM.YYYY') AS purchase_date
 FROM reference_core.purchase_order
 WHERE po_date IS NOT NULL
@@ -480,9 +483,9 @@ def load_po_dates(engine: Engine) -> dict[str, str]:
         return ""
 
     po_dates = {
-        str(row["code"]).strip(): _normalise_po_date(row["purchase_date"])
+        str(row["po_key"]).strip(): _normalise_po_date(row["purchase_date"])
         for _, row in df.iterrows()
-        if row["code"] is not None
+        if row["po_key"] is not None
     }
     logger.info(f"Loaded {len(po_dates)} PO dates for purchase_date resolution")
     return po_dates
