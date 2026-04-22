@@ -187,16 +187,23 @@ def _normalize_value(value) -> str:
 
 
 def _normalize_date(value) -> str:
-    """Normalize date to YYYY-MM-DD string or empty string."""
+    """Normalize date to DD.MM.YYYY string or empty string.
+
+    Handles input formats: DD.MM.YYYY, YYYY-MM-DD, DD/MM/YYYY.
+    Output is always DD.MM.YYYY to match snapshot storage format.
+    """
     if value is None or value == "":
         return ""
-    try:
-        dt = pd.to_datetime(value, errors="coerce")
-        if pd.isna(dt):
-            return ""
-        return dt.strftime("%Y-%m-%d")
-    except Exception:
+    s = str(value).strip()
+    if not s:
         return ""
+    from datetime import datetime as _dt
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
+        try:
+            return _dt.strptime(s, fmt).strftime("%d.%m.%Y")
+        except ValueError:
+            continue
+    return s  # return as-is if unparseable
 
 
 def print_separator():
