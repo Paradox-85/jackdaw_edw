@@ -3,7 +3,7 @@
 **Folder A (new):** `C:\Users\ADZV\OneDrive - Ramboll\Ramboll_Jackdaw - Admin Team\EIS\Export for Shell\Apr-26\CSV\eis_export_A37_20260423_0801`  
 **Folder B (baseline):** `C:\Users\ADZV\OneDrive - Ramboll\Ramboll_Jackdaw - Admin Team\EIS\Export for Shell\Mar-26\CSV`
 
-**Files compared:** 16
+**Files compared:** 17
 
 ## Summary
 
@@ -11,6 +11,7 @@
 |-----|----------|-------|-------|-------:|-------:|-------:|--:|---|
 | 001 | Site Register (EIS-201) | A37 | A36 | 203 | 205 | +2 | +1.0% | ⚠️ |
 | 002 | Plant Register (EIS-202) | A37 | A36 | 37 | 37 | +0 | +0.0% | ⚠️ |
+| 003 | Tag Register (EIS-205) | A37 | A36 | 23,073 | 23,026 | -47 | -0.2% | ⚠️ |
 | 004 | Equipment Register (EIS-206) | A37 | A36 | 23,073 | 23,026 | -47 | -0.2% | ⚠️ |
 | 005 | Model Part Register (EIS-209) | A37 | A36 | 1,254 | 1,473 | +219 | +17.5% | ⚠️ |
 | 006 | Tag Physical Connections (EIS-212) | A37 | A36 | 3,790 | 4,502 | +712 | +18.8% | ⚠️ |
@@ -25,7 +26,6 @@
 | 022 | Doc→Purchase Order (EIS-420) | A37 | A36 | 5,596 | 4,334 | -1,262 | -22.6% | ⚠️ |
 | 023 | Doc→Plant (EIS-409) | A37 | A36 | 13,265 | 13,477 | +212 | +1.6% | ✅ |
 | 024 | Doc→Site (EIS-408) | A37 | A36 | 13,265 | 13,477 | +212 | +1.6% | ✅ |
-| 003 | Tag Register (EIS-205) | — | — | — | — | — | — | 🆕 only in A |
 | 008 | Purchase Order Register (EIS-214) | — | — | — | — | — | — | 🆕 only in A |
 
 ---
@@ -178,6 +178,133 @@
   |--------|:------|:------|
   | `PROCESS_UNIT_CODE` | `01` | `29` |
   | `PROCESS_UNIT_NAME` | `WELLS AND FLOWLINES.` | `GAS PRODUCTION, PROCESS, HANDLING AND EXPORT` |
+
+---
+
+### 003 — Tag Register (EIS-205)
+**Revisions:** `A37` (A, new) vs `A36` (B, baseline)
+
+#### Row Counts
+
+| Metric | Rev A (A37) | Rev B (A36) | Delta |
+|--------|--------:|--------:|------:|
+| Total rows | 23,073 | 23,026 | -0.2% |
+| New rows (in B only) | — | 2 | |
+| Removed rows (in A only) | 6 | — | |
+| Changed rows (same PK) | — | — | 23,065 |
+
+> Primary key used: `TAG_NAME`
+
+#### Column Differences
+
+**Only in A (A37):** `ACTION_DATE`, `SAFETY_CRITICAL_ITEM_GROUP`, `SAFETY_CRITICAL_ITEM_REASON_AWARDED`
+
+**Only in B (A36):** `ID`, `SAFETY_CRITICAL_ITEM _GROUP`, `SAFETY_CRITICAL_ITEM _REASON_AWARDED`
+
+#### Per-Column Value Statistics
+
+| Column | Unique A | Unique B | Empty A | Empty B | Changed Rows | % Changed | Samples |
+|--------|--------:|--------:|--------:|--------:|------------:|----------:|---------|
+| `TAG_NAME` | 23,030 | 23,026 | 0 | 0 | 23,026 | **100.0%** ⚠️ | `01MV-0075` → `001-01EBD-001-001RE1`; `72-LI-00X11` → `01MV-0075`; `72-PDI-000X3` → `72-LI-00X11` |
+| `REQUISITION_CODE` | 4,362 | 1 | 13,119 | 0 | 23,065 | **100.0%** ⚠️ | `ART-DUMMY-JDA-79MV-0026` → `NA`; `` → `NA`; `` → `NA` |
+| `DESIGNED_BY_COMPANY_NAME` | 2 | 4 | 20,997 | 4 | 20,985 | **91.0%** ⚠️ | `` → `RAM`; `` → `RAM`; `` → `RAM` |
+| `COMPANY_NAME` | 4 | 6 | 5,578 | 4,340 | 9,776 | **42.4%** ⚠️ | `AKER SOLUTIONS VERDAL` → `AKER SOLUTIONS  VERDAL`; `AKER SOLUTIONS VERDAL` → `AKER SOLUTIONS  VERDAL`; `AKER SOLUTIONS VERDAL` → `AKER SOLUTIONS  VERDAL` |
+| `ACTION_STATUS` | 2 | 4 | 0 | 0 | 5,482 | **23.8%** ⚠️ | `No Changes` → `Modified`; `No Changes` → `Modified`; `No Changes` → `Modified` |
+| `PROCESS_UNIT_CODE` | 33 | 38 | 3,480 | 331 | 3,148 | **13.6%** ⚠️ | `` → `NA`; `` → `NA`; `` → `NA` |
+| `TAG_DESCRIPTION` | 10,715 | 10,563 | 366 | 366 | 3,057 | **13.3%** ⚠️ | `NETWORK AND SERVER CABINET; SHEARWATER` → `NETWORK AND SERVER CABINET, SHEARWATER`; `CRITICAL ACTION PANEL; SHEARWATER` → `CRITICAL ACTION PANEL, SHEARWATER`; `ESD CONTROLLER CABINET; SHEARWATER` → `ESD CONTROLLER CABINET, SHEARWATER` |
+| `PO_CODE` | 144 | 145 | 5,578 | 4,340 | 1,220 | 5.3% | `` → `NA`; `` → `NA`; `` → `NA` |
+| `AREA_CODE` | 24 | 26 | 485 | 0 | 506 | 2.2% | `` → `SWA-UL2`; `` → `SWA-UL1`; `` → `SWA-UL2` |
+| `PARENT_TAG_NAME` | 3,767 | 3,753 | 5,833 | 5,885 | 140 | 0.6% | `JDA-8"-P01203-LD30-N` → ``; `JDA-8"-P01303-LD30-N` → ``; `JDA-8"-P01603-LD30-N` → `` |
+| `TAG_CLASS_NAME` | 223 | 216 | 56 | 54 | 138 | 0.6% | `RELATIVE PRESSURE TRANSMITTER` → `PRESSURE TRANSMITTER`; `RELATIVE PRESSURE TRANSMITTER` → `PRESSURE TRANSMITTER`; `RELATIVE PRESSURE TRANSMITTER` → `PRESSURE TRANSMITTER` |
+| `TAG_STATUS` | 6 | 6 | 1 | 1 | 34 | 0.1% | `VOID` → `ACTIVE`; `VOID` → `ACTIVE`; `VOID` → `ACTIVE` |
+| `SAFETY_CRITICAL_ITEM` | 3 | 3 | 2,451 | 2,446 | 22 | 0.1% | `NO` → `YES`; `NO` → `YES`; `NO` → `YES` |
+| `PLANT_CODE` | 3 | 5 | 3 | 0 | 3 | 0.0% | `` → `001`; `` → `JDE`; `` → `tes` |
+| `PRODUCTION_CRITICAL_ITEM` | 3 | 3 | 22,757 | 22,710 | 0 | 0.0% |  |
+
+#### Row-Level Diff Examples
+
+> Rows matched by PK: `TAG_NAME`
+
+**Example 1**
+  - 🔑 `TAG_NAME` = `JDA-4"-D61836-13842-N`
+
+  | Column | Rev A (A37) | Rev B (A36) |
+  |--------|:------|:------|
+  | `PARENT_TAG_NAME` | `` | `JDA-3"-D61842-13842-N` |
+  | `AREA_CODE` | `P300` | `P100` |
+  | `TAG_CLASS_NAME` | `PIPELINE` | `PIPE` |
+  | `TAG_STATUS` | `VOID` | `ACTIVE` |
+  | `REQUISITION_CODE` | `` | `NA` |
+  | `DESIGNED_BY_COMPANY_NAME` | `` | `LEIR` |
+  | `COMPANY_NAME` | `` | `LEIRVIK AS` |
+  | `PO_CODE` | `` | `ZL-108864` |
+  | `SAFETY_CRITICAL_ITEM` | `NO` | `YES` |
+  | `TAG_DESCRIPTION` | `PIPE` | `OPEN DRAIN LQ` |
+  | `ACTION_STATUS` | `Deleted` | `No Changes` |
+
+**Example 2**
+  - 🔑 `TAG_NAME` = `JDA-2"-W46965-13842-2F`
+
+  | Column | Rev A (A37) | Rev B (A36) |
+  |--------|:------|:------|
+  | `PARENT_TAG_NAME` | `` | `JDA-2"-W46016-13842-2F` |
+  | `AREA_CODE` | `P300` | `L400` |
+  | `TAG_CLASS_NAME` | `PIPELINE` | `PIPE` |
+  | `TAG_STATUS` | `VOID` | `ACTIVE` |
+  | `REQUISITION_CODE` | `` | `NA` |
+  | `DESIGNED_BY_COMPANY_NAME` | `` | `LEIR` |
+  | `COMPANY_NAME` | `` | `LEIRVIK AS` |
+  | `PO_CODE` | `` | `ZL-108862` |
+  | `TAG_DESCRIPTION` | `PIPE` | `FRESHWATER DISTRIBUTION LQ L300` |
+  | `ACTION_STATUS` | `Deleted` | `No Changes` |
+
+**Example 3**
+  - 🔑 `TAG_NAME` = `JDA-2"-W46030-13842-2F`
+
+  | Column | Rev A (A37) | Rev B (A36) |
+  |--------|:------|:------|
+  | `PARENT_TAG_NAME` | `` | `JDA-2"-W46016-13842-2F` |
+  | `AREA_CODE` | `P300` | `L400` |
+  | `TAG_CLASS_NAME` | `PIPELINE` | `PIPE` |
+  | `TAG_STATUS` | `VOID` | `ACTIVE` |
+  | `REQUISITION_CODE` | `` | `NA` |
+  | `DESIGNED_BY_COMPANY_NAME` | `` | `LEIR` |
+  | `COMPANY_NAME` | `` | `LEIRVIK AS` |
+  | `PO_CODE` | `` | `ZL-108862` |
+  | `TAG_DESCRIPTION` | `FRESHWATER FLUID [WATER] FROM [JDA-2"-W46016-13842-2F]` | `FRESHWATER SYSTEM` |
+  | `ACTION_STATUS` | `Deleted` | `No Changes` |
+
+**Example 4**
+  - 🔑 `TAG_NAME` = `JDA-2"-D61837-13842-N`
+
+  | Column | Rev A (A37) | Rev B (A36) |
+  |--------|:------|:------|
+  | `PARENT_TAG_NAME` | `` | `JDA-1"-D61093-13842-N` |
+  | `TAG_CLASS_NAME` | `PIPELINE` | `PIPE` |
+  | `TAG_STATUS` | `VOID` | `ACTIVE` |
+  | `REQUISITION_CODE` | `` | `NA` |
+  | `DESIGNED_BY_COMPANY_NAME` | `` | `LEIR` |
+  | `COMPANY_NAME` | `` | `LEIRVIK AS` |
+  | `PO_CODE` | `` | `ZL-108864` |
+  | `SAFETY_CRITICAL_ITEM` | `NO` | `YES` |
+  | `TAG_DESCRIPTION` | `OPEN DRAIN FLUID [DRAIN] FROM JDA-A-84001A [DIESEL GENERATOR PACKAGE] TO /JDA-4…` | `OPEN DRAIN LQ` |
+  | `ACTION_STATUS` | `Deleted` | `No Changes` |
+
+**Example 5**
+  - 🔑 `TAG_NAME` = `JDA-2"-D61838-13842-N`
+
+  | Column | Rev A (A37) | Rev B (A36) |
+  |--------|:------|:------|
+  | `PARENT_TAG_NAME` | `` | `JDA-1"-D61096-13842-N` |
+  | `TAG_CLASS_NAME` | `PIPELINE` | `PIPE` |
+  | `TAG_STATUS` | `VOID` | `ACTIVE` |
+  | `REQUISITION_CODE` | `` | `NA` |
+  | `DESIGNED_BY_COMPANY_NAME` | `` | `LEIR` |
+  | `COMPANY_NAME` | `` | `LEIRVIK AS` |
+  | `PO_CODE` | `` | `ZL-108864` |
+  | `SAFETY_CRITICAL_ITEM` | `NO` | `YES` |
+  | `TAG_DESCRIPTION` | `OPEN DRAIN FLUID [DRAIN] FROM TO` | `OPEN DRAIN LQ` |
+  | `ACTION_STATUS` | `Deleted` | `No Changes` |
 
 ---
 

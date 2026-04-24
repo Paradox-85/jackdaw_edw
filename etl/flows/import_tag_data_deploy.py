@@ -123,7 +123,8 @@ def sync_tags_task(run_id, override_file=None, override_date=None):
                 model_id      = model_lookup.get(normalize_to_id_code(row.get('MODEL_PART_NAME')))
                 class_id      = class_lookup.get(clean_string(row.get('TAG_CLASS_NAME')))
                 po_id         = po_lookup.get(normalize_to_id_code(row.get('PO_CODE')))
-                unit_id       = unit_lookup.get(clean_string(row.get('PROCESS_UNIT_CODE')))
+                _unit_raw = clean_string(row.get('PROCESS_UNIT_CODE'))
+                unit_id   = unit_lookup.get((_unit_raw.lstrip('0') or _unit_raw) if _unit_raw else None)
                 area_id       = area_lookup.get(clean_string(row.get('AREA_CODE')))
                 disc_id       = disc_lookup.get(clean_string(row.get('DISCIPLINE_CODE')))
 

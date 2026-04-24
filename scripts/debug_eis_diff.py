@@ -66,8 +66,8 @@ _FILE_RE = re.compile(
 
 # Sequence code → human-readable name (from Code Matrix in spec)
 SEQ_NAMES: Dict[str, str] = {
-    "001": "Site Register (EIS-201)",
-    "002": "Plant Register (EIS-202)",
+    "001": "Area Register (EIS-203)",
+    "002": "Process Unit Register (EIS-204)",
     "003": "Tag Register (EIS-205)",
     "004": "Equipment Register (EIS-206)",
     "005": "Model Part Register (EIS-209)",
@@ -88,8 +88,8 @@ SEQ_NAMES: Dict[str, str] = {
 
 # Primary key columns per sequence (best-effort; used for row identity)
 SEQ_PRIMARY_KEYS: Dict[str, List[str]] = {
-    "001": ["SITE_CODE"],
-    "002": ["PLANT_CODE"],
+    "001": ["AREA_CODE"],
+    "002": ["PROCESS_UNIT_CODE"],
     "003": ["TAG_NAME"],
     "004": ["EQUIPMENT_NUMBER"],
     "005": ["MODEL_PART_CODE"],
