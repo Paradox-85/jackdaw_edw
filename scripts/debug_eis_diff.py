@@ -490,8 +490,12 @@ def analyse_pair(pair: FilePair) -> PairReport:
     row_examples: List[RowDiffExample] = []
 
     if valid_pk:
-        keys_a = set(df_a[valid_pk].apply(tuple, axis=1))
-        keys_b = set(df_b[valid_pk].apply(tuple, axis=1))
+        if len(valid_pk) == 1:
+            keys_a = set(df_a[valid_pk[0]])
+            keys_b = set(df_b[valid_pk[0]])
+        else:
+            keys_a = set(zip(*[df_a[k] for k in valid_pk]))
+            keys_b = set(zip(*[df_b[k] for k in valid_pk]))
         new_rows = len(keys_b - keys_a)
         removed_rows = len(keys_a - keys_b)
         non_pk_shared = [c for c in shared_cols if c not in valid_pk]
