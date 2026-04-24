@@ -66,6 +66,8 @@ _FILE_RE = re.compile(
 
 # Sequence code → human-readable name (from Code Matrix in spec)
 SEQ_NAMES: Dict[str, str] = {
+    "001": "Site Register (EIS-201)",
+    "002": "Plant Register (EIS-202)",
     "003": "Tag Register (EIS-205)",
     "004": "Equipment Register (EIS-206)",
     "005": "Model Part Register (EIS-209)",
@@ -86,6 +88,8 @@ SEQ_NAMES: Dict[str, str] = {
 
 # Primary key columns per sequence (best-effort; used for row identity)
 SEQ_PRIMARY_KEYS: Dict[str, List[str]] = {
+    "001": ["SITE_CODE"],
+    "002": ["PLANT_CODE"],
     "003": ["TAG_NAME"],
     "004": ["EQUIPMENT_NUMBER"],
     "005": ["MODEL_PART_CODE"],
@@ -207,11 +211,21 @@ def _scan_folder(folder: Path) -> Dict[str, FileEntry]:
     return result
 
 
-def discover_pairs(folder_a: Path, folder_b: Path) -> List[FilePair]:
-    """Find CSV files present in both folders (matched by sequence code)."""
+def discover_pairs(
+    folder_a: Path,
+    folder_b: Path,
+) -> Tuple[List[FilePair], List[str], List[str]]:
+    """Find CSV files present in both folders (matched by sequence code).
+
+    Returns:
+        (pairs, only_in_a, only_in_b) — matched pairs plus seq codes that
+        exist in only one folder (skipped from comparison).
+    """
     map_a = _scan_folder(folder_a)
     map_b = _scan_folder(folder_b)
     common = set(map_a.keys()) & set(map_b.keys())
+    only_in_a = sorted(set(map_a.keys()) - set(map_b.keys()))
+    only_in_b = sorted(set(map_b.keys()) - set(map_a.keys()))
     pairs = []
     for seq in sorted(common):
         ea = map_a[seq]
@@ -223,7 +237,7 @@ def discover_pairs(folder_a: Path, folder_b: Path) -> List[FilePair]:
             path_a=ea.path,
             path_b=eb.path,
         ))
-    return pairs
+    return pairs, only_in_a, only_in_b
 
 
 # ---------------------------------------------------------------------------
@@ -598,7 +612,11 @@ def render_report(
     reports: List[PairReport],
     folder_a: Path,
     folder_b: Path,
+    only_in_a: Optional[List[str]] = None,
+    only_in_b: Optional[List[str]] = None,
 ) -> str:
+    only_in_a = only_in_a or []
+    only_in_b = only_in_b or []
     lines: List[str] = []
 
     lines.append("# EIS Export Revision Diff Report\n")
@@ -620,6 +638,12 @@ def render_report(
             f"| {r.rows_a:,} | {r.rows_b:,} | {r.row_delta:+,} "
             f"| {r.row_pct:+.1f}% | {warn} |"
         )
+    for seq in only_in_a:
+        name = SEQ_NAMES.get(seq, seq)
+        lines.append(f"| {seq} | {name} | — | — | — | — | — | — | 🆕 only in A |")
+    for seq in only_in_b:
+        name = SEQ_NAMES.get(seq, seq)
+        lines.append(f"| {seq} | {name} | — | — | — | — | — | — | ❌ only in B |")
 
     lines.append("")
     lines.append("---\n")
@@ -741,12 +765,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"ERROR: folder-b does not exist: {folder_b}")
         return 1
 
-    pairs = discover_pairs(folder_a, folder_b)
+    pairs, only_in_a, only_in_b = discover_pairs(folder_a, folder_b)
     if not pairs:
         print("ERROR: No matching CSV pairs found. Check folder paths and file naming.")
         return 1
 
     print(f"Found {len(pairs)} matching file pair(s): {[p.seq for p in pairs]}")
+    if only_in_a:
+        print(f"  ⚠️  Files only in folder A (not in B, skipped): {sorted(only_in_a)}")
+    if only_in_b:
+        print(f"  ⚠️  Files only in folder B (not in A, skipped): {sorted(only_in_b)}")
 
     reports: List[PairReport] = []
     for pair in pairs:
@@ -758,7 +786,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         print(status)
 
-    md = render_report(reports, folder_a, folder_b)
+    md = render_report(reports, folder_a, folder_b, only_in_a, only_in_b)
     output.write_text(md, encoding="utf-8")
     print(f"\nReport written to: {output.resolve()}")
     return 0
