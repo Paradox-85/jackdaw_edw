@@ -1530,8 +1530,8 @@ INSERT INTO audit_core.crs_validation_query (
     evaluation_strategy
 )
 SELECT DISTINCT
-    ct.category                     AS query_code,
-    ct.category || ' — deferred check'
+    ct.category_code                AS query_code,
+    ct.category_code || ' — deferred check'
                                     AS query_name,
     'Deferred: no automated EDW check implemented for this CRS category yet.'
                                     AS description,
@@ -1566,7 +1566,7 @@ WHERE FALSE;
 FROM audit_core.crs_comment_template ct
 WHERE ct.object_status = 'Active'
   -- Exclude codes covered by Group A (CRS-C001..CRS-C050)
-  AND ct.category NOT IN (
+  AND ct.category_code NOT IN (
       'CRS-C001','CRS-C002','CRS-C003','CRS-C004','CRS-C005',
       'CRS-C006','CRS-C007','CRS-C008','CRS-C009','CRS-C010',
       'CRS-C011','CRS-C012','CRS-C013','CRS-C014','CRS-C015',
@@ -1579,7 +1579,7 @@ WHERE ct.object_status = 'Active'
       'CRS-C046','CRS-C047','CRS-C048','CRS-C049','CRS-C050'
   )
   -- Exclude CRS-C168 (Group B — already inserted)
-  AND ct.category != 'CRS-C168'
+  AND ct.category_code != 'CRS-C168'
 ON CONFLICT (query_code) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
