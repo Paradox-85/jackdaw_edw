@@ -622,5 +622,320 @@ CREATE TABLE "reference_core"."article" (
 );
 
 -- ===========================================================================
+-- CRS Module (Comment Response Sheet) — migrations 014–029
+-- ===========================================================================
+
+CREATE TABLE IF NOT EXISTS "audit_core"."crs_comment_template" (
+  "id"                  UUID      NOT NULL DEFAULT gen_random_uuid(),
+  "template_text"       TEXT      NOT NULL,
+  "template_hash"       TEXT      NOT NULL,
+  "category_code"       TEXT      NOT NULL,
+  "check_type"          TEXT      NULL,
+  "last_used_at"        TIMESTAMP NOT NULL DEFAULT now(),
+  "created_at"          TIMESTAMP NOT NULL DEFAULT now(),
+  "object_status"       TEXT      NOT NULL DEFAULT 'Active',
+  "short_template_text" TEXT      NULL,
+  "severity"            TEXT      NULL DEFAULT 'Warning',
+  "updated_at"          TIMESTAMPTZ NULL DEFAULT now(),
+  CONSTRAINT "crs_comment_template_pkey"     PRIMARY KEY ("id"),
+  CONSTRAINT "crs_comment_template_hash_key" UNIQUE ("template_hash"),
+  CONSTRAINT "chk_crs_template_object_status"
+      CHECK ("object_status" IN ('Active', 'Inactive'))
+);
+CREATE INDEX IF NOT EXISTS "idx_crs_template_hash"
+    ON "audit_core"."crs_comment_template"("template_hash")
+    WHERE "object_status" = 'Active';
+CREATE INDEX IF NOT EXISTS "idx_crs_template_category"
+    ON "audit_core"."crs_comment_template"("category_code")
+    WHERE "object_status" = 'Active';
+
+CREATE TABLE IF NOT EXISTS "audit_core"."crs_validation_query" (
+  "id"                  UUID      NOT NULL DEFAULT gen_random_uuid(),
+  "query_code"          TEXT      NOT NULL,
+  "query_name"          TEXT      NOT NULL,
+  "description"         TEXT      NULL,
+  "category"            TEXT      NOT NULL,
+  "category_description" TEXT     NULL,
+  "sql_query"           TEXT      NOT NULL,
+  "expected_result"     TEXT      NULL,
+  "has_parameters"      BOOLEAN   NOT NULL DEFAULT false,
+  "parameter_names"     TEXT[]    NULL,
+  "is_active"           BOOLEAN   NOT NULL DEFAULT true,
+  "created_at"          TIMESTAMP NOT NULL DEFAULT now(),
+  "updated_at"          TIMESTAMP NOT NULL DEFAULT now(),
+  "created_by"          TEXT      NULL,
+  "notes"               TEXT      NULL,
+  "object_status"       TEXT      NOT NULL DEFAULT 'Active',
+  "evaluation_strategy" TEXT      NULL,
+  "group_by_field"      TEXT      NULL,
+  "response_template"   TEXT      NULL,
+  "query_type"          TEXT      NOT NULL DEFAULT 'GROUP',
+  CONSTRAINT "crs_validation_query_pkey"     PRIMARY KEY ("id"),
+  CONSTRAINT "crs_validation_query_code_key" UNIQUE ("query_code"),
+  CONSTRAINT "chk_crs_vq_query_type"
+      CHECK ("query_type" IN ('GROUP', 'INDIVIDUAL'))
+);
+CREATE INDEX IF NOT EXISTS "idx_crs_query_category"
+    ON "audit_core"."crs_validation_query"("category");
+CREATE INDEX IF NOT EXISTS "idx_crs_query_is_active"
+    ON "audit_core"."crs_validation_query"("is_active");
+CREATE INDEX IF NOT EXISTS "idx_crs_query_evaluation_strategy"
+    ON "audit_core"."crs_validation_query"("evaluation_strategy")
+    WHERE "evaluation_strategy" IS NOT NULL;
+CREATE INDEX IF NOT EXISTS "idx_crs_vq_query_type"
+    ON "audit_core"."crs_validation_query"("query_type");
+
+CREATE TABLE IF NOT EXISTS "audit_core"."crs_comment" (
+  "id"                         UUID      NOT NULL DEFAULT gen_random_uuid(),
+  "crs_doc_number"             TEXT      NOT NULL,
+  "revision"                   TEXT      NULL,
+  "return_code"                TEXT      NULL,
+  "transmittal_number"         TEXT      NULL,
+  "transmittal_date"           DATE      NULL,
+  "comment_id"                 TEXT      NOT NULL,
+  "group_comment"              TEXT      NOT NULL,
+  "comment"                    TEXT      NOT NULL,
+  "tag_name"                   TEXT      NULL,
+  "tag_id"                     UUID      NULL,
+  "property_name"              TEXT      NULL,
+  "response_vendor"            TEXT      NULL,
+  "source_file"                TEXT      NOT NULL,
+  "detail_file"                TEXT      NULL,
+  "detail_sheet"               TEXT      NULL,
+  "crs_file_path"              TEXT      NOT NULL,
+  "crs_file_timestamp"         TIMESTAMP NULL,
+  "llm_category"               TEXT      NULL,
+  "llm_category_confidence"    REAL      NULL,
+  "llm_response"               TEXT      NULL,
+  "llm_response_timestamp"     TIMESTAMP NULL,
+  "llm_model_used"             TEXT      NULL,
+  "status"                     TEXT      NOT NULL DEFAULT 'RECEIVED',
+  "formal_response"            TEXT      NULL,
+  "formal_response_rationale"  TEXT      NULL,
+  "response_author"            TEXT      NULL,
+  "response_approval_date"     DATE      NULL,
+  "response_review_notes"      TEXT      NULL,
+  "row_hash"                   TEXT      NULL,
+  "sync_timestamp"             TIMESTAMP NOT NULL DEFAULT now(),
+  "object_status"              TEXT      NOT NULL DEFAULT 'Active',
+  "document_number"            TEXT      NULL,
+  "from_tag"                   TEXT      NULL,
+  "to_tag"                     TEXT      NULL,
+  "classification_tier"        SMALLINT  NULL,
+  "template_id"                UUID      NULL,
+  "category_code"              TEXT      NULL,
+  "category_confidence"        REAL      NULL,
+  "validation_query_ids"       UUID[]    NULL,
+  "deferred_reason"            TEXT      NULL,
+  CONSTRAINT "crs_comment_pkey"         PRIMARY KEY ("id"),
+  CONSTRAINT "crs_comment_comment_id_key" UNIQUE ("comment_id"),
+  CONSTRAINT "crs_comment_status_check"
+      CHECK ("status" IN ('RECEIVED','IN_REVIEW','RESPONDED','APPROVED','CLOSED','DEFERRED','NEEDS_NEW_CATEGORY')),
+  CONSTRAINT "crs_comment_object_status_check"
+      CHECK ("object_status" IN ('Active','Inactive')),
+  CONSTRAINT "crs_comment_llm_category_confidence_check"
+      CHECK ("llm_category_confidence" >= 0.0 AND "llm_category_confidence" <= 1.0),
+  CONSTRAINT "crs_comment_tag_id_fkey"
+      FOREIGN KEY ("tag_id") REFERENCES "project_core"."tag"("id") ON DELETE SET NULL,
+  CONSTRAINT "crs_comment_template_id_fkey"
+      FOREIGN KEY ("template_id") REFERENCES "audit_core"."crs_comment_template"("id") ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_status"
+    ON "audit_core"."crs_comment"("status");
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_category"
+    ON "audit_core"."crs_comment"("llm_category");
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_tag_id"
+    ON "audit_core"."crs_comment"("tag_id");
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_crs_doc_number"
+    ON "audit_core"."crs_comment"("crs_doc_number");
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_source_file"
+    ON "audit_core"."crs_comment"("source_file");
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_transmittal"
+    ON "audit_core"."crs_comment"("transmittal_date");
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_sync_timestamp"
+    ON "audit_core"."crs_comment"("sync_timestamp");
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_low_confidence"
+    ON "audit_core"."crs_comment"("llm_category_confidence")
+    WHERE "llm_category_confidence" < 0.7 AND "llm_category" IS NOT NULL;
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_document_number"
+    ON "audit_core"."crs_comment"("document_number")
+    WHERE "document_number" IS NOT NULL AND "document_number" <> 'Not Applicable';
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_from_tag"
+    ON "audit_core"."crs_comment"("from_tag")
+    WHERE "from_tag" IS NOT NULL;
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_to_tag"
+    ON "audit_core"."crs_comment"("to_tag")
+    WHERE "to_tag" IS NOT NULL;
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_category_code"
+    ON "audit_core"."crs_comment"("category_code");
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_classification_tier"
+    ON "audit_core"."crs_comment"("classification_tier")
+    WHERE "classification_tier" IS NOT NULL;
+CREATE INDEX IF NOT EXISTS "idx_crs_comment_deferred_reason"
+    ON "audit_core"."crs_comment"("deferred_reason")
+    WHERE "deferred_reason" IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS "audit_core"."crs_comment_validation" (
+  "id"                     UUID      NOT NULL DEFAULT gen_random_uuid(),
+  "comment_id"             UUID      NOT NULL,
+  "validation_query_id"    UUID      NOT NULL,
+  "validation_status"      TEXT      NOT NULL DEFAULT 'PENDING',
+  "validation_result_json" JSONB     NULL,
+  "validation_timestamp"   TIMESTAMP NULL,
+  "validation_error"       TEXT      NULL,
+  "run_id"                 UUID      NULL,
+  CONSTRAINT "crs_comment_validation_pkey"   PRIMARY KEY ("id"),
+  CONSTRAINT "crs_comment_validation_unique" UNIQUE ("comment_id", "validation_query_id"),
+  CONSTRAINT "crs_validation_status_check"
+      CHECK ("validation_status" IN ('PENDING','PASSED','FAILED','INCONCLUSIVE','SKIPPED')),
+  CONSTRAINT "crs_comment_validation_comment_id_fkey"
+      FOREIGN KEY ("comment_id") REFERENCES "audit_core"."crs_comment"("id") ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS "idx_crs_cv_comment"
+    ON "audit_core"."crs_comment_validation"("comment_id");
+CREATE INDEX IF NOT EXISTS "idx_crs_cv_query"
+    ON "audit_core"."crs_comment_validation"("validation_query_id");
+CREATE INDEX IF NOT EXISTS "idx_crs_cv_status"
+    ON "audit_core"."crs_comment_validation"("validation_status");
+CREATE INDEX IF NOT EXISTS "idx_crs_cv_timestamp"
+    ON "audit_core"."crs_comment_validation"("validation_timestamp");
+
+CREATE TABLE IF NOT EXISTS "audit_core"."crs_comment_audit" (
+  "id"             UUID      NOT NULL DEFAULT gen_random_uuid(),
+  "comment_id"     UUID      NOT NULL,
+  "change_type"    TEXT      NOT NULL,
+  "snapshot"       JSONB     NOT NULL,
+  "changed_fields" TEXT[]    NULL,
+  "changed_by"     TEXT      NULL,
+  "change_reason"  TEXT      NULL,
+  "changed_at"     TIMESTAMP NOT NULL DEFAULT now(),
+  "run_id"         UUID      NULL,
+  CONSTRAINT "crs_comment_audit_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "crs_comment_audit_change_type_check"
+      CHECK ("change_type" IN ('INSERT','UPDATE','DELETE','RESET')),
+  CONSTRAINT "crs_comment_audit_comment_id_fkey"
+      FOREIGN KEY ("comment_id") REFERENCES "audit_core"."crs_comment"("id") ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS "idx_crs_audit_comment"
+    ON "audit_core"."crs_comment_audit"("comment_id");
+CREATE INDEX IF NOT EXISTS "idx_crs_audit_changed_at"
+    ON "audit_core"."crs_comment_audit"("changed_at");
+CREATE INDEX IF NOT EXISTS "idx_crs_audit_change_type"
+    ON "audit_core"."crs_comment_audit"("change_type");
+
+CREATE TABLE IF NOT EXISTS "audit_core"."crs_llm_template_staging" (
+  "id"                UUID         NOT NULL DEFAULT gen_random_uuid(),
+  "template_text"     TEXT         NOT NULL,
+  "template_hash"     CHAR(32)     NOT NULL,
+  "suggested_category" VARCHAR(20) NULL,
+  "check_type"        VARCHAR(50)  NULL,
+  "confidence"        NUMERIC(4,3) NOT NULL,
+  "llm_response"      TEXT         NULL,
+  "revision"          VARCHAR(20)  NULL,
+  "occurrence_count"  INTEGER      NOT NULL DEFAULT 1,
+  "last_seen_at"      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  "created_at"        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  "object_status"     VARCHAR(20)  NOT NULL DEFAULT 'PendingReview',
+  "reviewed_at"       TIMESTAMPTZ  NULL,
+  "review_notes"      TEXT         NULL,
+  CONSTRAINT "crs_llm_staging_pkey"       PRIMARY KEY ("id"),
+  CONSTRAINT "uq_llm_staging_hash"        UNIQUE ("template_hash"),
+  CONSTRAINT "chk_llm_staging_confidence" CHECK ("confidence" BETWEEN 0.0 AND 1.0),
+  CONSTRAINT "chk_llm_staging_status"
+      CHECK ("object_status" IN ('PendingReview','Approved','Rejected','NeedsNewCategory'))
+);
+CREATE INDEX IF NOT EXISTS "idx_llm_staging_status"
+    ON "audit_core"."crs_llm_template_staging"("object_status");
+CREATE INDEX IF NOT EXISTS "idx_llm_staging_category"
+    ON "audit_core"."crs_llm_template_staging"("suggested_category");
+
+CREATE TABLE IF NOT EXISTS "audit_core"."crs_template_query_map" (
+  "id"          UUID     NOT NULL DEFAULT gen_random_uuid(),
+  "template_id" UUID     NOT NULL,
+  "query_id"    UUID     NOT NULL,
+  "priority"    SMALLINT NOT NULL DEFAULT 1,
+  "object_status" TEXT   NOT NULL DEFAULT 'Active',
+  "created_at"  TIMESTAMP NOT NULL DEFAULT now(),
+  CONSTRAINT "crs_template_query_map_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "crs_template_query_map_uq"  UNIQUE ("template_id", "query_id"),
+  CONSTRAINT "crs_tqmap_template_fkey"
+      FOREIGN KEY ("template_id") REFERENCES "audit_core"."crs_comment_template"("id") ON DELETE CASCADE,
+  CONSTRAINT "crs_tqmap_query_fkey"
+      FOREIGN KEY ("query_id") REFERENCES "audit_core"."crs_validation_query"("id") ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS "idx_crs_tqmap_template"
+    ON "audit_core"."crs_template_query_map"("template_id");
+CREATE INDEX IF NOT EXISTS "idx_crs_tqmap_query"
+    ON "audit_core"."crs_template_query_map"("query_id");
+
+CREATE TABLE IF NOT EXISTS "audit_core"."crs_benchmark_example" (
+  "id"               SERIAL        NOT NULL,
+  "comment_pattern"  TEXT          NOT NULL,
+  "category"         VARCHAR(20)   NOT NULL,
+  "assigned_status"  VARCHAR(30)   NOT NULL,
+  "confidence"       NUMERIC       NOT NULL DEFAULT 0.95,
+  "rationale"        TEXT          NULL,
+  "object_status"    VARCHAR(20)   NOT NULL DEFAULT 'Active',
+  "created_by"       VARCHAR(100)  NULL DEFAULT 'system',
+  "created_at"       TIMESTAMPTZ   NULL DEFAULT now(),
+  CONSTRAINT "crs_benchmark_example_pkey" PRIMARY KEY ("id")
+);
+CREATE INDEX IF NOT EXISTS "idx_benchmark_active"
+    ON "audit_core"."crs_benchmark_example"("object_status");
+
+CREATE OR REPLACE VIEW "audit_core"."v_template_queries" AS
+SELECT
+    ct.id                   AS template_id,
+    ct.category_code        AS template_category,
+    ct.check_type,
+    ct.template_text,
+    vq.id                   AS query_id,
+    vq.query_code,
+    vq.query_name,
+    vq.query_type,
+    vq.evaluation_strategy,
+    vq.has_parameters,
+    vq.parameter_names,
+    vq.sql_query,
+    vq.response_template,
+    tqm.priority
+FROM "audit_core"."crs_template_query_map" tqm
+JOIN "audit_core"."crs_comment_template"   ct  ON ct.id  = tqm.template_id
+JOIN "audit_core"."crs_validation_query"   vq  ON vq.id  = tqm.query_id
+WHERE tqm.object_status = 'Active'
+  AND ct.object_status  = 'Active'
+  AND vq.is_active      = true
+  AND vq.query_type     = 'GROUP';
+
+CREATE OR REPLACE VIEW "audit_core"."v_crs_resolution_report" AS
+SELECT
+    cc.id                    AS comment_id,
+    cc.comment_id            AS comment_ref,
+    cc.revision,
+    cc.tag_name,
+    cc.status                AS comment_status,
+    cc.category_code,
+    cc.classification_tier,
+    cc.deferred_reason,
+    cc.formal_response,
+    cc.response_author,
+    cc.response_approval_date,
+    cv.validation_status,
+    cv.validation_result_json,
+    cv.validation_error,
+    cv.validation_timestamp,
+    cv.run_id                AS validation_run_id,
+    vq.query_code,
+    vq.query_name,
+    vq.category              AS query_category,
+    vq.evaluation_strategy,
+    vq.response_template,
+    vq.group_by_field
+FROM "audit_core"."crs_comment" cc
+LEFT JOIN "audit_core"."crs_comment_validation"  cv ON cv.comment_id = cc.id
+LEFT JOIN "audit_core"."crs_validation_query"     vq ON vq.id         = cv.validation_query_id
+WHERE cc.object_status = 'Active';
+
+-- ===========================================================================
 -- END OF SCHEMA
 -- ===========================================================================

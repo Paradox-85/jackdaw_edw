@@ -101,14 +101,14 @@ def _load_templates(engine: Engine) -> list[dict[str, Any]]:
     """Fetch all active templates from audit_core.crs_comment_template.
 
     Returns list of dicts with keys: id, template_text, template_hash,
-    category, check_type, confidence.
+    category, check_type, short_template_text.
     """
     sql = text("""
         SELECT id, template_text, template_hash,
-               category, check_type, confidence
+               category_code AS category, check_type, short_template_text
         FROM audit_core.crs_comment_template
         WHERE object_status = 'Active'
-        ORDER BY usage_count DESC
+        ORDER BY last_used_at DESC NULLS LAST
     """)
     with engine.connect() as conn:
         rows = conn.execute(sql).fetchall()

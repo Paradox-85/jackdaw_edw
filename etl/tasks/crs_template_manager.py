@@ -161,7 +161,7 @@ def update_template_db(
         params_list.append({
             "template_text": norm,
             "template_hash": _hash(norm),
-            "category":      result["llm_category"],
+            "category":      result["llm_category"],  # bind param :category → column suggested_category
             "check_type":    result.get("check_type"),
             "confidence":    float(result.get("llm_category_confidence", 0.85)),
             "llm_response":  result.get("llm_response"),
