@@ -51,148 +51,57 @@ from sqlalchemy.engine import Engine
 _LLM_BATCH_SIZE = 32
 
 # Categories the LLM is allowed to return (validated on parse).
-# CRS-C001..C050 = canonical categories; CRS-C051..C229 = granular sub-categories
-# (assigned by migration_022_crs_template_harmonisation.sql — one code per row).
-_VALID_CATEGORIES: frozenset[str] = frozenset(f"CRS-C{i:03d}" for i in range(1, 230))
+# GEN-001..GEN-038 = current scheme (migration_022+ renamed CRS-Cxxx → GEN-xxx).
+# CRS-C001..C229 retained for backward compat (old results in DB, legacy prompts).
+# GEN-009/013/016 don't exist in DB but are harmless to include — LLM won't return them.
+_VALID_CATEGORIES: frozenset[str] = (
+    frozenset(f"CRS-C{i:03d}" for i in range(1, 230))
+    | frozenset(f"GEN-{i:03d}" for i in range(1, 39))
+    | {"OTHER"}
+)
 
 # Fallback category dict — used when DB has no active templates (migration not applied,
 # empty table, or DB unreachable). Ensures LLM always receives a non-empty category list.
-# Source: audit_core.crs_comment_template WHERE object_status='Active', synced 2026-04-03.
-# C051..C054 absent (no Active rows in DB). C133..C229 not yet Active — omitted.
+# Source: audit_core.crs_comment_template WHERE object_status='Active', synced 2026-04-28.
+# GEN-009, GEN-013, GEN-016 absent (no Active rows). 35 entries total.
 # Re-sync: SELECT category_code, short_template_text FROM audit_core.crs_comment_template
 #   WHERE object_status='Active' ORDER BY category_code;
 _FALLBACK_CATEGORIES: dict[str, str] = {
-    # --- CRS-C001..C050: canonical categories ---
-    "CRS-C001": "missing required fields",
-    "CRS-C002": "tag description missing",
-    "CRS-C003": "description too long",
-    "CRS-C004": "tag class not in RDL",
-    "CRS-C005": "tag naming convention violated",
-    "CRS-C006": "area code blank",
-    "CRS-C007": "area code invalid",
-    "CRS-C008": "process unit code missing",
-    "CRS-C009": "process unit not in register",
-    "CRS-C010": "parent tag missing for physical tag",
-    "CRS-C011": "parent tag not in MTR",
-    "CRS-C012": "pipe-to-pipe parent reference",
-    "CRS-C013": "safety critical item blank or invalid",
-    "CRS-C014": "safety critical reason missing",
-    "CRS-C015": "production critical item blank",
-    "CRS-C016": "duplicate tags",
-    "CRS-C017": "property tag not in MTR",
-    "CRS-C018": "UOM present when value is NA",
-    "CRS-C019": "property value is zero",
-    "CRS-C020": "property not in class scope",
-    "CRS-C021": "tag has no properties",
-    "CRS-C022": "mandatory property missing",
-    "CRS-C023": "equipment class not in RDL",
-    "CRS-C024": "equipment description blank",
-    "CRS-C025": "manufacturer serial number blank",
-    "CRS-C026": "model part name blank",
-    "CRS-C027": "manufacturer company blank",
-    "CRS-C028": "equipment tag not in MTR",
-    "CRS-C029": "plant code invalid",
-    "CRS-C030": "document missing or NYI/CAN status",
-    "CRS-C031": "tag has no document reference",
-    "CRS-C032": "document in mapping not in DocMaster",
-    "CRS-C033": "tag in mapping not in MTR",
-    "CRS-C034": "document area code missing",
-    "CRS-C035": "document process unit missing",
-    "CRS-C036": "PO code not in register",
-    "CRS-C037": "PO date missing",
-    "CRS-C038": "company name missing or invalid",
-    "CRS-C039": "duplicate physical connections",
-    "CRS-C040": "equipment has no document mapping",
-    "CRS-C041": "EX class or IP grade missing",
-    "CRS-C042": "MC package code missing",
-    "CRS-C043": "heat tracing type missing",
-    "CRS-C044": "insulation type missing",
-    "CRS-C045": "from-tag or to-tag not in MTR",
-    "CRS-C046": "tag linked to inactive document",
-    "CRS-C047": "revision status inconsistent",
-    "CRS-C048": "property UOM not in RDL",
-    "CRS-C049": "tag status inconsistent with class",
-    "CRS-C050": "circular parent hierarchy",
-    # C051..C054: no Active rows in DB — intentionally omitted
-    # --- CRS-C055..C132: granular sub-categories (migration_022) ---
-    "CRS-C055": "Missing mandatory area data",
-    "CRS-C056": "Tags mapped to incorrect area level",
-    "CRS-C057": "Combined document file submitted",
-    "CRS-C058": "Company name not in company register for PO",
-    "CRS-C059": "Doc-area document not in DocMaster",
-    "CRS-C060": "Doc-area reference missing area code",
-    "CRS-C061": "Doc-equipment document not in DocMaster",
-    "CRS-C062": "Doc-equipment equipment not in register",
-    "CRS-C063": "Doc-equipment references model parts",
-    "CRS-C064": "Doc numbers not matching DMS",
-    "CRS-C065": "Doc-plant document not in DocMaster",
-    "CRS-C066": "Doc-PO code not in PO register",
-    "CRS-C067": "Doc-PO document not in DocMaster",
-    "CRS-C068": "Doc-PU document not in DocMaster",
-    "CRS-C069": "Doc-PU plant code not in register",
-    "CRS-C070": "Doc-PU process unit not in register",
-    "CRS-C071": "Doc-PU reference missing process unit code",
-    "CRS-C072": "Doc revision mismatch with DMS",
-    "CRS-C073": "Doc-site document not in DocMaster",
-    "CRS-C074": "Doc-tag document not in DocMaster",
-    "CRS-C075": "Doc-tag references tag not in MTR",
-    "CRS-C076": "Doc title mismatch with DMS",
-    "CRS-C077": "Document not in DMS or NYI",
-    "CRS-C078": "Documents not in DMS or in NYI status",
-    "CRS-C079": "Duplicate document records",
-    "CRS-C080": "Equipment without document reference",
-    "CRS-C081": "Layout drawing reference missing",
-    "CRS-C082": "Loop diagram reference missing",
-    "CRS-C083": "Outdated document template used",
-    "CRS-C084": "PID schematic reference missing",
-    "CRS-C085": "Site code format incorrect",
-    "CRS-C086": "Tags without document references",
-    "CRS-C087": "Void PO code in doc-PO reference",
-    "CRS-C088": "Void tags have doc references",
-    "CRS-C089": "Wrong CIS submission template used",
-    "CRS-C090": "Wrong CSV template for doc-PU register",
-    "CRS-C091": "Equipment class blank",
-    "CRS-C092": "Equipment class not in ISM",
-    "CRS-C093": "Equipment class vs description mismatch",
-    "CRS-C094": "Equipment description duplicated",
-    "CRS-C095": "Equipment description ends with dash",
-    "CRS-C096": "Equipment description missing",
-    "CRS-C097": "Equipment description spelling error",
-    "CRS-C098": "Equipment description starts with dash",
-    "CRS-C099": "Equipment description too short",
-    "CRS-C100": "Equipment has no document references",
-    "CRS-C101": "Equipment is own parent tag",
-    "CRS-C102": "Equipment not matched with doc reference",
-    "CRS-C104": "Equipment parent tag derivable from description",
-    "CRS-C105": "Equipment plant code not in register",
-    "CRS-C106": "Equipment tag not in MTR",
-    "CRS-C107": "Equipment TNC non-compliance",
-    "CRS-C108": "General equipment data missing",
-    "CRS-C109": "Mandatory equipment fields blank",
-    "CRS-C110": "Manufacturer serial number blank",
-    "CRS-C111": "Manufacturer serial number is NA",
-    "CRS-C112": "Manufacturing company not populated",
-    "CRS-C113": "Model part name missing",
-    "CRS-C114": "Tag register changes not in equipment register",
-    "CRS-C115": "Duplicate equipment property entries",
-    "CRS-C116": "Equipment class-property mapping mismatch",
-    "CRS-C117": "Equipment has no properties",
-    "CRS-C118": "Equipment in property register not in equip register",
-    "CRS-C119": "Equipment property orphan record",
-    "CRS-C120": "Equipment property register has tag numbers",
-    "CRS-C121": "Equipment property value blank",
-    "CRS-C122": "Equipment property value is zero",
-    "CRS-C123": "Required ISM equipment properties not submitted",
-    "CRS-C124": "UOM populated when property value is NA for equipment",
-    "CRS-C125": "Wrong header in equipment property register",
-    "CRS-C126": "Model part description not defined",
-    "CRS-C127": "Model part not in model part register",
-    "CRS-C128": "Model part number invalid characters",
-    "CRS-C129": "Multiple process unit codes for same system",
-    "CRS-C130": "Process unit description blank",
-    "CRS-C131": "Process unit formatting inconsistent",
-    "CRS-C132": "Process unit hierarchy inconsistent",
-    # C133..C229: not yet Active in DB — omitted
+    "GEN-001": "ATTR_VALUE_BLANK",
+    "GEN-002": "ATTR_VALUE_PLACEHOLDER",
+    "GEN-003": "REF_NOT_SUBMITTED",
+    "GEN-004": "REF_FORMAT_INVALID",
+    "GEN-005": "REF_NOT_RESOLVED",
+    "GEN-006": "DUPLICATE_RECORD",
+    "GEN-007": "ATTR_MULTI_VALUE",
+    "GEN-008": "ATTR_TEXT_FORMAT_ERROR",
+    "GEN-010": "ATTR_TEXT_TOO_SHORT",
+    "GEN-011": "ATTR_TEXT_TOO_LONG",
+    "GEN-012": "ATTR_VALUE_PATTERN_FAIL",
+    "GEN-014": "REF_STATUS_INVALID",
+    "GEN-015": "UOM_ERROR",
+    "GEN-017": "CLASS_NOT_IN_ISM",
+    "GEN-018": "CLASS_IS_ABSTRACT",
+    "GEN-019": "CLASS_DESC_MISMATCH",
+    "GEN-020": "TNC_VIOLATION",
+    "GEN-021": "TNC_PREFIX_MISMATCH",
+    "GEN-022": "HIERARCHY_CIRCULAR",
+    "GEN-023": "HIERARCHY_SELF_REF",
+    "GEN-024": "HIERARCHY_PARENT_CLASS_INVALID",
+    "GEN-025": "SCI_VALUE_INVALID",
+    "GEN-026": "SCI_REASON_MISSING",
+    "GEN-027": "SECE_MAPPING_MISSING",
+    "GEN-028": "SECE_MULTIPLE_GROUPS",
+    "GEN-029": "PROPERTY_CLASS_MISMATCH",
+    "GEN-030": "CONNECTION_SELF_LOOP",
+    "GEN-031": "PCI_VALUE_INVALID",
+    "GEN-032": "REGISTER_INCOMPLETE",
+    "GEN-033": "TEMPLATE_STRUCTURE_INVALID",
+    "GEN-034": "DESC_QUALITY_LOW",
+    "GEN-035": "ADVISORY_DEFERRED",
+    "GEN-036": "DOC_LINK_MISSING",
+    "GEN-037": "PROPERTY_ROWS_MISSING",
+    "GEN-038": "PROPERTY_CODE_MISMATCH",
 }
 
 # ---------------------------------------------------------------------------
@@ -351,31 +260,22 @@ def _load_crs_templates(engine: Engine) -> list[dict[str, Any]]:
 
 def _build_categories_line(
     templates: list[dict[str, Any]],
-    domain: str | None = None,
+    domain: str | None = None,   # kept for API compatibility — GEN-xxx is domain-agnostic
     max_chars: int = 10000,
 ) -> str:
     """Build compact category hints string for LLM prompt injection.
 
-    Filters templates by check_type substring match against domain.
-    Falls back to all templates if filtered list is empty or domain is None.
+    GEN-xxx categories are domain-agnostic (each covers all object types).
+    domain parameter is kept for API compatibility but is not used.
 
-    Format per entry: "CRS-C001=tag not in register"
+    Format per entry: "GEN-001=ATTR_VALUE_BLANK"
     """
     if not templates:
         return ""
 
-    filtered = templates
-    if domain:
-        filtered = [
-            t for t in templates
-            if t.get("check_type") and domain.lower() in t["check_type"].lower()
-        ]
-        if not filtered:
-            filtered = templates  # fallback to all
-
     parts: list[str] = []
     current_len = 0
-    for t in filtered:
+    for t in templates:
         cat = t.get("category") or "?"
         short = t.get("short_template_text")
         entry = f"{cat}={short[:40]}" if short else f"{cat}={t.get('check_type') or ''}"
@@ -476,11 +376,14 @@ def _build_prompt(
     sheet = comment.get("detail_sheet") or "unknown"
     result_str = json.dumps(sql_result[:3], default=str)
 
-    # Dynamically derive min/max CRS-C### from the categories_line passed in.
-    # Falls back to "see list below" if parsing fails (empty line, no matches).
-    _cat_nums = [int(m) for m in _re.findall(r"CRS-C(\d+)", categories_line)]
-    if _cat_nums:
-        _cat_range = f"CRS-C{min(_cat_nums):03d} through CRS-C{max(_cat_nums):03d}"
+    # Dynamically derive category range from the categories_line passed in.
+    # Prefers GEN-xxx (current scheme); falls back to CRS-Cxxx; then "see list below".
+    _cat_nums_gen = [int(m) for m in _re.findall(r"GEN-(\d+)", categories_line)]
+    _cat_nums_crs = [int(m) for m in _re.findall(r"CRS-C(\d+)", categories_line)]
+    if _cat_nums_gen:
+        _cat_range = f"GEN-{min(_cat_nums_gen):03d} through GEN-{max(_cat_nums_gen):03d}"
+    elif _cat_nums_crs:
+        _cat_range = f"CRS-C{min(_cat_nums_crs):03d} through CRS-C{max(_cat_nums_crs):03d}"
     else:
         _cat_range = "see list below"
 
@@ -503,6 +406,16 @@ def _build_prompt(
         "Match to a category whose description covers invalid or non-matching values. "
         "Example: 'Area code is NA' → category for invalid/non-matching area code. "
         "Apply this distinction to ALL field types, not just specific ones. "
+        "Category quick-reference (current GEN-xxx scheme): "
+        "GEN-001 ATTR_VALUE_BLANK: required field is empty/null/missing. "
+        "GEN-002 ATTR_VALUE_PLACEHOLDER: field contains NA/TBC/NONE/0 placeholder. "
+        "GEN-003 REF_NOT_SUBMITTED: reference field is empty — tag, area, parent not provided. "
+        "GEN-005 REF_NOT_RESOLVED: reference submitted but object not found in master register. "
+        "GEN-010 ATTR_TEXT_TOO_SHORT: text value below minimum length. "
+        "GEN-020 TNC_VIOLATION: tag name violates naming convention. "
+        "GEN-034 DESC_QUALITY_LOW: description exists but too short, vague, or only class name. "
+        "GEN-036 DOC_LINK_MISSING: tag or equipment has no document mapping reference. "
+        "GEN-038 PROPERTY_CODE_MISMATCH: property code does not match class scope. "
         "Domain glossary (mandatory context — use this to interpret abbreviations): "
         "TNC = Tag Naming Convention: official project standard for naming tags and instruments. "
         "ISM = AVEVA ISM (Information Standards Management): software tool used to create and "
@@ -550,9 +463,9 @@ def _build_prompt(
         "Never force a category match when none fits — a confident wrong answer is "
         "worse than an honest low-confidence OTHER. "
         "CRITICAL OVERRIDE: If your confidence value is 0.30 or lower, you MUST set "
-        "category to 'OTHER'. Outputting any specific CRS-Cxxx code with confidence "
+        "category to 'OTHER'. Outputting any specific GEN-xxx code with confidence "
         "<= 0.30 is a logical contradiction and is strictly forbidden. "
-        'Respond ONLY with: {"category":"CRS-C???","confidence":0.0,"response":"one sentence max"}'
+        'Respond ONLY with: {"category":"GEN-???","confidence":0.0,"response":"one sentence max"}'
     )
     user_msg = (
         f"CLASSIFY THIS COMMENT:\n"
@@ -561,7 +474,7 @@ def _build_prompt(
         f"DB check: {result_str}\n\n"
         f"Valid categories: {_cat_range}\n"
         f"({categories_line})\n\n"
-        f'OUTPUT (JSON only): {{"category":"CRS-C???","confidence":0.0,"response":"one sentence max"}}'
+        f'OUTPUT (JSON only): {{"category":"GEN-???","confidence":0.0,"response":"one sentence max"}}'
     )
     return system_msg, user_msg
 
@@ -575,6 +488,7 @@ def _call_llm_batch(
     max_tokens: int = 512,
     logger: Any = None,
     timeout: float = 30.0,
+    valid_categories: frozenset[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Call Ollama LLM for a batch of prompts.
 
@@ -642,7 +556,8 @@ def _call_llm_batch(
                 if _conf_raw <= 0.30 and cat != "OTHER":
                     cat = "OTHER"
                 # UNCLASSIFIED is internal error sentinel — LLM returning it maps to OTHER
-                if cat not in _VALID_CATEGORIES:
+                _vc = valid_categories if valid_categories is not None else _VALID_CATEGORIES
+                if cat not in _vc:
                     cat = "OTHER"
                 resp = (parsed.get("response") or "").strip()
                 if not resp:
@@ -686,6 +601,7 @@ def _call_llm_single_debug(
     temperature: float = 0.1,
     max_tokens: int = 512,
     timeout: float = 30.0,
+    valid_categories: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Single-prompt LLM call returning raw response + token usage for debugging.
 
@@ -749,7 +665,8 @@ def _call_llm_single_debug(
             _conf_raw = float(parsed.get("confidence",0.7))
             if _conf_raw <= 0.30 and cat != "OTHER":
                 cat = "OTHER"
-            if cat not in _VALID_CATEGORIES and cat != "UNCLASSIFIED":
+            _vc = valid_categories if valid_categories is not None else _VALID_CATEGORIES
+            if cat not in _vc and cat != "UNCLASSIFIED":
                 cat = "OTHER"
             resp = (parsed.get("response") or "").strip()
             if not resp:
@@ -864,6 +781,13 @@ def run_tier3_llm(
             {"category": cat, "check_type": None, "short_template_text": desc}
             for cat, desc in _FALLBACK_CATEGORIES.items()
         ]
+    # Build valid_categories from live DB templates; union with module fallback so that
+    # both GEN-xxx (current) and CRS-Cxxx (legacy DB rows) are accepted without error.
+    valid_categories: frozenset[str] = (
+        frozenset(t["category"] for t in crs_templates if t.get("category"))
+        | {"OTHER"}
+        | _VALID_CATEGORIES
+    )
 
     # Group by generalised pattern — classify once per unique template (M << N)
     groups = group_by_generalized(comments)
@@ -955,6 +879,7 @@ def run_tier3_llm(
             temperature=llm_cfg.get("temperature", 0.1),
             max_tokens=int(llm_cfg.get("max_tokens", 512)),
             logger=logger,
+            valid_categories=valid_categories,
         )
 
         # Pass 2: retry OTHER/low-confidence templates with full category list
@@ -980,6 +905,7 @@ def run_tier3_llm(
                     temperature=llm_cfg.get("temperature", 0.1),
                     max_tokens=int(llm_cfg.get("max_tokens", 512)),
                     logger=logger,
+                    valid_categories=valid_categories,
                 )
                 for local_i, out in zip(retry_local, retry_outputs):
                     llm_outputs[local_i] = out

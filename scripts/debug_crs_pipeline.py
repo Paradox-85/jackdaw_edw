@@ -267,6 +267,14 @@ def _run_tier3_debug(
     queries   = _load_validation_queries(engine)
     templates = _load_crs_templates(engine)
 
+    # Build valid_categories from live DB so GEN-xxx responses are accepted (not mapped to OTHER)
+    from etl.tasks.crs_tier3_llm_classifier import _VALID_CATEGORIES as _VC_FALLBACK  # noqa: PLC0415
+    valid_categories: frozenset[str] = (
+        frozenset(t["category"] for t in templates if t.get("category"))
+        | {"OTHER"}
+        | _VC_FALLBACK
+    )
+
     if not templates:
         log.warning("Tier 3: no active templates in DB — LLM category hints will be empty.")
     if not queries:
@@ -328,7 +336,7 @@ def _run_tier3_debug(
         # placeholders that corrupt keyword-based domain matching.
         domain          = _detect_comment_domain(raw_text, detail_sheet=rep.get("detail_sheet") or "")
         categories_line = _build_categories_line(templates, domain=domain)
-        cat_count       = categories_line.count("CRS-C")
+        cat_count       = len([p for p in categories_line.split(",") if p.strip()])
         log.info("  domain:     %s  |  categories_in_prompt=%d", domain, cat_count)
 
         # ── D. Full prompt (categories list truncated in log to avoid flooding) ────
@@ -354,6 +362,7 @@ def _run_tier3_debug(
             temperature=float(llm_cfg.get("temperature", 0.1)),
             max_tokens=int(llm_cfg.get("max_tokens", 512)),
             timeout=timeout_val,
+            valid_categories=valid_categories,
         )
         log.info("  [%d/%d] LLM responded in %.1fs", idx, total, time.monotonic() - _t0)
 
@@ -409,16 +418,6 @@ def _run_tier3_debug(
             assigned_status = "IN_REVIEW"
         else:
             assigned_status = "DEFERRED"
-
-        # CRS-C224: abstract class / no properties in ISM — promote 0.60+ to IN_REVIEW.
-        # 1235 rows were stuck in DEFERRED at conf=0.65; this override rescues them.
-        if _cat == "CRS-C224" and _conf >= 0.60:
-            assigned_status = "IN_REVIEW"
-            log.info(
-                "  Tier 3: CRS-C224 conf=%.2f >= 0.60 → overriding to IN_REVIEW "
-                "(abstract class / no properties in ISM pattern)",
-                _conf,
-            )
 
         matched_template = next(
             (t for t in templates if t.get("category") == _cat), None
