@@ -59,8 +59,8 @@ _VALID_CATEGORIES: frozenset[str] = frozenset(f"CRS-C{i:03d}" for i in range(1, 
 # empty table, or DB unreachable). Ensures LLM always receives a non-empty category list.
 # Source: audit_core.crs_comment_template WHERE object_status='Active', synced 2026-04-03.
 # C051..C054 absent (no Active rows in DB). C133..C229 not yet Active — omitted.
-# Re-sync: SELECT category, short_template_text FROM audit_core.crs_comment_template
-#   WHERE object_status='Active' ORDER BY category;
+# Re-sync: SELECT category_code, short_template_text FROM audit_core.crs_comment_template
+#   WHERE object_status='Active' ORDER BY category_code;
 _FALLBACK_CATEGORIES: dict[str, str] = {
     # --- CRS-C001..C050: canonical categories ---
     "CRS-C001": "missing required fields",
@@ -325,8 +325,7 @@ def extract_parameters(comment_text: str) -> dict[str, str | None]:
 def _load_validation_queries(engine: Engine) -> list[dict[str, Any]]:
     """Load active validation queries from crs_validation_query registry."""
     sql = text("""
-        SELECT query_code,
-               template_category AS category,
+        SELECT query_code, category,
                sql_query, has_parameters, parameter_names
         FROM audit_core.crs_validation_query
         WHERE is_active = true AND object_status = 'Active'
