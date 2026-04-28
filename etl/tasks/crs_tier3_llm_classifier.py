@@ -860,7 +860,10 @@ def run_tier3_llm(
                 batch_prompts,
                 unique_domains[batch_start : batch_start + _LLM_BATCH_SIZE])):
             _sys, _usr = _pp if isinstance(_pp, tuple) else ("", _pp)
-            _cat_count = _usr.count("CRS-C")
+            # Count comma-separated entries between the parentheses in user prompt (GEN-xxx or CRS-Cxxx)
+            import re as _re_inner
+            _cat_match = _re_inner.search(r"\(([^)]{10,})\)", _usr)
+            _cat_count = len([p for p in _cat_match.group(1).split(",") if p.strip()]) if _cat_match else 0
             logger.info(
                 "Tier 3 [#%d/%d] domain=%-10s categories_in_prompt=%d key=%r",
                 batch_start + _pi + 1, len(unique_keys),

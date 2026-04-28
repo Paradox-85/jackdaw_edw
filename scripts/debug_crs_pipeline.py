@@ -206,10 +206,11 @@ def _truncate_categories_for_log(user_msg: str) -> str:
     result_lines = []
     for line in lines:
         stripped = line.lstrip()
-        if stripped.startswith("(CRS-C") or (stripped.startswith("(") and "CRS-C" in stripped):
-            # Parse out individual category entries: "CRS-Cxxx=..."
+        if (stripped.startswith("(CRS-C") or stripped.startswith("(GEN-")
+                or (stripped.startswith("(") and ("CRS-C" in stripped or "GEN-" in stripped))):
+            # Parse out individual category entries: "CRS-Cxxx=..." or "GEN-xxx=..."
             import re as _re
-            entries = _re.findall(r"CRS-C\d+=[^,)]+", line)
+            entries = _re.findall(r"(?:CRS-C|GEN-)\d+=[^,)]+", line)
             count = len(entries)
             if count > 6:
                 head = ", ".join(entries[:3])
