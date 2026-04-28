@@ -1,16 +1,19 @@
 """
-Debug harness for CRS cascade classifier.
+Debug harness for CRS cascade pipeline (Phase 2 classifier + Phase 3 validator).
 
 Loads comments for a revision, deduplicates to unique generalised groups,
 runs classification tier(s), and prints verbose per-group logs.
+Optionally continues into Phase 3 validation debug (--phase3 / --category).
 
 No DB writes. No Prefect. Designed for local debugging.
 
 Usage:
-    python scripts/debug_crs_classifier.py --revision A36 --limit 20 --tier 3 --verbose
-    python scripts/debug_crs_classifier.py --revision A36 --reset --tier all
-    python scripts/debug_crs_classifier.py --revision A36 --limit 2 --tier 3 --verbose
-    python scripts/debug_crs_classifier.py --revision-all --limit 5 --tier 0
+    python scripts/debug_crs_pipeline.py --revision A36 --limit 20 --tier 3 --verbose
+    python scripts/debug_crs_pipeline.py --revision A36 --reset --tier all
+    python scripts/debug_crs_pipeline.py --revision A36 --limit 2 --tier 3 --verbose
+    python scripts/debug_crs_pipeline.py --revision-all --limit 5 --tier 0
+    python scripts/debug_crs_pipeline.py --revision A36 --limit 5 --tier all --phase3 --verbose
+    python scripts/debug_crs_pipeline.py --category CRS-C001
 """
 from __future__ import annotations
 
@@ -45,13 +48,13 @@ if str(_REPO_ROOT) not in sys.path:
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Standalone debug harness for CRS cascade classifier (no Prefect, no DB writes).",
+        description="Standalone debug harness for CRS cascade pipeline (no Prefect, no DB writes).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     parser.add_argument(
         "--revision", required=False, default=None,
-        help="Revision code to process (e.g. A36). Required unless --revision-all is set.",
+        help="Revision code to process (e.g. A36). Required unless --revision-all or --category is set.",
     )
     parser.add_argument(
         "--limit", type=int, default=0,
@@ -81,9 +84,20 @@ def parse_args() -> argparse.Namespace:
             "No DB writes. Overrides --tier (always runs all tiers)."
         ),
     )
+    parser.add_argument(
+        "--phase3", action="store_true",
+        help="After Phase 2 summary, run Phase 3 validation debug for classified comments.",
+    )
+    parser.add_argument(
+        "--category", default=None,
+        help=(
+            "Skip Phase 2; load IN_REVIEW comments with this category_code from DB "
+            "and run Phase 3 debug directly (e.g. CRS-C001)."
+        ),
+    )
     args = parser.parse_args()
-    if not args.revision_all and args.revision is None:
-        parser.error("--revision is required unless --revision-all is set.")
+    if not args.revision_all and args.revision is None and not args.category:
+        parser.error("--revision is required unless --revision-all or --category is set.")
     return args
 
 
@@ -444,11 +458,188 @@ def _run_tier3_debug(
 
 
 # ---------------------------------------------------------------------------
+# Phase 3 validation debug
+# ---------------------------------------------------------------------------
+
+def _run_phase3_debug(
+    engine: Any,
+    comments: list[dict[str, Any]],
+    log: logging.Logger,
+    verbose: bool,
+) -> list[dict[str, Any]]:
+    """Run Phase 3 validation debug for a list of classified comments.
+
+    Args:
+        engine: SQLAlchemy engine (read-only — no writes performed).
+        comments: List of dicts with keys: id, tag_name, category_code,
+                  property_name, document_number, comment.
+                  For Phase 2→3 flow: use summary_rows dicts (category_code normalised).
+                  For --category mode: rows loaded directly from audit_core.crs_comment.
+        log: Logger instance.
+        verbose: If True, prints full SQL and evaluates all comments (not just first 5).
+
+    Returns:
+        List of per-category summary dicts for the Phase 3 table.
+    """
+    import json as _json
+    from etl.tasks.crs_batch_validator import (  # noqa: PLC0415
+        _load_group_queries, _run_group_query, _evaluate_comment,
+    )
+    from etl.tasks.crs_cascade_evaluator import _substitute  # noqa: PLC0415
+
+    queries = _load_group_queries(engine)
+    if not queries:
+        print("[PHASE 3] crs_validation_query is empty — run migration_027 seed first.")
+        return []
+
+    # Group comments by category_code
+    category_map: dict[str, list[dict[str, Any]]] = {}
+    for c in comments:
+        cat = c.get("category_code") or c.get("llm_category")
+        if cat:
+            category_map.setdefault(cat, []).append(c)
+
+    p3_summary: list[dict[str, Any]] = []
+    sep55 = "═" * 55
+
+    for category_code, cat_comments in category_map.items():
+        print(f"\n{sep55}")
+        print(f"PHASE 3 — VALIDATION: {category_code}  ({len(cat_comments)} comments)")
+        print(sep55)
+
+        cat_queries = [q for q in queries if q["template_category"] == category_code]
+        if not cat_queries:
+            print(f"  [PHASE 3] No active validation queries for {category_code} — DEFERRED")
+            p3_summary.append({
+                "category": category_code,
+                "queries":  0,
+                "passed":   0,
+                "failed":   0,
+                "deferred": len(cat_comments),
+                "tags":     len({c.get("tag_name") for c in cat_comments if c.get("tag_name")}),
+            })
+            continue
+
+        tag_names = [c["tag_name"] for c in cat_comments if c.get("tag_name")]
+        passed_total = failed_total = deferred_total = 0
+
+        for query in cat_queries:
+            sql_query      = query["sql_query"]
+            has_parameters = bool(query.get("has_parameters"))
+            query_code     = query.get("query_code", "?")
+            query_name     = query.get("query_name", "")
+            strategy       = query.get("evaluation_strategy")
+
+            print(f"\n  [QUERY {query_code}] {query_name}")
+            print(f"    evaluation_strategy : {strategy}")
+            print(f"    has_parameters      : {has_parameters}")
+            print(f"    tag_names sample    : {tag_names[:3]}  (total: {len(tag_names)})")
+            if verbose:
+                print(f"    SQL:\n{sql_query}")
+
+            try:
+                with engine.connect() as conn:
+                    rows = _run_group_query(conn, sql_query, tag_names, has_parameters)
+            except Exception as exc:
+                log.warning("[PHASE 3] Query %s failed: %s", query_code, exc)
+                rows = []
+
+            print(f"    rows returned: {len(rows)}")
+            preview = _json.dumps(rows[:3], indent=2, default=str)
+            print(f"    first 3 rows :\n{preview}")
+
+            # Evaluate per-comment (cap at 5 unless verbose)
+            eval_limit = len(cat_comments) if verbose else min(5, len(cat_comments))
+            q_passed = q_failed = q_deferred = q_inconclusive = 0
+            last_passed_row: dict[str, Any] | None = None
+            last_passed_template: str | None = None
+
+            for i, comment in enumerate(cat_comments[:eval_limit], start=1):
+                status, result_json = _evaluate_comment(
+                    comment, rows,
+                    strategy,
+                    query.get("expected_result"),
+                    query.get("group_by_field"),
+                )
+                tag = comment.get("tag_name", "?")
+                print(f"    comment {i}: tag={tag} → {status}")
+                if status == "PASSED":
+                    q_passed += 1
+                    last_passed_row = result_json
+                    last_passed_template = query.get("response_template")
+                elif status == "FAILED":
+                    q_failed += 1
+                elif status == "DEFERRED":
+                    q_deferred += 1
+                else:
+                    q_inconclusive += 1
+
+            print(
+                f"    PASSED={q_passed}  FAILED={q_failed}"
+                f"  DEFERRED={q_deferred}  INCONCLUSIVE={q_inconclusive}"
+            )
+            passed_total  += q_passed
+            failed_total  += q_failed
+            deferred_total += q_deferred
+
+            # Formal response preview for first comment with a PASSED result
+            if last_passed_template and cat_comments:
+                rep = cat_comments[0]
+                formal = _substitute(
+                    last_passed_template,
+                    rep,
+                    last_passed_row,
+                    query.get("expected_result"),
+                )
+                print(
+                    f"\n    FORMAL RESPONSE PREVIEW for tag={rep.get('tag_name', '?')}:\n"
+                    f"      {formal or '— (template substitution returned empty)'}"
+                )
+            else:
+                print(
+                    "\n    FORMAL RESPONSE PREVIEW:"
+                    " — (no PASSED validation, response not generated)"
+                )
+
+        p3_summary.append({
+            "category": category_code,
+            "queries":  len(cat_queries),
+            "passed":   passed_total,
+            "failed":   failed_total,
+            "deferred": deferred_total,
+            "tags":     len({c.get("tag_name") for c in cat_comments if c.get("tag_name")}),
+        })
+
+    return p3_summary
+
+
+def _print_phase3_summary(rows: list[dict[str, Any]]) -> None:
+    """Print Phase 3 validation summary table."""
+    sep  = "═" * 55
+    line = "─" * 55
+    hdr  = (
+        f"  {'Category':<12}  {'Queries':>7}  {'PASSED':>6}"
+        f"  {'FAILED':>6}  {'DEFERRED':>8}  {'Tags':>4}"
+    )
+    print(f"\n{sep}")
+    print("PHASE 3 VALIDATION SUMMARY")
+    print(line)
+    print(hdr)
+    print(line)
+    for r in rows:
+        print(
+            f"  {r['category']:<12}  {r['queries']:>7}  {r['passed']:>6}"
+            f"  {r['failed']:>6}  {r['deferred']:>8}  {r['tags']:>4}"
+        )
+    print(f"{sep}\n")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    """Entry point for the CRS debug harness."""
+    """Entry point for the CRS debug pipeline harness."""
     args = parse_args()
     setup_logging(args.verbose)
     log = logging.getLogger("debug_crs")
@@ -468,9 +659,33 @@ def main() -> None:
     from etl.tasks.crs_tier25_benchmark_matcher import run_tier25_benchmark  # noqa: PLC0415
     log.info("ETL modules loaded.")
 
-    log.info("Starting CRS debug classifier with args: %s", args)
+    log.info("Starting CRS debug pipeline with args: %s", args)
 
     engine = get_engine()
+
+    # ── --category mode: skip Phase 2, go straight to Phase 3 ────────────────
+    if args.category and not args.revision and not args.revision_all:
+        from sqlalchemy import text as _text
+        with engine.connect() as conn:
+            db_rows = conn.execute(_text("""
+                SELECT id, tag_name, category_code, property_name,
+                       document_number, comment
+                FROM audit_core.crs_comment
+                WHERE status        = 'IN_REVIEW'
+                  AND category_code = :cat
+                  AND object_status = 'Active'
+            """), {"cat": args.category}).fetchall()
+        p3_comments = [dict(r._mapping) for r in db_rows]
+        log.info(
+            "Phase 3 mode: loaded %d IN_REVIEW comments for %s",
+            len(p3_comments), args.category,
+        )
+        if not p3_comments:
+            log.warning("No IN_REVIEW comments found for category=%s.", args.category)
+            return
+        p3_summary = _run_phase3_debug(engine, p3_comments, log, args.verbose)
+        _print_phase3_summary(p3_summary)
+        return
 
     # ── 1. Optional reset ──────────────────────────────────────────────────────
     if args.reset:
@@ -690,6 +905,20 @@ def main() -> None:
 
     if args.dry_run:
         log.info("DRY-RUN complete. No DB writes performed.")
+
+    # ── 6. Optional Phase 3 validation debug ──────────────────────────────────
+    if args.phase3:
+        # Normalise: summary_rows use "category" key; Phase 3 needs "category_code"
+        p3_comments = [
+            {**r, "category_code": r.get("category_code") or r.get("category")}
+            for r in summary_rows
+            if r.get("status") == "IN_REVIEW"
+        ]
+        if p3_comments:
+            p3_summary = _run_phase3_debug(engine, p3_comments, log, args.verbose)
+            _print_phase3_summary(p3_summary)
+        else:
+            log.info("--phase3: no IN_REVIEW comments in Phase 2 results — nothing to validate.")
 
 
 if __name__ == "__main__":
