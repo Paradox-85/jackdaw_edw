@@ -325,7 +325,9 @@ def extract_parameters(comment_text: str) -> dict[str, str | None]:
 def _load_validation_queries(engine: Engine) -> list[dict[str, Any]]:
     """Load active validation queries from crs_validation_query registry."""
     sql = text("""
-        SELECT query_code, category, sql_query, has_parameters, parameter_names
+        SELECT query_code,
+               template_category AS category,
+               sql_query, has_parameters, parameter_names
         FROM audit_core.crs_validation_query
         WHERE is_active = true AND object_status = 'Active'
         ORDER BY query_code
@@ -338,10 +340,10 @@ def _load_validation_queries(engine: Engine) -> list[dict[str, Any]]:
 def _load_crs_templates(engine: Engine) -> list[dict[str, Any]]:
     """Load active CRS comment templates for category hint building."""
     sql = text("""
-        SELECT category, check_type, short_template_text
+        SELECT category_code AS category, check_type, short_template_text
         FROM audit_core.crs_comment_template
         WHERE object_status = 'Active'
-        ORDER BY category
+        ORDER BY category_code
     """)
     with engine.connect() as conn:
         rows = conn.execute(sql).fetchall()
