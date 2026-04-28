@@ -46,7 +46,8 @@ def _load_group_queries(engine: Engine) -> list[dict[str, Any]]:
             parameter_names,
             sql_query,
             response_template,
-            group_by_field
+            group_by_field,
+            expected_result
         FROM audit_core.v_template_queries
         ORDER BY template_category, query_code
     """)
@@ -313,7 +314,7 @@ def run_batch_validation(
                         comment,
                         all_rows,
                         query.get("evaluation_strategy"),
-                        None,  # expected_result not needed at this level
+                        query.get("expected_result"),
                         query.get("group_by_field"),
                     )
                     evaluated.append({**comment, "_status": status, "_result_json": result_json})

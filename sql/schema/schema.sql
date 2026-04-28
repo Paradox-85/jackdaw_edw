@@ -898,6 +898,8 @@ SELECT
     vq.parameter_names,
     vq.sql_query,
     vq.response_template,
+    vq.group_by_field,
+    vq.expected_result,
     tqm.priority
 FROM "audit_core"."crs_template_query_map" tqm
 JOIN "audit_core"."crs_comment_template"   ct  ON ct.id  = tqm.template_id
@@ -930,7 +932,8 @@ SELECT
     vq.category              AS query_category,
     vq.evaluation_strategy,
     vq.response_template,
-    vq.group_by_field
+    vq.group_by_field,
+    vq.expected_result
 FROM "audit_core"."crs_comment" cc
 LEFT JOIN "audit_core"."crs_comment_validation"  cv ON cv.comment_id = cc.id
 LEFT JOIN "audit_core"."crs_validation_query"     vq ON vq.id         = cv.validation_query_id

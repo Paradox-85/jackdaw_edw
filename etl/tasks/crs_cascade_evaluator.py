@@ -52,7 +52,8 @@ def _load_validation_results(engine: Engine) -> list[dict[str, Any]]:
             query_code,
             evaluation_strategy,
             response_template,
-            group_by_field
+            group_by_field,
+            expected_result
         FROM audit_core.v_crs_resolution_report
         WHERE comment_status   = 'IN_REVIEW'
           AND validation_status IS NOT NULL
@@ -167,7 +168,7 @@ def _evaluate_comment_group(
                 template,
                 comment_detail,
                 passed_rows[0].get("validation_result_json"),
-                None,
+                passed_rows[0].get("expected_result"),
             )
         else:
             formal_response = (
