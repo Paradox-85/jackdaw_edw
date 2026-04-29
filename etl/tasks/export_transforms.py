@@ -492,17 +492,6 @@ def _apply_common_eis_transforms(df: pd.DataFrame) -> pd.DataFrame:
     # Second-level defence: only Active records exported
     df = df[df["OBJECT_STATUS"] == "Active"]
 
-    # Normalise pseudo-null values in FK code fields for correct FK validation
-    _CODE_FIELDS = [
-        "PROCESS_UNIT_CODE", "AREA_CODE", "PLANT_CODE",
-        "TAG_CLASS_NAME", "DESIGNED_BY_COMPANY_NAME",
-    ]
-    for col in _CODE_FIELDS:
-        if col in df.columns:
-            df[col] = df[col].apply(
-                lambda v: "" if isinstance(v, str) and v.strip().upper() in ("NA", "N/A", "N.A.") else v
-            )
-
     # ACTION_STATUS: Void tag_status always maps to Deleted regardless of sync_status
     # Case-insensitive check — DB may store 'Void', 'VOID', or 'void' depending on source
     df["ACTION_STATUS"] = df.apply(
@@ -990,6 +979,9 @@ def transform_model_part(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = df.columns.str.upper()
     df = df.drop(columns=["OBJECT_STATUS"], errors="ignore")
+    # BUG-7: EIS export rule — MODEL_DESCRIPTION must not exceed 255 characters.
+    if "MODEL_DESCRIPTION" in df.columns:
+        df["MODEL_DESCRIPTION"] = df["MODEL_DESCRIPTION"].fillna("").str[:255]
     available = [c for c in _MODEL_PART_COLUMNS if c in df.columns]
     return df[available]
 
@@ -1210,6 +1202,12 @@ def transform_tag_instance_properties(
     if "PROPERTY_VALUE_UOM" in df.columns:
         df["PROPERTY_VALUE_UOM"] = df["PROPERTY_VALUE_UOM"].fillna("").astype(str).str.lower()
 
+    # BUG-6: deduplicate on business key — SQL DISTINCT covers most cases,
+    # but UoM split may produce divergent rows for the same (tag, property) pair.
+    key_cols = [c for c in ["PLANT_CODE", "TAG_NAME", "PROPERTY_NAME"] if c in df.columns]
+    if key_cols:
+        df = df.drop_duplicates(subset=key_cols, keep="last")
+
     available = [c for c in _TAG_INSTANCE_PROP_COLUMNS if c in df.columns]
     return df[available]
 
@@ -1324,8 +1322,14 @@ def transform_tag_connections(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = df.columns.str.upper()
 
-    # Self-loop exclusion moved to SQL level (DISTINCT + from_tag_raw != to_tag_raw)
-    # No Python filtering needed here.
+    # Self-loop exclusion handled at SQL level (DISTINCT + from_tag_raw != to_tag_raw).
+    # BUG-4: second-defence filter — exclude links where FROM/TO tag is VOID or unresolved.
+    # SQL already filters via JOIN; this guard covers any data arriving from other paths.
+    if "FROM_TAG_STATUS" in df.columns:
+        df = df[~df["FROM_TAG_STATUS"].fillna("").str.upper().isin(["VOID", ""])]
+    if "TO_TAG_STATUS" in df.columns:
+        df = df[~df["TO_TAG_STATUS"].fillna("").str.upper().isin(["VOID", ""])]
+    df = df.drop(columns=["FROM_TAG_STATUS", "TO_TAG_STATUS"], errors="ignore")
 
     available = [c for c in _TAG_CONNECTIONS_COLUMNS if c in df.columns]
     return df[available]
@@ -1338,7 +1342,7 @@ def transform_tag_connections(df: pd.DataFrame) -> pd.DataFrame:
 _DOC_TO_SITE_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "SITE_CODE"]
 _DOC_TO_PLANT_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE"]
 _DOC_TO_PROCESS_UNIT_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "PROCESS_UNIT_CODE"]
-_DOC_TO_AREA_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "AREA_CODE"]
+_DOC_TO_AREA_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "AREA_CODE"]
 _DOC_TO_TAG_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "TAG_NAME"]
 _DOC_TO_EQUIPMENT_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "EQUIPMENT_NUMBER"]
 _DOC_TO_MODEL_PART_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "MODEL_PART_CODE"]
@@ -1352,10 +1356,15 @@ _DOC_TO_PO_COLUMNS: list[str] = [
 
 # Shared helper — keeps each transform DRY
 def _transform_doc_crossref(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
-    """Uppercase columns, drop OBJECT_STATUS, reorder to EIS spec."""
+    """Uppercase columns, drop OBJECT_STATUS, filter VOID tags, reorder to EIS spec."""
     df = df.copy()
     df.columns = df.columns.str.upper()
     df = df.drop(columns=["OBJECT_STATUS"], errors="ignore")
+    # BUG-5: second-defence — exclude links to VOID or unresolved tags.
+    # SQL WHERE already filters; this guard covers any residual rows.
+    if "TAG_STATUS" in df.columns:
+        df = df[~df["TAG_STATUS"].fillna("").str.upper().isin(["VOID", ""])]
+        df = df.drop(columns=["TAG_STATUS"], errors="ignore")
     available = [c for c in columns if c in df.columns]
     return df[available]
 

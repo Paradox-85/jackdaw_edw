@@ -43,19 +43,21 @@ Changes: 2026-03-10 — Initial implementation.
          2026-03-24 — ACTION_DATE sourced from audit_core.tag_status_history (last status change).
 */
 SELECT
-    pl.code                                     AS PLANT_CODE,
-    t.tag_name                                  AS TAG_NAME,
-    COALESCE(pt.tag_name, '')                   AS PARENT_TAG_NAME,
-    a.code                                      AS AREA_CODE,
-    u.code                                      AS PROCESS_UNIT_CODE,
-    c.name                                      AS TAG_CLASS_NAME,
-    t.tag_status                                AS TAG_STATUS,
-    COALESCE(art.name, art.code)                AS REQUISITION_CODE,
-    dco.name                                    AS DESIGNED_BY_COMPANY_NAME,
-    COALESCE(ico.name, '')                      AS COMPANY_NAME,
-    COALESCE(po.name, po.code)                  AS PO_CODE,
-    t.production_critical_item                  AS PRODUCTION_CRITICAL_ITEM,
-    t.safety_critical_item                      AS SAFETY_CRITICAL_ITEM,
+    -- BUG-1B: COALESCE(resolved_fk, raw_fallback) — tag must never export blank FK field
+    --         if a raw source value exists. NULLIF strips empty strings before fallback.
+    COALESCE(pl.code,  NULLIF(TRIM(t.plant_raw), ''))                       AS PLANT_CODE,
+    t.tag_name                                                               AS TAG_NAME,
+    COALESCE(pt.tag_name, NULLIF(TRIM(t.parent_tag_raw), ''), '')           AS PARENT_TAG_NAME,
+    COALESCE(a.code,   NULLIF(TRIM(t.area_code_raw), ''))                   AS AREA_CODE,
+    COALESCE(u.code,   NULLIF(TRIM(t.process_unit_raw), ''))                AS PROCESS_UNIT_CODE,
+    COALESCE(c.name,   NULLIF(TRIM(t.tag_class_raw), ''))                   AS TAG_CLASS_NAME,
+    t.tag_status                                                             AS TAG_STATUS,
+    COALESCE(art.name, art.code, NULLIF(TRIM(t.article_code_raw), ''))      AS REQUISITION_CODE,
+    COALESCE(dco.name, NULLIF(TRIM(t.design_company_name_raw), ''))         AS DESIGNED_BY_COMPANY_NAME,
+    COALESCE(ico.name, NULLIF(TRIM(t.company_raw), ''), '')                 AS COMPANY_NAME,
+    COALESCE(po.name,  po.code, NULLIF(TRIM(t.po_code_raw), ''))            AS PO_CODE,
+    t.production_critical_item                                               AS PRODUCTION_CRITICAL_ITEM,
+    t.safety_critical_item                                                   AS SAFETY_CRITICAL_ITEM,
     -- Why correlated subquery: one tag may have multiple active SECE mappings
     (
         SELECT STRING_AGG(s.code, ' ' ORDER BY s.code)
@@ -63,9 +65,9 @@ SELECT
         JOIN reference_core.sece s ON s.id = ts2.sece_id
         WHERE ts2.tag_id = t.id
           AND ts2.mapping_status = 'Active'
-    )                                           AS SAFETY_CRITICAL_ITEM_GROUP,
-    t.safety_critical_item_reason_awarded       AS SAFETY_CRITICAL_ITEM_REASON_AWARDED,
-    t.description                               AS TAG_DESCRIPTION,
+    )                                                                        AS SAFETY_CRITICAL_ITEM_GROUP,
+    t.safety_critical_item_reason_awarded                                    AS SAFETY_CRITICAL_ITEM_REASON_AWARDED,
+    t.description                                                            AS TAG_DESCRIPTION,
     -- ACTION_DATE: date of last status change from audit history
     -- Why correlated subquery: same pattern as SAFETY_CRITICAL_ITEM_GROUP above.
     -- NULL possible if tag has no history yet — handled in transform.
@@ -84,6 +86,7 @@ SELECT
     t.article_code_raw                          AS article_code_raw,
     t.parent_tag_raw                            AS parent_tag_raw,
     t.discipline_code_raw                       AS discipline_code_raw,
+    t.company_raw                               AS company_raw,
     t.sync_status,
     t.sync_timestamp,
     t.object_status

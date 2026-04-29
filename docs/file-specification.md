@@ -505,6 +505,7 @@ WHERE `pv.object_status = 'Active'`
 | Column | Source | Notes |
 |---|---|---|
 | `DOCUMENT_NUMBER` | `document.doc_number` | |
+| `PLANT_CODE` | `plant.code` via `tag.plant_id` | LEFT JOIN; empty if unresolved; DISTINCT |
 | `AREA_CODE` | `area.code` via `tag.area_id` | LEFT JOIN; empty if FK NULL; DISTINCT |
 
 ---

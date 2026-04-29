@@ -158,9 +158,11 @@ Gate:    document: object_status='Active', mdr_flag=TRUE, status NOT NULL/CAN.
          DISTINCT: remove duplicate (doc, area) pairs from multi-tag joins.
 Source:  mapping.tag_document → tag.area_id → area.
 Changes: 2026-03-17 — Initial implementation.
+         2026-04-29 — BUG-8: add PLANT_CODE via tag.plant_id → plant.
 */
 SELECT DISTINCT
     d.doc_number                            AS DOCUMENT_NUMBER,
+    COALESCE(pl.code, '')                   AS PLANT_CODE,
     COALESCE(a.code, '')                    AS AREA_CODE,
     d.object_status
 FROM mapping.tag_document m
@@ -168,6 +170,8 @@ INNER JOIN project_core.document  d  ON m.document_id = d.id
 INNER JOIN project_core.tag       t  ON m.tag_id      = t.id
 LEFT  JOIN reference_core.area    a  ON t.area_id     = a.id
                AND a.object_status = 'Active'
+LEFT  JOIN reference_core.plant   pl ON t.plant_id    = pl.id
+               AND pl.object_status = 'Active'
 WHERE m.mapping_status = 'Active'
   AND d.object_status = 'Active'
   AND d.mdr_flag = TRUE

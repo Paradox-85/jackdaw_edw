@@ -37,30 +37,38 @@ _TAG_CONNECTIONS_SQL = """
 /*
 Purpose: Tag physical connections export for EIS snapshot (seq 212).
 Gate:    t.object_status = 'Active' AND tag_status not VOID/Future/empty
-         AND at least one connection field (from_tag_raw / to_tag_raw) is non-empty.
+         AND BOTH from_tag_raw / to_tag_raw resolve to real non-VOID tags.
 Note:    from_tag_raw / to_tag_raw exported verbatim — no FK resolution.
          Values may contain open-end labels, zone comments, or free text from source.
 Changes: 2026-03-16 — Initial implementation.
          2026-04-09 — Add DISTINCT + self-loop exclusion guard.
-         2026-04-09 - ORDER BY removed: incompatible with SELECT DISTINCT (t.tag_name not in select list)
+         2026-04-09 — ORDER BY removed: incompatible with SELECT DISTINCT.
+         2026-04-29 — BUG-4: validate FROM/TO resolve to real non-VOID tags.
 */
 SELECT DISTINCT
-    p.code          AS plant_code,
-    t.from_tag_raw  AS from_tag_name,
-    t.to_tag_raw    AS to_tag_name
+    p.code              AS plant_code,
+    t.from_tag_raw      AS from_tag_name,
+    t.to_tag_raw        AS to_tag_name,
+    t_from.tag_status   AS from_tag_status,
+    t_to.tag_status     AS to_tag_status
 FROM project_core.tag t
 -- Why LEFT JOIN: tag must not disappear if plant FK is missing
-LEFT JOIN reference_core.plant p ON t.plant_id = p.id
+LEFT JOIN reference_core.plant  p      ON t.plant_id       = p.id
+-- Validate that FROM/TO raw values resolve to real tags in the register
+LEFT JOIN project_core.tag      t_from ON t_from.tag_name  = t.from_tag_raw
+LEFT JOIN project_core.tag      t_to   ON t_to.tag_name    = t.to_tag_raw
 WHERE t.object_status = 'Active'
   AND t.tag_status NOT IN ('VOID', 'Future')
   AND t.tag_status IS NOT NULL
   AND t.tag_status != ''
-  AND (
-       (t.from_tag_raw IS NOT NULL AND t.from_tag_raw != '')
-    OR (t.to_tag_raw  IS NOT NULL AND t.to_tag_raw  != '')
-  )
-  AND (t.from_tag_raw IS NULL OR t.to_tag_raw IS NULL
-       OR t.from_tag_raw != t.to_tag_raw)  -- exclude self-loop at SQL level
+  AND t.from_tag_raw IS NOT NULL AND t.from_tag_raw != ''
+  AND t.to_tag_raw   IS NOT NULL AND t.to_tag_raw   != ''
+  AND t.from_tag_raw != t.to_tag_raw  -- exclude self-loop at SQL level
+  -- BUG-4: both endpoints must resolve to existing non-VOID tags
+  AND t_from.id IS NOT NULL
+  AND t_to.id   IS NOT NULL
+  AND UPPER(COALESCE(t_from.tag_status, '')) NOT IN ('VOID', '')
+  AND UPPER(COALESCE(t_to.tag_status,   '')) NOT IN ('VOID', '')
 """
 
 _FILE_TEMPLATE = "JDAW-KVE-E-JA-6944-00001-006-{revision}.CSV"

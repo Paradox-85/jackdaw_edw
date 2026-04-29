@@ -51,7 +51,9 @@ Note:    ILIKE '%...%' used because mapping_concept may be composite,
 Changes: 2026-03-13 — Initial implementation.
          2026-04-09 — Added uom_alias join for symbol_ascii resolution.
 */
-SELECT
+-- BUG-6: DISTINCT eliminates duplicate rows that arise when a property_value
+-- row is linked to multiple class_property entries with Functional mapping_concept.
+SELECT DISTINCT
     pl.code                         AS PLANT_CODE,
     t.tag_name                      AS TAG_NAME,
     p.name                          AS PROPERTY_NAME,
