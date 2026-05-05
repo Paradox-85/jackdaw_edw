@@ -77,10 +77,25 @@ EQUIP_NUMBER_PREFIX = "Equip_"
 # Gap severity thresholds
 WARN_GAP_PCT = 10.0
 
+# RDL filter columns
+COL_ENTITY_MSG   = "Entity Message"
+COL_RAM_CATEGORY = "RAM Property Category"
+
 
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
+
+@dataclass
+class DbState:
+    unavailable: bool = False
+    error_msg: str = ""
+    total_rows: int = 0
+    unique_tags: int = 0
+    unique_properties: int = 0
+    top_properties: List[Tuple[str, int]] = field(default_factory=list)
+    by_concept: List[Tuple[str, int]] = field(default_factory=list)
+
 
 @dataclass
 class PropertyGap:
@@ -107,6 +122,17 @@ class AuditSummary:
     tag_gaps: List[PropertyGap] = field(default_factory=list)
     equip_gaps: List[PropertyGap] = field(default_factory=list)
 
+    # Wrong-file gaps (property in the wrong CSV)
+    wrong_file_010: List[PropertyGap] = field(default_factory=list)  # Physical-only in 010
+    wrong_file_011: List[PropertyGap] = field(default_factory=list)  # Functional-only in 011
+
+    # Extra gaps (property in CSV but not in RDL at all)
+    extra_in_010: List[PropertyGap] = field(default_factory=list)
+    extra_in_011: List[PropertyGap] = field(default_factory=list)
+
+    # RDL filter stats
+    rdl_row_count_pre_filter: int = 0
+
     # Structural checks
     duplicates_010: int = 0
     duplicates_011: int = 0
@@ -123,10 +149,16 @@ class AuditSummary:
 # ---------------------------------------------------------------------------
 
 def _load_rdl(path: Path) -> pd.DataFrame:
-    """Load TagProperties-rdl.xlsx, normalize column names."""
+    """Load TagProperties-rdl.xlsx, normalize column names, apply validity filters."""
     df = pd.read_excel(path, dtype=str)
     df = df.fillna("")
     df.columns = df.columns.str.strip()
+    # Keep only valid rows: Entity Message must start with "Error 0"
+    if COL_ENTITY_MSG in df.columns:
+        df = df[df[COL_ENTITY_MSG].str.startswith("Error 0")]
+    # Exclude TAG and NF rows — these are tag-level fields, not property exports
+    if COL_RAM_CATEGORY in df.columns:
+        df = df[~df[COL_RAM_CATEGORY].str.strip().isin({"TAG", "NF"})]
     return df
 
 
@@ -192,6 +224,21 @@ def _build_export_lookup_011(
                _norm_value(row.get("PROPERTY_VALUE_UOM", "")))
         lookup.setdefault(key, []).append(val)
     return lookup
+
+
+def _build_rdl_index(rdl: pd.DataFrame) -> Dict[Tuple[str, str], str]:
+    """Build lookup: (TAG_NAME_upper, PROP_NAME_upper) → concept.
+
+    Used for O(1) wrong-file and extra-in-csv detection.
+    """
+    index: Dict[Tuple[str, str], str] = {}
+    for _, row in rdl.iterrows():
+        tag  = _norm_prop_name(row.get(COL_TAG_NAME, ""))
+        prop = _norm_prop_name(row.get(COL_RDL_PROP_NAME, ""))
+        concept = row.get(COL_RDL_CONCEPT, "").strip()
+        if tag and prop:
+            index[(tag, prop)] = concept
+    return index
 
 
 def _detect_gaps(
@@ -401,6 +448,123 @@ def _check_structural(
     )
 
 
+def _detect_wrong_and_extra(
+    df010: pd.DataFrame,
+    df011: pd.DataFrame,
+    rdl_index: Dict[Tuple[str, str], str],
+    summary: AuditSummary,
+) -> None:
+    """Detect properties in wrong CSV file or absent from RDL entirely."""
+    # --- File 010: iterate all rows ---
+    for _, row in df010.iterrows():
+        tag  = _norm_prop_name(row.get("TAG_NAME", ""))
+        prop = _norm_prop_name(row.get("PROPERTY_NAME", ""))
+        if not tag or not prop:
+            continue
+        concept = rdl_index.get((tag, prop))
+        if concept is None:
+            summary.extra_in_010.append(PropertyGap(
+                gap_type="TAG-EXTRA",
+                tag_name=row.get("TAG_NAME", ""),
+                property_name=row.get("PROPERTY_NAME", ""),
+                concept="",
+                rdl_value="",
+                rdl_uom="",
+                export_value=row.get("PROPERTY_VALUE", ""),
+                export_uom=row.get("PROPERTY_VALUE_UOM", ""),
+                issue="EXTRA",
+            ))
+        elif concept == "Physical":
+            summary.wrong_file_010.append(PropertyGap(
+                gap_type="TAG-WRONG",
+                tag_name=row.get("TAG_NAME", ""),
+                property_name=row.get("PROPERTY_NAME", ""),
+                concept=concept,
+                rdl_value="",
+                rdl_uom="",
+                export_value=row.get("PROPERTY_VALUE", ""),
+                export_uom=row.get("PROPERTY_VALUE_UOM", ""),
+                issue="WRONG_FILE",
+            ))
+
+    # --- File 011: iterate all rows (strip "Equip_" prefix for tag lookup) ---
+    for _, row in df011.iterrows():
+        equip = row.get("EQUIPMENT_NUMBER", "")
+        tag_raw = equip[len(EQUIP_NUMBER_PREFIX):] if equip.startswith(EQUIP_NUMBER_PREFIX) else equip
+        tag  = _norm_prop_name(tag_raw)
+        prop = _norm_prop_name(row.get("PROPERTY_NAME", ""))
+        if not tag or not prop:
+            continue
+        concept = rdl_index.get((tag, prop))
+        if concept is None:
+            summary.extra_in_011.append(PropertyGap(
+                gap_type="EQUIP-EXTRA",
+                tag_name=tag_raw,
+                property_name=row.get("PROPERTY_NAME", ""),
+                concept="",
+                rdl_value="",
+                rdl_uom="",
+                export_value=row.get("PROPERTY_VALUE", ""),
+                export_uom=row.get("PROPERTY_VALUE_UOM", ""),
+                issue="EXTRA",
+            ))
+        elif concept == "Functional":
+            summary.wrong_file_011.append(PropertyGap(
+                gap_type="EQUIP-WRONG",
+                tag_name=tag_raw,
+                property_name=row.get("PROPERTY_NAME", ""),
+                concept=concept,
+                rdl_value="",
+                rdl_uom="",
+                export_value=row.get("PROPERTY_VALUE", ""),
+                export_uom=row.get("PROPERTY_VALUE_UOM", ""),
+                issue="WRONG_FILE",
+            ))
+
+
+def _query_db_state() -> DbState:
+    """Query live engineering_core DB for property_value coverage stats."""
+    try:
+        import os
+
+        import yaml
+        from sqlalchemy import create_engine, text
+
+        url = os.getenv("DATABASE_URL")
+        if not url:
+            cfg_path = Path(__file__).parent.parent / "config" / "db_config.yaml"
+            with open(cfg_path) as f:
+                cfg = yaml.safe_load(f)
+            url = cfg["database_url"]
+
+        engine = create_engine(url, connect_args={"connect_timeout": 5})
+        with engine.connect() as conn:
+            row = conn.execute(text(
+                "SELECT COUNT(*) AS total, COUNT(DISTINCT tag_id) AS unique_tags, "
+                "COUNT(DISTINCT property_id) AS unique_properties "
+                "FROM project_core.property_value WHERE object_status = 'Active'"
+            )).fetchone()
+            top = conn.execute(text(
+                "SELECT property_code_raw, COUNT(*) AS cnt "
+                "FROM project_core.property_value WHERE object_status = 'Active' "
+                "GROUP BY property_code_raw ORDER BY cnt DESC LIMIT 10"
+            )).fetchall()
+            concept_rows = conn.execute(text(
+                "SELECT mapping_concept_raw, COUNT(*) AS cnt "
+                "FROM project_core.property_value WHERE object_status = 'Active' "
+                "GROUP BY mapping_concept_raw ORDER BY cnt DESC"
+            )).fetchall()
+        return DbState(
+            total_rows=row.total,
+            unique_tags=row.unique_tags,
+            unique_properties=row.unique_properties,
+            top_properties=[(r.property_code_raw, r.cnt) for r in top],
+            by_concept=[(r.mapping_concept_raw, r.cnt) for r in concept_rows],
+        )
+    except Exception as exc:  # noqa: BLE001
+        return DbState(unavailable=True, error_msg=str(exc))
+
+
 # ---------------------------------------------------------------------------
 # Markdown rendering
 # ---------------------------------------------------------------------------
@@ -422,6 +586,10 @@ def _issue_icon(issue: str) -> str:
         return "📐"
     if "NA_EXPORTED_BLANK" in issue:
         return "🔕"
+    if "WRONG_FILE" in issue:
+        return "🔀"
+    if "EXTRA" in issue:
+        return "➕"
     return "ℹ️"
 
 
@@ -450,6 +618,7 @@ def render_report(
     rdl_path: Path,
     file010_path: Path,
     file011_path: Path,
+    db_state: Optional[DbState] = None,
 ) -> str:
     lines: List[str] = []
 
@@ -462,7 +631,41 @@ def render_report(
     lines.append("---")
     lines.append("")
 
-    total_gaps = len(summary.tag_gaps) + len(summary.equip_gaps)
+    # DB State section
+    lines.append("## DB State (engineering_core — live query)")
+    lines.append("")
+    if db_state is None or db_state.unavailable:
+        msg = db_state.error_msg if db_state else "not queried"
+        lines.append(f"> ⚠️ DB query unavailable: `{msg}`")
+    else:
+        lines.append("| Metric | Value |")
+        lines.append("|--------|------:|")
+        lines.append(f"| Total property_value rows (Active) | {db_state.total_rows:,} |")
+        lines.append(f"| Unique tags with properties | {db_state.unique_tags:,} |")
+        lines.append(f"| Unique distinct properties | {db_state.unique_properties:,} |")
+        lines.append("")
+        if db_state.by_concept:
+            lines.append("**Rows by mapping_concept_raw:**")
+            lines.append("")
+            lines.append("| Concept | Count |")
+            lines.append("|---------|------:|")
+            for concept, cnt in db_state.by_concept:
+                lines.append(f"| `{_escape(concept)}` | {cnt:,} |")
+            lines.append("")
+        if db_state.top_properties:
+            lines.append("**Top 10 properties by row count:**")
+            lines.append("")
+            lines.append("| Property Code | Count |")
+            lines.append("|---------------|------:|")
+            for code, cnt in db_state.top_properties:
+                lines.append(f"| `{_escape(code)}` | {cnt:,} |")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    total_gaps = (len(summary.tag_gaps) + len(summary.equip_gaps)
+                  + len(summary.wrong_file_010) + len(summary.wrong_file_011)
+                  + len(summary.extra_in_010)   + len(summary.extra_in_011))
     missing_tag    = sum(1 for g in summary.tag_gaps   if g.issue == "MISSING")
     missing_equip  = sum(1 for g in summary.equip_gaps if g.issue == "MISSING")
     dup_tag        = sum(1 for g in summary.tag_gaps   if "DUPLICATE" in g.issue)
@@ -474,6 +677,8 @@ def render_report(
     lines.append("")
     lines.append("| Metric | File 010 (Tag) | File 011 (Equip) |")
     lines.append("|--------|---------------:|----------------:|")
+    if summary.rdl_row_count_pre_filter:
+        lines.append(f"| RDL rows before filter | {summary.rdl_row_count_pre_filter:,} | — |")
     lines.append(f"| RDL properties expected | {summary.total_rdl_tag_props:,} | {summary.total_rdl_equip_props:,} |")
     lines.append(f"| Tags found in export | {summary.tags_in_010:,} | {summary.tags_in_011_as_equip:,} |")
     lines.append(f"| Tags missing from export entirely | {len(summary.tags_missing_from_010):,} | {len(summary.tags_missing_from_011):,} |")
@@ -483,6 +688,8 @@ def render_report(
     lines.append(f"| 📐 UOM_MISMATCH | {sum(1 for g in summary.tag_gaps if g.issue == 'UOM_MISMATCH'):,} | {sum(1 for g in summary.equip_gaps if g.issue == 'UOM_MISMATCH'):,} |")
     lines.append(f"| 🔁 DUPLICATE rows | {dup_tag:,} | {dup_equip:,} |")
     lines.append(f"| 🔕 NA exported as blank | {na_blank_tag:,} | {na_blank_equip:,} |")
+    lines.append(f"| 🔀 WRONG_FILE | {len(summary.wrong_file_010):,} | {len(summary.wrong_file_011):,} |")
+    lines.append(f"| ➕ EXTRA (no RDL entry) | {len(summary.extra_in_010):,} | {len(summary.extra_in_011):,} |")
     lines.append("")
 
     lines.append("### Structural Checks")
@@ -534,7 +741,7 @@ def render_report(
     lines.append("> All rows where a property expected in file 010 is missing, mismatched, duplicated, or NA exported as blank.")
     lines.append("")
 
-    if summary.tag_gaps:
+    if summary.tag_gaps or summary.wrong_file_010 or summary.extra_in_010:
         issue_order = ["MISSING", "VALUE_MISMATCH", "UOM_MISMATCH", "NA_EXPORTED_BLANK"]
         for issue_type in issue_order:
             subset = [g for g in summary.tag_gaps if g.issue == issue_type]
@@ -550,6 +757,20 @@ def render_report(
             lines.append("")
             lines.extend(_render_gap_table(dup_subset))
             lines.append("")
+        if summary.wrong_file_010:
+            lines.append(f"### 🔀 WRONG_FILE — {len(summary.wrong_file_010):,} Physical-only properties found in file 010")
+            lines.append("")
+            lines.append("> These properties have RDL concept `Physical` only — they should not appear in file 010.")
+            lines.append("")
+            lines.extend(_render_gap_table(summary.wrong_file_010))
+            lines.append("")
+        if summary.extra_in_010:
+            lines.append(f"### ➕ EXTRA — {len(summary.extra_in_010):,} properties in file 010 with no RDL entry")
+            lines.append("")
+            lines.append("> These properties appear in the export CSV but have no matching row in the RDL reference.")
+            lines.append("")
+            lines.extend(_render_gap_table(summary.extra_in_010))
+            lines.append("")
     else:
         lines.append("✅ No TAG-GAP issues found in file 010.")
         lines.append("")
@@ -563,7 +784,7 @@ def render_report(
     lines.append("> All rows where a property expected in file 011 is missing, mismatched, duplicated, or NA exported as blank.")
     lines.append("")
 
-    if summary.equip_gaps:
+    if summary.equip_gaps or summary.wrong_file_011 or summary.extra_in_011:
         issue_order = ["MISSING", "VALUE_MISMATCH", "UOM_MISMATCH", "NA_EXPORTED_BLANK"]
         for issue_type in issue_order:
             subset = [g for g in summary.equip_gaps if g.issue == issue_type]
@@ -578,6 +799,20 @@ def render_report(
             lines.append(f"### 🔁 DUPLICATE — {len(dup_subset):,} gap(s) in file 011")
             lines.append("")
             lines.extend(_render_gap_table(dup_subset))
+            lines.append("")
+        if summary.wrong_file_011:
+            lines.append(f"### 🔀 WRONG_FILE — {len(summary.wrong_file_011):,} Functional-only properties found in file 011")
+            lines.append("")
+            lines.append("> These properties have RDL concept `Functional` only — they should not appear in file 011.")
+            lines.append("")
+            lines.extend(_render_gap_table(summary.wrong_file_011))
+            lines.append("")
+        if summary.extra_in_011:
+            lines.append(f"### ➕ EXTRA — {len(summary.extra_in_011):,} properties in file 011 with no RDL entry")
+            lines.append("")
+            lines.append("> These properties appear in the export CSV but have no matching row in the RDL reference.")
+            lines.append("")
+            lines.extend(_render_gap_table(summary.extra_in_011))
             lines.append("")
     else:
         lines.append("✅ No EQUIP-GAP issues found in file 011.")
@@ -594,6 +829,8 @@ def render_report(
     lines.append("| 📐 | UOM_MISMATCH | Property found but unit of measure differs from RDL reference |")
     lines.append("| 🔁 | DUPLICATE | Same TAG_NAME + PROPERTY_NAME appears more than once in export |")
     lines.append("| 🔕 | NA_EXPORTED_BLANK | RDL has 'NA' but export has empty string (ETL NA-blanking bug) |")
+    lines.append("| 🔀 | WRONG_FILE | Property in wrong CSV file (Physical in 010 or Functional in 011) |")
+    lines.append("| ➕ | EXTRA | Property in CSV has no matching row in RDL reference (unknown property) |")
     lines.append("")
 
     return "\n".join(lines)
@@ -639,27 +876,53 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 1
 
     print("Loading files...", end=" ")
+    rdl_raw = pd.read_excel(rdl_path, dtype=str).fillna("")
+    rdl_raw.columns = rdl_raw.columns.str.strip()
     rdl   = _load_rdl(rdl_path)
     df010 = _load_csv(file010_path)
     df011 = _load_csv(file011_path)
-    print(f"RDL rows={len(rdl):,}  file010 rows={len(df010):,}  file011 rows={len(df011):,}")
+    print(
+        f"RDL rows={len(rdl):,} (pre-filter={len(rdl_raw):,})  "
+        f"file010 rows={len(df010):,}  file011 rows={len(df011):,}"
+    )
 
     print("Building export lookups...", end=" ")
     lookup_010 = _build_export_lookup_010(df010)
     lookup_011 = _build_export_lookup_011(df011)
     print(f"010 unique keys={len(lookup_010):,}  011 unique keys={len(lookup_011):,}")
 
-    print("Running audit...", end=" ")
+    print("Running RDL gap audit...", end=" ")
     summary = AuditSummary()
+    summary.rdl_row_count_pre_filter = len(rdl_raw)
     _detect_gaps(rdl, lookup_010, lookup_011, summary)
     _check_structural(df010, df011, summary)
-    total_gaps = len(summary.tag_gaps) + len(summary.equip_gaps)
-    print(f"done. Total gaps: {total_gaps:,} (TAG={len(summary.tag_gaps):,}, EQUIP={len(summary.equip_gaps):,})")
+    print(f"done. TAG={len(summary.tag_gaps):,}  EQUIP={len(summary.equip_gaps):,}")
 
-    md = render_report(summary, rdl_path, file010_path, file011_path)
+    print("Detecting wrong-file and extra properties...", end=" ")
+    rdl_index = _build_rdl_index(rdl)
+    _detect_wrong_and_extra(df010, df011, rdl_index, summary)
+    print(
+        f"done. WRONG_010={len(summary.wrong_file_010):,}  "
+        f"WRONG_011={len(summary.wrong_file_011):,}  "
+        f"EXTRA_010={len(summary.extra_in_010):,}  "
+        f"EXTRA_011={len(summary.extra_in_011):,}"
+    )
+
+    print("Querying live DB...", end=" ")
+    db_state = _query_db_state()
+    if db_state.unavailable:
+        print(f"unavailable ({db_state.error_msg[:80]})")
+    else:
+        print(f"done. total={db_state.total_rows:,}  tags={db_state.unique_tags:,}")
+
+    total_gaps = (len(summary.tag_gaps) + len(summary.equip_gaps)
+                  + len(summary.wrong_file_010) + len(summary.wrong_file_011)
+                  + len(summary.extra_in_010)   + len(summary.extra_in_011))
+
+    md = render_report(summary, rdl_path, file010_path, file011_path, db_state)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(md, encoding="utf-8")
-    print(f"\nReport written to: {output_path.resolve()}")
+    print(f"\nReport written to {output_path.resolve()} — {total_gaps:,} total gaps found")
     return 0
 
 
