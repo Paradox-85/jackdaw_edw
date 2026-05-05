@@ -26,6 +26,7 @@ data/
 
 # --- IDE & OS ---
 .vscode/
+.tokensave/
 .DS_Store
 Thumbs.db
 
