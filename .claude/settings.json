@@ -15,31 +15,19 @@
       "Bash(ruff *)",
       "Bash(pytest *)",
       "Bash(prefect *)",
-      "Bash(psql -c \"SELECT*\")",
       "Edit",
       "Write",
       "mcp__tokensave__*",
       "mcp__pgedge__*",
-      "mcp__context7__*",
-      "mcp__perplexity__*",
-      "mcp__proxmox__*"
-    ],    
+      "mcp__context7__*"
+    ],
     "deny": [
-      "Read",
       "Bash(cat *)",
       "Bash(head *)",
       "Bash(tail *)",
-      "Bash(sed *)",
-      "Bash(awk *)",
-      "Bash(grep *)",
-      "Bash(find *)",
-      "Bash(ls *)",
-      "Bash(echo *)",
-      "Bash(type *)",
-      "Bash(Get-Content *)",
-      "Bash(Select-String *)",
-      "Bash(dir *)"
-    ],
+      "Bash(grep -r*)",
+      "Bash(find * -name*)"
+    ],    
     "ask": [
       "Bash(rm *)",
       "Bash(rm -rf *)",

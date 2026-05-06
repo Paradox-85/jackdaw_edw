@@ -1298,9 +1298,16 @@ def render_report(
             subset = [g for g in summary.rdl_csv_gaps_010 if g.issue == issue_type]
             if not subset:
                 continue
-            lines.append(f"#### {header} ({len(subset):,})")
-            lines.append("")
-            lines.extend(_render_rdl_csv_gap_table(subset))
+            if compact:
+                lines.extend(_render_grouped_gaps(
+                    subset, issue_type, header,
+                    value_cols=("rdl_value", "rdl_uom", "csv_value", "csv_uom"),
+                    col_labels=("RDL Value", "RDL UoM", "CSV Value", "CSV UoM"),
+                ))
+            else:
+                lines.append(f"#### {header} ({len(subset):,})")
+                lines.append("")
+                lines.extend(_render_rdl_csv_gap_table(subset))
             lines.append("")
 
     # Detailed tables for file-011
@@ -1318,9 +1325,16 @@ def render_report(
             subset = [g for g in summary.rdl_csv_gaps_011 if g.issue == issue_type]
             if not subset:
                 continue
-            lines.append(f"#### {header} ({len(subset):,})")
-            lines.append("")
-            lines.extend(_render_rdl_csv_gap_table(subset))
+            if compact:
+                lines.extend(_render_grouped_gaps(
+                    subset, issue_type, header,
+                    value_cols=("rdl_value", "rdl_uom", "csv_value", "csv_uom"),
+                    col_labels=("RDL Value", "RDL UoM", "CSV Value", "CSV UoM"),
+                ))
+            else:
+                lines.append(f"#### {header} ({len(subset):,})")
+                lines.append("")
+                lines.extend(_render_rdl_csv_gap_table(subset))
             lines.append("")
 
     if not summary.rdl_csv_gaps_010 and not summary.rdl_csv_gaps_011:
@@ -1354,9 +1368,16 @@ def render_report(
             subset = [g for g in summary.rdl_sql_gaps if g.issue == issue_type]
             if not subset:
                 continue
-            lines.append(f"### {header} ({len(subset):,})")
-            lines.append("")
-            lines.extend(_render_rdl_sql_gap_table(subset))
+            if compact:
+                lines.extend(_render_grouped_gaps(
+                    subset, issue_type, header,
+                    value_cols=("rdl_value", "rdl_uom", "sql_value", "sql_uom"),
+                    col_labels=("RDL Value", "RDL UoM", "SQL Value", "SQL UoM"),
+                ))
+            else:
+                lines.append(f"### {header} ({len(subset):,})")
+                lines.append("")
+                lines.extend(_render_rdl_sql_gap_table(subset))
             lines.append("")
 
         # SQL_EXTRA — potentially huge; show callout + capped table
@@ -1415,9 +1436,16 @@ def render_report(
             subset = [g for g in gaps if g.issue == issue_type]
             if not subset:
                 continue
-            lines.append(f"### {header} ({len(subset):,})")
-            lines.append("")
-            lines.extend(_render_csv_gap_table(subset))
+            if compact:
+                lines.extend(_render_grouped_gaps(
+                    subset, issue_type, header,
+                    value_cols=("sql_value", "sql_uom", "csv_value", "csv_uom"),
+                    col_labels=("SQL Value", "SQL UoM", "CSV Value", "CSV UoM"),
+                ))
+            else:
+                lines.append(f"### {header} ({len(subset):,})")
+                lines.append("")
+                lines.extend(_render_csv_gap_table(subset))
             lines.append("")
 
         dup_subset = [g for g in gaps if "DUPLICATE" in g.issue]
@@ -1495,6 +1523,13 @@ def render_report(
     lines.append("| ➕ | EXTRA_UNKNOWN_PROP | L2 | Tag known in SQL but this property pair is not in SQL |")
     lines.append("| ℹ️ | RDL_CSV_NA_HAS_VALUE | L0 | RDL has 'NA' but CSV has value — possible RDL error |")
     lines.append("| ⚠️ | RDL_CSV_VALUE_MISSING | L0 | RDL has value, CSV is blank — omitted during export |")
+    lines.append("")
+    lines.append(
+        "> **Compact mode** (`--compact`): gaps grouped by (property, concept). "
+        "Up to 10 example tags shown per group. "
+        "Use VALUE_MISMATCH count / group count to estimate "
+        "whether an issue is systemic (high ratio) or sporadic (low ratio)."
+    )
 
     return "\n".join(lines)
 
@@ -1522,6 +1557,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--tag", default=None, metavar="TAG",
         help="Debug mode: filter ALL layers to a single tag name. "
              "Prints verbose trace for every RDL row of that tag."
+    )
+    p.add_argument(
+        "--compact", action="store_true",
+        help="Group gaps by (property, concept) with max 10 examples per group. "
+             "Produces a compact LLM-readable report instead of full row dump."
     )
     return p
 
@@ -1623,7 +1663,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         + len(summary.extra_in_010) + len(summary.extra_in_011)
     )
 
-    md = render_report(summary, rdl_path, csv010_path, csv011_path)
+    if args.compact and not args.out:
+        output_path = output_path.with_stem(output_path.stem + "_compact")
+    md = render_report(summary, rdl_path, csv010_path, csv011_path, compact=args.compact)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(md, encoding="utf-8")
 
@@ -1635,3 +1677,4 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
