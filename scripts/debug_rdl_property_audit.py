@@ -37,6 +37,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import time
+
 import pandas as pd
 
 
@@ -45,10 +47,10 @@ import pandas as pd
 # CLI args override these values
 # ---------------------------------------------------------------------------
 
-DEV_RDL_PATH = Path(r"C:\path\to\TagProperties-rdl.xlsx")
-DEV_CSV010   = Path(r"C:\path\to\JDAW-KVE-E-JA-6944-00001-010-A38.CSV")
-DEV_CSV011   = Path(r"C:\path\to\JDAW-KVE-E-JA-6944-00001-011-A38.CSV")
-DEV_OUTPUT   = Path(__file__).parent / "rdl_audit_report.md"
+DEV_RDL_PATH = Path(r"C:\Users\ADZV\OneDrive - Ramboll\Ramboll_Jackdaw - Admin Team\JDE-Power-BI\_master\data\TagProperties-rdl.xlsx")
+DEV_CSV010   = Path(r"C:\Users\ADZV\OneDrive - Ramboll\Ramboll_Jackdaw - Admin Team\EIS\Export for Shell\May-26\CSV\eis_export_A38_20260505_0928\JDAW-KVE-E-JA-6944-00001-010-A38.CSV")
+DEV_CSV011   = Path(r"C:\Users\ADZV\OneDrive - Ramboll\Ramboll_Jackdaw - Admin Team\EIS\Export for Shell\May-26\CSV\eis_export_A38_20260505_0928\JDAW-KVE-E-JA-6944-00001-011-A38.CSV")
+DEV_OUTPUT   = Path(r"C:\Users\ADZV\OneDrive - Ramboll\Ramboll_Jackdaw - Admin Team\EIS\Export for Shell\May-26\rdl_audit_report.md")
 
 
 # ---------------------------------------------------------------------------
@@ -153,11 +155,14 @@ class AuditSummary:
 # Loading helpers
 # ---------------------------------------------------------------------------
 
-def _load_rdl(path: Path) -> pd.DataFrame:
-    """Load TagProperties-rdl.xlsx, normalize column names, apply validity filters."""
-    df = pd.read_excel(path, dtype=str)
-    df = df.fillna("")
+def _load_rdl(df_raw: pd.DataFrame) -> pd.DataFrame:
+    """Apply validity filters to a pre-loaded RDL DataFrame.
+
+    Caller reads from disk once via pd.read_excel(); this function only filters.
+    """
+    df = df_raw.copy()
     df.columns = df.columns.str.strip()
+    df = df.fillna("")
     if COL_ENTITY_MSG in df.columns:
         df = df[df[COL_ENTITY_MSG].str.strip() != ""]
     if COL_RAM_CATEGORY in df.columns:
@@ -201,12 +206,12 @@ def _build_export_lookup_010(
 ) -> Dict[Tuple[str, str], List[Tuple[str, str]]]:
     """Build lookup: (TAG_NAME_upper, PROPERTY_NAME_upper) -> [(value, uom), ...]"""
     lookup: Dict[Tuple[str, str], List[Tuple[str, str]]] = {}
-    for _, row in df.iterrows():
-        key = (_norm_prop_name(row.get("TAG_NAME", "")),
-               _norm_prop_name(row.get("PROPERTY_NAME", "")))
-        val = (_norm_value(row.get("PROPERTY_VALUE", "")),
-               _norm_value(row.get("PROPERTY_VALUE_UOM", "")))
-        lookup.setdefault(key, []).append(val)
+    tags   = df.get("TAG_NAME",           pd.Series(dtype=str)).fillna("").str.strip().str.upper().str.split().str.join(" ")
+    props  = df.get("PROPERTY_NAME",      pd.Series(dtype=str)).fillna("").str.strip().str.upper().str.split().str.join(" ")
+    values = df.get("PROPERTY_VALUE",     pd.Series(dtype=str)).fillna("").str.strip()
+    uoms   = df.get("PROPERTY_VALUE_UOM", pd.Series(dtype=str)).fillna("").str.strip()
+    for tag, prop, val, uom in zip(tags, props, values, uoms):
+        lookup.setdefault((tag, prop), []).append((val, uom))
     return lookup
 
 
@@ -215,12 +220,12 @@ def _build_export_lookup_011(
 ) -> Dict[Tuple[str, str], List[Tuple[str, str]]]:
     """Build lookup: (EQUIPMENT_NUMBER_upper, PROPERTY_NAME_upper) -> [(value, uom), ...]"""
     lookup: Dict[Tuple[str, str], List[Tuple[str, str]]] = {}
-    for _, row in df.iterrows():
-        key = (_norm_prop_name(row.get("EQUIPMENT_NUMBER", "")),
-               _norm_prop_name(row.get("PROPERTY_NAME", "")))
-        val = (_norm_value(row.get("PROPERTY_VALUE", "")),
-               _norm_value(row.get("PROPERTY_VALUE_UOM", "")))
-        lookup.setdefault(key, []).append(val)
+    equips = df.get("EQUIPMENT_NUMBER",   pd.Series(dtype=str)).fillna("").str.strip().str.upper().str.split().str.join(" ")
+    props  = df.get("PROPERTY_NAME",      pd.Series(dtype=str)).fillna("").str.strip().str.upper().str.split().str.join(" ")
+    values = df.get("PROPERTY_VALUE",     pd.Series(dtype=str)).fillna("").str.strip()
+    uoms   = df.get("PROPERTY_VALUE_UOM", pd.Series(dtype=str)).fillna("").str.strip()
+    for equip, prop, val, uom in zip(equips, props, values, uoms):
+        lookup.setdefault((equip, prop), []).append((val, uom))
     return lookup
 
 
@@ -951,7 +956,7 @@ def render_report(
                 f"Showing first {len(extra_subset)} rows below."
             )
             if n_extra_tags > 0:
-                lines.append(f">")
+                lines.append(">")
                 lines.append(f"> **Tag list:** {tag_list}")
             lines.append("")
             if extra_subset:
@@ -1149,16 +1154,27 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"ERROR: {label} file not found: {p}")
             return 1
 
-    print("Loading files...", end=" ", flush=True)
-    rdl_raw = pd.read_excel(rdl_path, dtype=str).fillna("")
+    print("Loading files...", flush=True)
+    t0 = time.perf_counter()
+    try:
+        rdl_raw = pd.read_excel(rdl_path, dtype=str, na_filter=False, engine="calamine")
+    except Exception:
+        rdl_raw = pd.read_excel(rdl_path, dtype=str, na_filter=False)
     rdl_raw.columns = rdl_raw.columns.str.strip()
-    rdl   = _load_rdl(rdl_path)
+    rdl_raw = rdl_raw.fillna("")
+    print(f"  RDL loaded:    {len(rdl_raw):,} rows ({time.perf_counter()-t0:.1f}s)", flush=True)
+
+    t1 = time.perf_counter()
+    rdl = _load_rdl(rdl_raw)
+    print(f"  RDL filtered:  {len(rdl):,} rows ({time.perf_counter()-t1:.1f}s)", flush=True)
+
+    t2 = time.perf_counter()
     df010 = _load_csv(csv010_path)
+    print(f"  CSV-010:       {len(df010):,} rows ({time.perf_counter()-t2:.1f}s)", flush=True)
+
+    t3 = time.perf_counter()
     df011 = _load_csv(csv011_path)
-    print(
-        f"RDL rows={len(rdl):,} (pre-filter={len(rdl_raw):,})  "
-        f"file010 rows={len(df010):,}  file011 rows={len(df011):,}"
-    )
+    print(f"  CSV-011:       {len(df011):,} rows ({time.perf_counter()-t3:.1f}s)", flush=True)
 
     summary = AuditSummary()
     summary.rdl_row_count_pre_filter = len(rdl_raw)
