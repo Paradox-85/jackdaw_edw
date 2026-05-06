@@ -1040,11 +1040,62 @@ def _render_rdl_csv_gap_table(gaps: List[RdlCsvGap]) -> List[str]:
     return lines
 
 
+def _render_grouped_gaps(
+    gaps: list,
+    issue_type: str,
+    header: str,
+    value_cols: tuple,
+    col_labels: tuple,
+    sample_size: int = 10,
+) -> List[str]:
+    """
+    Group gaps by (property_name, concept) and emit one sub-section per group.
+    Show up to sample_size example rows per group.
+    Sort groups by count descending (biggest problems first).
+    Returns lines including the section-level header with group count.
+    """
+    from collections import defaultdict
+    groups: "dict[tuple, list]" = defaultdict(list)
+    for g in gaps:
+        groups[(g.property_name, g.concept)].append(g)
+    n_groups = len(groups)
+    n_total = len(gaps)
+    result: List[str] = []
+    result.append(
+        f"### {header} ({n_total:,} total gaps — {n_groups:,} property groups)"
+    )
+    result.append("")
+    for (prop_name, concept), grp in sorted(
+        groups.items(), key=lambda kv: len(kv[1]), reverse=True
+    ):
+        count = len(grp)
+        result.append(
+            f"#### Property: `{_escape(prop_name)}` | Concept: {concept} | {count:,} tags affected"
+        )
+        result.append("")
+        col_hdr = " | ".join(col_labels)
+        col_sep = " | ".join(["---"] * len(col_labels))
+        result.append(f"| # | Tag | {col_hdr} |")
+        result.append(f"|---|-----|{col_sep}|")
+        for i, g in enumerate(grp[:sample_size], start=1):
+            vals = " | ".join(_escape(getattr(g, c)) for c in value_cols)
+            result.append(f"| {i} | `{_escape(g.tag_name)}` | {vals} |")
+        remainder = count - sample_size
+        if remainder > 0:
+            empties = " | ".join([""] * len(value_cols))
+            result.append(
+                f"| … | *({remainder:,} more tags with this pattern)* | {empties} |"
+            )
+        result.append("")
+    return result
+
+
 def render_report(
     summary: AuditSummary,
     rdl_path: Path,
     csv010_path: Path,
     csv011_path: Path,
+    compact: bool = False,
 ) -> str:
     lines: List[str] = []
 
@@ -1093,33 +1144,66 @@ def render_report(
     n_l0_na_blank_010 = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_NA_BLANK"])
     n_l0_na_blank_011 = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_NA_BLANK"])
 
+    def _gc(gap_list: list, issue: str) -> int:
+        """Count unique (property_name, concept) groups; returns 0 when not compact."""
+        if not compact:
+            return 0
+        return len({(g.property_name, g.concept) for g in gap_list if g.issue == issue})
+
+    def _fmt_cell(n: int, gc: int) -> str:
+        if compact and n > 0 and gc > 0:
+            return f"{n:,} gaps ({gc:,} groups)"
+        return f"{n:,}"
+
+    l0_all = summary.rdl_csv_gaps_010 + summary.rdl_csv_gaps_011
+    gc_l0_miss    = _gc(l0_all, "RDL_CSV_MISSING")
+    gc_l0_mm      = _gc(l0_all, "RDL_CSV_VALUE_MISMATCH")
+    gc_l0_nahv    = _gc(l0_all, "RDL_CSV_NA_HAS_VALUE")
+    gc_l0_valm    = _gc(l0_all, "RDL_CSV_VALUE_MISSING")
+    gc_l0_nab     = _gc(l0_all, "RDL_CSV_NA_BLANK")
+    gc_sql_miss   = _gc(summary.rdl_sql_gaps, "SQL_MISSING")
+    gc_sql_mm     = _gc(summary.rdl_sql_gaps, "SQL_VALUE_MISMATCH")
+    gc_sql_valm   = _gc(summary.rdl_sql_gaps, "SQL_VALUE_MISSING")
+    gc_sql_na     = _gc(summary.rdl_sql_gaps, "SQL_NA_BLANK")
+    gc_csv_miss_010 = _gc(summary.csv_gaps_010, "CSV_MISSING")
+    gc_csv_mm_010   = _gc(summary.csv_gaps_010, "CSV_VALUE_MISMATCH")
+    gc_csv_valm_010 = _gc(summary.csv_gaps_010, "CSV_VALUE_MISSING")
+    gc_csv_ev_010   = _gc(summary.csv_gaps_010, "CSV_EXTRA_VALUE")
+    gc_csv_nab_010  = _gc(summary.csv_gaps_010, "CSV_NA_BLANK")
+    gc_csv_miss_011 = _gc(summary.csv_gaps_011, "CSV_MISSING")
+    gc_csv_mm_011   = _gc(summary.csv_gaps_011, "CSV_VALUE_MISMATCH")
+    gc_csv_valm_011 = _gc(summary.csv_gaps_011, "CSV_VALUE_MISSING")
+    gc_csv_ev_011   = _gc(summary.csv_gaps_011, "CSV_EXTRA_VALUE")
+    gc_csv_nab_011  = _gc(summary.csv_gaps_011, "CSV_NA_BLANK")
+
     lines.append("| Metric | LAYER 0 (RDL vs CSV) | LAYER 1 (RDL vs SQL) | LAYER 2 (SQL vs CSV 010) | LAYER 2 (SQL vs CSV 011) |")
     lines.append("|--------|---------------------|---------------------|--------------------------|--------------------------|")
     lines.append(f"| Reference rows | — | {n_rdl_ref:,} | {summary.sql_l2_tag_count:,} | {summary.sql_l2_equip_count:,} |")
-    lines.append(f"| 🚫 RDL_CSV_MISSING | **{n_l0_miss_010+n_l0_miss_011:,}** | — | — | — |")
-    lines.append(f"| ⚠️ RDL_CSV_VALUE_MISMATCH | {n_l0_mm_010+n_l0_mm_011:,} | — | — | — |")
-    lines.append(f"| ℹ️ RDL_CSV_NA_HAS_VALUE | {n_l0_na_has_value_010+n_l0_na_has_value_011:,} | — | — | — |")
-    lines.append(f"| ⚠️ RDL_CSV_VALUE_MISSING | {n_l0_val_missing_010+n_l0_val_missing_011:,} | — | — | — |")
-    lines.append(f"| 🔕 RDL_CSV_NA_BLANK | {n_l0_na_blank_010+n_l0_na_blank_011:,} | — | — | — |")
+    n_l0_miss_total = n_l0_miss_010 + n_l0_miss_011
+    lines.append(f"| 🚫 RDL_CSV_MISSING | **{_fmt_cell(n_l0_miss_total, gc_l0_miss)}** | — | — | — |")
+    lines.append(f"| ⚠️ RDL_CSV_VALUE_MISMATCH | {_fmt_cell(n_l0_mm_010+n_l0_mm_011, gc_l0_mm)} | — | — | — |")
+    lines.append(f"| ℹ️ RDL_CSV_NA_HAS_VALUE | {_fmt_cell(n_l0_na_has_value_010+n_l0_na_has_value_011, gc_l0_nahv)} | — | — | — |")
+    lines.append(f"| ⚠️ RDL_CSV_VALUE_MISSING | {_fmt_cell(n_l0_val_missing_010+n_l0_val_missing_011, gc_l0_valm)} | — | — | — |")
+    lines.append(f"| 🔕 RDL_CSV_NA_BLANK | {_fmt_cell(n_l0_na_blank_010+n_l0_na_blank_011, gc_l0_nab)} | — | — | — |")
 
     # LAYER 1 metrics — show "N/A (no-db)" when DB unavailable
-    sql_col = "N/A (no-db)" if summary.sql_unavailable else f"**{n_sql_missing:,}**"
+    sql_col = "N/A (no-db)" if summary.sql_unavailable else f"**{_fmt_cell(n_sql_missing, gc_sql_miss)}**"
     lines.append(f"| ⛔ SQL_MISSING (critical) | — | {sql_col} | — | — |")
-    sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_sql_mismatch:,}"
+    sql_col = "N/A (no-db)" if summary.sql_unavailable else _fmt_cell(n_sql_mismatch, gc_sql_mm)
     lines.append(f"| ⚠️ SQL_VALUE_MISMATCH | — | {sql_col} | — | — |")
-    sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_sql_val_missing:,}"
+    sql_col = "N/A (no-db)" if summary.sql_unavailable else _fmt_cell(n_sql_val_missing, gc_sql_valm)
     lines.append(f"| ⚠️ SQL_VALUE_MISSING | — | {sql_col} | — | — |")
-    sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_sql_na:,}"
+    sql_col = "N/A (no-db)" if summary.sql_unavailable else _fmt_cell(n_sql_na, gc_sql_na)
     lines.append(f"| 🔕 SQL_NA_BLANK | — | {sql_col} | — | — |")
     sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_sql_extra:,}"
     lines.append(f"| ➕ SQL_EXTRA | — | {sql_col} | — | — |")
-    lines.append(f"| ❌ CSV_MISSING | — | — | **{n_csv_missing_010:,}** | **{n_csv_missing_011:,}** |")
-    lines.append(f"| ⚠️ CSV_VALUE_MISMATCH | — | — | {n_csv_mismatch_010:,} | {n_csv_mismatch_011:,} |")
-    sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_csv_val_missing_010:,}"
-    lines.append(f"| ⚠️ CSV_VALUE_MISSING | — | — | {sql_col} | {n_csv_val_missing_011:,} |")
-    sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_csv_extra_value_010:,}"
-    lines.append(f"| ℹ️ CSV_EXTRA_VALUE | — | — | {sql_col} | {n_csv_extra_value_011:,} |")
-    lines.append(f"| 🔕 CSV_NA_BLANK | — | — | {n_csv_na_blank_010:,} | {n_csv_na_blank_011:,} |")
+    lines.append(f"| ❌ CSV_MISSING | — | — | **{_fmt_cell(n_csv_missing_010, gc_csv_miss_010)}** | **{_fmt_cell(n_csv_missing_011, gc_csv_miss_011)}** |")
+    lines.append(f"| ⚠️ CSV_VALUE_MISMATCH | — | — | {_fmt_cell(n_csv_mismatch_010, gc_csv_mm_010)} | {_fmt_cell(n_csv_mismatch_011, gc_csv_mm_011)} |")
+    sql_col = "N/A (no-db)" if summary.sql_unavailable else _fmt_cell(n_csv_val_missing_010, gc_csv_valm_010)
+    lines.append(f"| ⚠️ CSV_VALUE_MISSING | — | — | {sql_col} | {_fmt_cell(n_csv_val_missing_011, gc_csv_valm_011)} |")
+    sql_col = "N/A (no-db)" if summary.sql_unavailable else _fmt_cell(n_csv_extra_value_010, gc_csv_ev_010)
+    lines.append(f"| ℹ️ CSV_EXTRA_VALUE | — | — | {sql_col} | {_fmt_cell(n_csv_extra_value_011, gc_csv_ev_011)} |")
+    lines.append(f"| 🔕 CSV_NA_BLANK | — | — | {_fmt_cell(n_csv_na_blank_010, gc_csv_nab_010)} | {_fmt_cell(n_csv_na_blank_011, gc_csv_nab_011)} |")
     lines.append(f"| 🔀 WRONG_FILE | — | — | {len(summary.wrong_file_010):,} | {len(summary.wrong_file_011):,} |")
     lines.append(f"| ➕ EXTRA (unknown) | — | — | {len(summary.extra_in_010):,} | {len(summary.extra_in_011):,} |")
     lines.append("")

@@ -9,8 +9,6 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--tag",
-                "JDA-01KSV-02031",
                 "--no-db"
             ]
         },
