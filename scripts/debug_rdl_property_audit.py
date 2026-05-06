@@ -1036,20 +1036,20 @@ def render_report(
     n_sql_val_missing = sum(1 for g in summary.rdl_sql_gaps if g.issue == "SQL_VALUE_MISSING")
     n_sql_na         = sum(1 for g in summary.rdl_sql_gaps if g.issue == "SQL_NA_BLANK")
     n_sql_extra      = summary.sql_extra_total_props   # use the full count, not the 200-row cap
-    n_csv_miss_010   = sum(1 for g in summary.csv_gaps_010 if g.issue == "CSV_MISSING")
-    n_csv_miss_011   = sum(1 for g in summary.csv_gaps_011 if g.issue == "CSV_MISSING")
-    n_csv_mm_010     = sum(1 for g in summary.csv_gaps_010 if g.issue == "CSV_VALUE_MISMATCH")
-    n_csv_mm_011     = sum(1 for g in summary.csv_gaps_011 if g.issue == "CSV_VALUE_MISMATCH")
-    n_csv_val_miss_010 = sum(1 for g in summary.csv_gaps_010 if g.issue == "CSV_VALUE_MISSING")
-    n_csv_val_miss_011 = sum(1 for g in summary.csv_gaps_011 if g.issue == "CSV_VALUE_MISSING")
-    n_csv_extra_val_010 = sum(1 for g in summary.csv_gaps_010 if g.issue == "CSV_EXTRA_VALUE")
-    n_csv_extra_val_011 = sum(1 for g in summary.csv_gaps_011 if g.issue == "CSV_EXTRA_VALUE")
-    n_csv_na_010     = sum(1 for g in summary.csv_gaps_010 if g.issue == "CSV_NA_BLANK")
-    n_csv_na_011     = sum(1 for g in summary.csv_gaps_011 if g.issue == "CSV_NA_BLANK")
-    n_l0_na_has_val_010 = sum(1 for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_NA_HAS_VALUE")
-    n_l0_na_has_val_011 = sum(1 for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_NA_HAS_VALUE")
-    n_l0_val_miss_010 = sum(1 for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_VALUE_MISSING")
-    n_l0_val_miss_011 = sum(1 for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_VALUE_MISSING")
+    n_csv_missing_010   = sum(1 for g in summary.csv_gaps_010 if g.issue == "CSV_MISSING")
+    n_csv_missing_011   = sum(1 for g in summary.csv_gaps_011 if g.issue == "CSV_MISSING")
+    n_csv_mismatch_010     = sum(1 for g in summary.csv_gaps_010 if g.issue == "CSV_VALUE_MISMATCH")
+    n_csv_mismatch_011     = sum(1 for g in summary.csv_gaps_011 if g.issue == "CSV_VALUE_MISMATCH")
+    n_csv_val_missing_010 = sum(1 for g in summary.csv_gaps_010 if g.issue == "CSV_VALUE_MISSING")
+    n_csv_val_missing_011 = sum(1 for g in summary.csv_gaps_011 if g.issue == "CSV_VALUE_MISSING")
+    n_csv_extra_value_010 = sum(1 for g in summary.csv_gaps_010 if g.issue == "CSV_EXTRA_VALUE")
+    n_csv_extra_value_011 = sum(1 for g in summary.csv_gaps_011 if g.issue == "CSV_EXTRA_VALUE")
+    n_csv_na_blank_010     = sum(1 for g in summary.csv_gaps_010 if g.issue == "CSV_NA_BLANK")
+    n_csv_na_blank_011     = sum(1 for g in summary.csv_gaps_011 if g.issue == "CSV_NA_BLANK")
+    n_l0_na_has_value_010 = sum(1 for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_NA_HAS_VALUE")
+    n_l0_na_has_value_011 = sum(1 for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_NA_HAS_VALUE")
+    n_l0_val_missing_010 = sum(1 for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_VALUE_MISSING")
+    n_l0_val_missing_011 = sum(1 for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_VALUE_MISSING")
     n_rdl_ref        = summary.total_rdl_tag_props + summary.total_rdl_equip_props - summary.total_rdl_both_props
 
     lines.append("## Executive Summary")
@@ -1059,21 +1059,21 @@ def render_report(
     n_l0_miss_011   = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_MISSING"])
     n_l0_mm_010     = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_VALUE_MISMATCH"])
     n_l0_mm_011     = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_VALUE_MISMATCH"])
-    n_l0_na_has_val_010 = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_NA_HAS_VALUE"])
-    n_l0_na_has_val_011 = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_NA_HAS_VALUE"])
-    n_l0_val_miss_010 = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_VALUE_MISSING"])
-    n_l0_val_miss_011 = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_VALUE_MISSING"])
-    n_l0_na_010     = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_NA_BLANK"])
-    n_l0_na_011     = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_NA_BLANK"])
+    n_l0_na_has_value_010 = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_NA_HAS_VALUE"])
+    n_l0_na_has_value_011 = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_NA_HAS_VALUE"])
+    n_l0_val_missing_010 = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_VALUE_MISSING"])
+    n_l0_val_missing_011 = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_VALUE_MISSING"])
+    n_l0_na_blank_010 = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_NA_BLANK"])
+    n_l0_na_blank_011 = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_NA_BLANK"])
 
     lines.append("| Metric | LAYER 0 (RDL vs CSV) | LAYER 1 (RDL vs SQL) | LAYER 2 (SQL vs CSV 010) | LAYER 2 (SQL vs CSV 011) |")
     lines.append("|--------|---------------------|---------------------|--------------------------|--------------------------|")
     lines.append(f"| Reference rows | — | {n_rdl_ref:,} | {summary.sql_l2_tag_count:,} | {summary.sql_l2_equip_count:,} |")
     lines.append(f"| 🚫 RDL_CSV_MISSING | **{n_l0_miss_010+n_l0_miss_011:,}** | — | — | — |")
     lines.append(f"| ⚠️ RDL_CSV_VALUE_MISMATCH | {n_l0_mm_010+n_l0_mm_011:,} | — | — | — |")
-    lines.append(f"| ℹ️ RDL_CSV_NA_HAS_VALUE | {n_l0_na_has_val_010+n_l0_na_has_val_011:,} | — | — | — |")
-    lines.append(f"| ⚠️ RDL_CSV_VALUE_MISSING | {n_l0_val_miss_010+n_l0_val_miss_011:,} | — | — | — |")
-    lines.append(f"| 🔕 RDL_CSV_NA_BLANK | {n_l0_na_010+n_l0_na_011:,} | — | — | — |")
+    lines.append(f"| ℹ️ RDL_CSV_NA_HAS_VALUE | {n_l0_na_has_value_010+n_l0_na_has_value_011:,} | — | — | — |")
+    lines.append(f"| ⚠️ RDL_CSV_VALUE_MISSING | {n_l0_val_missing_010+n_l0_val_missing_011:,} | — | — | — |")
+    lines.append(f"| 🔕 RDL_CSV_NA_BLANK | {n_l0_na_blank_010+n_l0_na_blank_011:,} | — | — | — |")
 
     # LAYER 1 metrics — show "N/A (no-db)" when DB unavailable
     sql_col = "N/A (no-db)" if summary.sql_unavailable else f"**{n_sql_missing:,}**"
@@ -1086,13 +1086,13 @@ def render_report(
     lines.append(f"| 🔕 SQL_NA_BLANK | — | {sql_col} | — | — |")
     sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_sql_extra:,}"
     lines.append(f"| ➕ SQL_EXTRA | — | {sql_col} | — | — |")
-    lines.append(f"| ❌ CSV_MISSING | — | — | **{n_csv_miss_010:,}** | **{n_csv_miss_011:,}** |")
-    lines.append(f"| ⚠️ CSV_VALUE_MISMATCH | — | — | {n_csv_mm_010:,} | {n_csv_mm_011:,} |")
+    lines.append(f"| ❌ CSV_MISSING | — | — | **{n_csv_missing_010:,}** | **{n_csv_missing_011:,}** |")
+    lines.append(f"| ⚠️ CSV_VALUE_MISMATCH | — | — | {n_csv_mismatch_010:,} | {n_csv_mismatch_011:,} |")
     sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_csv_val_missing_010:,}"
     lines.append(f"| ⚠️ CSV_VALUE_MISSING | — | — | {sql_col} | {n_csv_val_missing_011:,} |")
-    sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_csv_extra_val_010:,}"
-    lines.append(f"| ℹ️ CSV_EXTRA_VALUE | — | — | {sql_col} | {n_csv_extra_val_011:,} |")
-    lines.append(f"| 🔕 CSV_NA_BLANK | — | — | {n_csv_na_010:,} | {n_csv_na_011:,} |")
+    sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_csv_extra_value_010:,}"
+    lines.append(f"| ℹ️ CSV_EXTRA_VALUE | — | — | {sql_col} | {n_csv_extra_value_011:,} |")
+    lines.append(f"| 🔕 CSV_NA_BLANK | — | — | {n_csv_na_blank_010:,} | {n_csv_na_blank_011:,} |")
     lines.append(f"| 🔀 WRONG_FILE | — | — | {len(summary.wrong_file_010):,} | {len(summary.wrong_file_011):,} |")
     lines.append(f"| ➕ EXTRA (unknown) | — | — | {len(summary.extra_in_010):,} | {len(summary.extra_in_011):,} |")
     lines.append("")
@@ -1102,7 +1102,7 @@ def render_report(
             f"> ⛔ **CRITICAL:** {n_sql_missing:,} properties exist in RDL but are **MISSING from SQL database**. "
             "These were never imported. Run the import flow to fix."
         )
-    csv_missing_total = n_csv_miss_010 + n_csv_miss_011
+    csv_missing_total = n_csv_missing_010 + n_csv_missing_011
     if csv_missing_total > 0:
         lines.append(
             f"> ⚠️  {csv_missing_total:,} properties exist in SQL but are **MISSING from CSV export**. "
