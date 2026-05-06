@@ -515,8 +515,20 @@ def _detect_rdl_csv_gaps(
             for entry in csv_entries:
                 csv_val = entry.prop_value
                 csv_uom = entry.prop_uom
-                rdl_is_na = rdl_val.upper() in ("NA", "N/A")
+                rdl_is_na    = rdl_val.upper() in ("NA", "N/A")
+                csv_is_na    = csv_val.strip().upper() in ("NA", "N/A")
                 csv_is_blank = not csv_val or csv_val.strip() == ""
+
+                # NA-matching rule:
+                #   rdl_na + csv_na    → no gap (both sides agree value is N/A)
+                #   rdl_na + csv_blank → RDL_CSV_NA_BLANK (EIS exports NA as empty)
+                #   rdl_na + csv_value → RDL_CSV_NA_HAS_VALUE (unexpected)
+                #   rdl_val + csv_blank/na → RDL_CSV_VALUE_MISSING (export missed it)
+                #   rdl_val + csv_val  → compare via _norm_composite
+
+                # EARLY EXIT: оба NA — расхождений нет
+                if rdl_is_na and csv_is_na:
+                    continue
 
                 if rdl_is_na and csv_is_blank:
                     gap = RdlCsvGap(
@@ -536,7 +548,7 @@ def _detect_rdl_csv_gaps(
                         summary.rdl_csv_gaps_011.append(gap)
                     continue
 
-                # RDL=NA, CSV=реальное значение → неожиданно, надо разобраться
+                # RDL=NA, CSV=реальное значение (не NA и не blank) → неожиданно
                 if rdl_is_na and not csv_is_blank:
                     gap = RdlCsvGap(
                         tag_name=tag_name,
@@ -555,8 +567,8 @@ def _detect_rdl_csv_gaps(
                         summary.rdl_csv_gaps_011.append(gap)
                     continue
 
-                # RDL=реальное значение, CSV=blank → пропущено при экспорте
-                if not rdl_is_na and csv_is_blank:
+                # RDL=реальное значение, CSV=blank ИЛИ CSV=NA → пропущено при экспорте
+                if not rdl_is_na and (csv_is_blank or csv_is_na):
                     gap = RdlCsvGap(
                         tag_name=tag_name,
                         property_name=prop_name,
@@ -773,17 +785,32 @@ def _detect_sql_csv_gaps(
             entry = hits[0]
             csv_val = entry.prop_value
             csv_uom = entry.prop_uom
-            sql_val_raw = sql_row.prop_value or ""
-            sql_uom_raw = sql_row.prop_uom or ""
-            if sql_val_raw.upper() in ("NA", "N/A") and csv_val.strip() == "":
+            sql_val_raw  = sql_row.prop_value or ""
+            sql_uom_raw  = sql_row.prop_uom or ""
+            sql_is_na    = sql_val_raw.upper() in ("NA", "N/A")
+            csv_is_na    = csv_val.strip().upper() in ("NA", "N/A")
+            csv_is_blank = csv_val.strip() == ""
+
+            # EARLY EXIT: оба NA — расхождений нет
+            if sql_is_na and csv_is_na:
+                pass
+            elif sql_is_na and csv_is_blank:
                 gap_list.append(CsvGap(
                     tag_name=sql_row.tag_name, property_name=sql_row.prop_name,
                     concept=concept, layer=layer, issue="CSV_NA_BLANK",
                     sql_value=sql_val_raw, sql_uom=sql_uom_raw,
                     csv_value=csv_val, csv_uom=csv_uom,
                 ))
-            elif sql_val_raw.strip() and not csv_val.strip():
-                # NEW: SQL имеет значение, CSV пустой (не NA) — ошибка экспорта
+            elif sql_is_na and not csv_is_blank:
+                # SQL=NA, CSV=реальное значение — неожиданный контент в экспорте
+                gap_list.append(CsvGap(
+                    tag_name=sql_row.tag_name, property_name=sql_row.prop_name,
+                    concept=concept, layer=layer, issue="CSV_EXTRA_VALUE",
+                    sql_value=sql_val_raw, sql_uom=sql_uom_raw,
+                    csv_value=csv_val, csv_uom=csv_uom,
+                ))
+            elif sql_val_raw.strip() and (csv_is_blank or csv_is_na):
+                # SQL имеет значение, CSV пустой или NA — ошибка экспорта
                 gap_list.append(CsvGap(
                     tag_name=sql_row.tag_name, property_name=sql_row.prop_name,
                     concept=concept, layer=layer, issue="CSV_VALUE_MISSING",
@@ -791,7 +818,7 @@ def _detect_sql_csv_gaps(
                     csv_value="<blank>", csv_uom=csv_uom,
                 ))
             elif not sql_val_raw.strip() and csv_val.strip():
-                # NEW: SQL пустой, CSV имеет значение — неожиданный контент в экспорте
+                # SQL пустой, CSV имеет значение — неожиданный контент в экспорте
                 gap_list.append(CsvGap(
                     tag_name=sql_row.tag_name, property_name=sql_row.prop_name,
                     concept=concept, layer=layer, issue="CSV_EXTRA_VALUE",
