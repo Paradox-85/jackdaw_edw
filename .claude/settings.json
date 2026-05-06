@@ -11,7 +11,6 @@
   "permissions": {
     "allow": ["Bash", "Edit","mcp__perplexity__*","mcp__proxmox__*","mcp__pgedge__*","mcp__tokensave__*"],
     "deny": [
-      "Read",
       "Bash(rm -rf /)",
       "Bash(rm -rf ~)",
       "Read(*.env*)",

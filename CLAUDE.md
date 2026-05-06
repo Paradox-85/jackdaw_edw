@@ -19,6 +19,16 @@
 
 ---
 
+## 🟢 Tokensave (Code Context) Usage — MANDATORY
+To maximize token compression and efficiency, **tokensave MCP tools MUST be your primary way to read, explore, and analyze the codebase.** 
+1. **NO NATIVE EXPLORATION:** Never use `Agent(subagent_type=Explore)`, native `Read`, `glob`, or `Bash` (cat, grep, head, tail, sed, awk, find) to search or read codebase files.
+2. **INITIAL CONTEXT:** Use `tokensave_context`, `tokensave_search`, `tokensave_files`, or `tokensave_affected` first to get a compressed semantic representation of the code.
+3. **SYMBOL LOOKUP:** Use `tokensave_body(symbol="...")`, `tokensave_callers`, or `tokensave_callees` to trace execution paths.
+4. **FALLBACK ONLY:** You may ONLY use native `Read` or `Bash(sed/cat)` if you need to make surgical, line-by-line edits to a file that you have ALREADY analyzed via tokensave, or if reading non-code files (logs, pure data).
+5. **TOOL ROUTING:** Never use tokensave tools (like `tokensave_body`) for DB queries. Tokensave is strictly for static codebase analysis.
+
+---
+
 ## 📚 Context on Demand
 | Keywords in conversation | Rule loaded |
 | :-- | :-- |
@@ -54,6 +64,7 @@
 
 | Situation | Use |
 |-----------|-----|
+| Explore/analyse Python or SQL files on disk | **tokensave MCP tools ONLY** (see rules above) |
 | Tech choice, lib API, framework | context7 — auto on keywords |
 | DB schema, cardinality, data quality | pgedge — `query_database` / `get_schema_info` directly (never curl) |
 | Architecture decision | pgedge first, then context7 — use `/model opus` |
