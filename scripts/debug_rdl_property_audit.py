@@ -71,6 +71,7 @@ COL_ENTITY_MSG   = "Entity Message"
 COL_RAM_CATEGORY = "RAM Property Category"
 
 EQUIP_NUMBER_PREFIX = "Equip_"
+TAG_FILTER: str | None = None  # устанавливается аргументом --tag
 
 
 # ---------------------------------------------------------------------------
@@ -419,10 +420,21 @@ def _detect_rdl_csv_gaps(
         rdl_val   = row.get(COL_PROP_VALUE, "").strip()
         rdl_uom   = row.get(COL_PROP_UOM, "").strip()
 
+        # Debug filter
+        if TAG_FILTER and entity_id.strip().upper() != TAG_FILTER:
+            continue
+        debug = TAG_FILTER is not None
+
         if not entity_id or not prop_code:
             continue
         if concept in SKIP_CONCEPTS:
+            if debug:
+                print(f"  → SKIPPED: concept {concept!r} is in SKIP_CONCEPTS")
             continue
+
+        if debug:
+            print(f"\n[RDL ROW] entity_id={entity_id!r}  prop={prop_code!r}  "
+                  f"concept={concept!r}  rdl_val={rdl_val!r}  rdl_uom={rdl_uom!r}")
 
         tag_upper = entity_id.upper()
         prop_upper = prop_code.upper()
@@ -434,8 +446,21 @@ def _detect_rdl_csv_gaps(
             lookup: Dict[Tuple[str, str], List[Tuple[str, str]]],
             layer_id: str,  # "010" or "011"
         ) -> None:
+            if debug:
+                print(f"  [check_lookup] layer={layer_id}  lookup_key={lookup_key!r}")
+                # Показать, к чему нормализуется lookup_key
+                sample_keys = [k for k in lookup if k == lookup_key][:5]
+                print(f"    equip keys in lookup matching first element: {sample_keys}")
+
             csv_entries = lookup.get(lookup_key, [])
-            
+
+            if debug:
+                print(f"    csv_entries found: {csv_entries!r}")
+                if not csv_entries:
+                    # Показать близкие ключи для обнаружения несоответствия нормализации
+                    close = [k for k in lookup if lookup_key in k or k in lookup_key][:5]
+                    print(f"    (no match) nearby prop keys: {close}")
+
             if not csv_entries:
                 # RDL_CSV_MISSING: property exists in RDL but not in CSV
                 gap = RdlCsvGap(
@@ -549,6 +574,9 @@ def _detect_rdl_sql_gaps(
         concept   = row.get(COL_RDL_CONCEPT, "").strip()
         rdl_val   = row.get(COL_PROP_VALUE, "").strip()
         rdl_uom   = row.get(COL_PROP_UOM, "").strip()
+
+        if TAG_FILTER and entity_id.strip().upper() != TAG_FILTER:
+            continue
 
         if not entity_id or not prop_code:
             continue
@@ -675,6 +703,8 @@ def _detect_sql_csv_gaps(
 
     for key, sql_row in sql_index.items():
         concept = sql_row.concept
+        if TAG_FILTER and sql_row.tag.strip().upper() != TAG_FILTER:
+            continue
         if concept in SKIP_CONCEPTS:
             continue
 
@@ -1434,12 +1464,22 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                    help="Output .md report path (default: rdl_audit_report.md in scripts/)")
     p.add_argument("--no-db", action="store_true",
                    help="Skip DB query entirely (offline mode)")
+    p.add_argument(
+        "--tag", default=None, metavar="TAG",
+        help="Debug mode: filter ALL layers to a single tag name. "
+             "Prints verbose trace for every RDL row of that tag."
+    )
     return p
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
+
+    global TAG_FILTER
+    TAG_FILTER = args.tag.strip().upper() if args.tag else None
+    if TAG_FILTER:
+        print(f"\n⚡ DEBUG MODE — single tag filter: {TAG_FILTER}\n")
 
     rdl_path    = Path(args.rdl)    if args.rdl    else DEV_RDL_PATH
     csv010_path = Path(args.csv010) if args.csv010 else DEV_CSV010
