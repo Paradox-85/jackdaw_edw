@@ -263,13 +263,19 @@ def _query_via_mcp(sql: str, mcp_url: str, mcp_token: str) -> list:
     import json
     import urllib.request
 
+    # JSON-RPC 2.0 request format
     payload = json.dumps({
-        "name": "query_database",
-        "arguments": {"sql": sql},
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "query_database",
+            "arguments": {"query": sql},  # CORRECT key: "query", not "sql"
+        },
     }).encode("utf-8")
 
     req = urllib.request.Request(
-        url=f"{mcp_url}/tools/call",
+        url=mcp_url,
         data=payload,
         headers={
             "Authorization": f"Bearer {mcp_token}",
@@ -281,13 +287,29 @@ def _query_via_mcp(sql: str, mcp_url: str, mcp_token: str) -> list:
     with urllib.request.urlopen(req, timeout=30) as resp:
         body = json.loads(resp.read().decode("utf-8"))
 
-    raw = body.get("content", [{}])[0].get("text", "[]")
-    data = json.loads(raw)
-
-    if not data:
+    # Extract TSV content from JSON-RPC response
+    # Format: {"result": {"content": [{"type": "text", "text": "TSV data"}]}}
+    raw = body.get("result", {}).get("content", [{}])[0].get("text", "")
+    
+    if not raw:
         return []
-    cols = list(data[0].keys())
-    return [tuple(row[c] for c in cols) for row in data]
+
+    # Parse TSV: first line = headers, remaining lines = data rows
+    tsv_lines = raw.strip().split(chr(10))  # chr(10) = newline
+    if not tsv_lines:
+        return []
+
+    headers = tsv_lines[0].split(chr(9))  # chr(9) = tab
+    rows = []
+    for line in tsv_lines[1:]:
+        if line.strip():
+            values = line.split(chr(9))
+            # Pad with empty strings if row is shorter than headers
+            while len(values) < len(headers):
+                values.append("")
+            rows.append(tuple(values[:len(headers)]))
+
+    return rows
 
 
 def _load_sql_data(
