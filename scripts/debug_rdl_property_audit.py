@@ -81,24 +81,21 @@ TAG_FILTER: str | None = None  # set at runtime via --tag
 # ---------------------------------------------------------------------------
 
 def _norm(s: str) -> str:
-    """Normalize property name for fuzzy key matching.
+    """Normalize to lowercase alphanumeric only — used for ALL lookup keys.
 
-    Removes all punctuation/separator characters (hyphens, dashes, slashes,
-    underscores, dots) and collapses whitespace, then lowercases.
+    Strips ALL non-alphanumeric characters and lowercases. Ensures consistent
+    key matching across RDL Excel, CSV, SQL, and --tag CLI argument regardless
+    of punctuation or spacing conventions in the source.
 
     Examples:
-        'Actuation-Closing'  -> 'actuation closing'
-        'ACTUATION - CLOSING' -> 'actuation closing'
-        'seat material'      -> 'seat material'
-        'SEAT MATERIAL'      -> 'seat material'
-        'N/A'               -> 'n a'   (acceptable — not used as a lookup key)
+        'JDA-CP-62001'        -> 'jdacp62001'
+        'jda cp 62001'        -> 'jdacp62001'
+        'Actuation-Closing'   -> 'actuationclosing'
+        'ACTUATION - CLOSING' -> 'actuationclosing'
+        'seat material'       -> 'seatmaterial'
+        'SEAT MATERIAL'       -> 'seatmaterial'
     """
-    s = s.strip().lower()
-    # Replace hyphens, en-dashes, em-dashes, slashes, underscores, dots
-    # with a single space, then collapse multiple spaces
-    s = re.sub(r'[\-–—/_\.]', ' ', s)
-    s = re.sub(r'\s+', ' ', s).strip()
-    return s
+    return re.sub(r'[^a-z0-9]', '', s.lower())
 
 
 SqlRow = namedtuple(
@@ -225,10 +222,44 @@ def _load_csv(path: Path) -> pd.DataFrame:
 # Normalization helpers
 # ---------------------------------------------------------------------------
 
-def _norm_value(val: str) -> str:
-    """Normalize value: strip whitespace."""
-    return val.strip()
+def _norm_value(s: str) -> str:
+    """Normalize a property value for COMPARISON only (never for display).
 
+    - Strips leading/trailing whitespace
+    - Collapses internal whitespace to single space
+    - Lowercases
+
+    Does NOT strip punctuation — '< 20s' and '<20s' are genuinely different
+    values that an engineer should review. Only invisible/formatting differences
+    (case, extra spaces) are eliminated.
+
+    Examples:
+        'Inconel 718'       -> 'inconel 718'
+        'INCONEL 718'       -> 'inconel 718'
+        'inconel  718'      -> 'inconel 718'   (double space collapsed)
+        '  YES '            -> 'yes'
+        'IP 66/67'          -> 'ip 66/67'
+        'IP66/67'           -> 'ip66/67'       (still different from above — correct)
+    """
+    return re.sub(r'\s+', ' ', s.strip()).lower()
+
+
+def _norm_uom(s: str) -> str:
+    """Normalize a UoM string for COMPARISON only (never for display).
+
+    - Strips leading/trailing whitespace
+    - Collapses internal whitespace
+    - Lowercases
+
+    Examples:
+        'KG'   -> 'kg'
+        'Kg'   -> 'kg'
+        'mm '  -> 'mm'
+        ' MM'  -> 'mm'
+        'deg C' -> 'deg c'
+        'Deg C' -> 'deg c'
+    """
+    return re.sub(r'\s+', ' ', s.strip()).lower()
 
 
 # ---------------------------------------------------------------------------
@@ -523,7 +554,7 @@ def _detect_rdl_csv_gaps(
                     continue
 
                 if not rdl_is_na and not csv_is_blank:
-                    if csv_val != rdl_val:
+                    if _norm_value(csv_val) != _norm_value(rdl_val):
                         gap = RdlCsvGap(
                             tag_name=tag_name,
                             property_name=prop_name,
@@ -541,7 +572,7 @@ def _detect_rdl_csv_gaps(
                             summary.rdl_csv_gaps_011.append(gap)
 
                 if rdl_uom and csv_uom:
-                    if csv_uom != rdl_uom:
+                    if _norm_uom(csv_uom) != _norm_uom(rdl_uom):
                         gap = RdlCsvGap(
                             tag_name=tag_name,
                             property_name=prop_name,
@@ -635,7 +666,7 @@ def _detect_rdl_sql_gaps(
                     sql_value=_sdv,
                     sql_uom=_sdu,
                 ))
-            elif rdl_val and sql_hit.prop_value and sql_hit.prop_value.upper() != rdl_val.upper():
+            elif rdl_val and sql_hit.prop_value and _norm_value(sql_hit.prop_value) != _norm_value(rdl_val):
                 summary.rdl_sql_gaps.append(RdlSqlGap(
                     tag_name=tag_name,
                     property_name=prop_id,
@@ -647,9 +678,9 @@ def _detect_rdl_sql_gaps(
                     sql_uom=_sdu,
                 ))
             else:
-                sql_uom_norm = (sql_hit.prop_uom or "").upper()
-                rdl_uom_norm = rdl_uom.upper()
-                if sql_uom_norm != rdl_uom_norm and not (sql_uom_norm == "" and rdl_uom_norm == ""):
+                if _norm_uom(sql_hit.prop_uom or "") != _norm_uom(rdl_uom) and not (
+                    (sql_hit.prop_uom or "").strip() == "" and rdl_uom.strip() == ""
+                ):
                     summary.rdl_sql_gaps.append(RdlSqlGap(
                         tag_name=tag_name,
                         property_name=prop_id,
@@ -741,23 +772,23 @@ def _detect_sql_csv_gaps(
             csv_uom = entry.prop_uom
             _sdv = sql_row.prop_value or "(NULL)"
             _sdu = sql_row.prop_uom or "(NULL)"
-            sql_val_norm = (sql_row.prop_value or "").upper()
-            csv_val_norm = csv_val.upper()
-            sql_uom_norm = (sql_row.prop_uom or "").upper()
-            csv_uom_norm = csv_uom.upper()
-            if sql_val_norm in ("NA", "N/A") and csv_val.strip() == "":
+            sql_val_cmp = _norm_value(sql_row.prop_value or "")
+            csv_val_cmp = _norm_value(csv_val)
+            sql_uom_cmp = _norm_uom(sql_row.prop_uom or "")
+            csv_uom_cmp = _norm_uom(csv_uom)
+            if sql_val_cmp in ("na", "n/a") and csv_val.strip() == "":
                 gap_list.append(CsvGap(
                     tag_name=sql_row.tag_name, property_name=sql_row.prop_name,
                     concept=concept, layer=layer, issue="CSV_NA_BLANK",
                     sql_value=_sdv, sql_uom=_sdu, csv_value=csv_val, csv_uom=csv_uom,
                 ))
-            elif sql_val_norm != csv_val_norm and not (sql_val_norm == "" and csv_val_norm == ""):
+            elif sql_val_cmp != csv_val_cmp and not (sql_val_cmp == "" and csv_val_cmp == ""):
                 gap_list.append(CsvGap(
                     tag_name=sql_row.tag_name, property_name=sql_row.prop_name,
                     concept=concept, layer=layer, issue="CSV_VALUE_MISMATCH",
                     sql_value=_sdv, sql_uom=_sdu, csv_value=csv_val, csv_uom=csv_uom,
                 ))
-            elif sql_uom_norm != csv_uom_norm and not (sql_uom_norm == "" and csv_uom_norm == ""):
+            elif sql_uom_cmp != csv_uom_cmp and not (sql_uom_cmp == "" and csv_uom_cmp == ""):
                 gap_list.append(CsvGap(
                     tag_name=sql_row.tag_name, property_name=sql_row.prop_name,
                     concept=concept, layer=layer, issue="CSV_UOM_MISMATCH",
