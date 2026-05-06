@@ -450,7 +450,7 @@ def _detect_rdl_csv_gaps(
         rdl_val   = row.get(COL_PROP_VALUE, "").strip()
         rdl_uom   = row.get(COL_PROP_UOM, "").strip()
 
-        if TAG_FILTER and _norm(tag_name) != TAG_FILTER.lower():
+        if TAG_FILTER and _norm(tag_name) != TAG_FILTER:
             continue
         debug = TAG_FILTER is not None
 
@@ -591,7 +591,7 @@ def _detect_rdl_sql_gaps(
         rdl_val   = row.get(COL_PROP_VALUE, "").strip()
         rdl_uom   = row.get(COL_PROP_UOM, "").strip()
 
-        if TAG_FILTER and _norm(tag_name) != TAG_FILTER.lower():
+        if TAG_FILTER and _norm(tag_name) != TAG_FILTER:
             continue
 
         if not tag_name or not prop_id:
@@ -713,7 +713,7 @@ def _detect_sql_csv_gaps(
 
     for key, sql_row in sql_index_by_name.items():
         concept = sql_row.mapping_concept
-        if TAG_FILTER and _norm(sql_row.tag_name) != TAG_FILTER.lower():
+        if TAG_FILTER and _norm(sql_row.tag_name) != TAG_FILTER:
             continue
         if concept in SKIP_CONCEPTS:
             continue
@@ -1359,9 +1359,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     global TAG_FILTER
-    TAG_FILTER = args.tag.strip().upper() if args.tag else None
+    TAG_FILTER = _norm(args.tag) if args.tag else None
     if TAG_FILTER:
-        print(f"\n⚡ DEBUG MODE — single tag filter: {TAG_FILTER}\n")
+        print(f"\n⚡ DEBUG MODE — single tag filter: {args.tag}\n")
 
     rdl_path    = Path(args.rdl)    if args.rdl    else DEV_RDL_PATH
     csv010_path = Path(args.csv010) if args.csv010 else DEV_CSV010
