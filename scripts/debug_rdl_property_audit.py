@@ -124,6 +124,10 @@ class AuditSummary:
     sql_l2_tag_count: int = 0         # sql rows with Functional or FP concept
     sql_l2_equip_count: int = 0       # sql rows with Physical or FP concept
 
+    # SQL_EXTRA summary (kept separate to avoid report bloat)
+    sql_extra_tags: List[str] = field(default_factory=list)
+    sql_extra_total_props: int = 0
+
     # LAYER 1 gaps (RDL vs SQL)
     rdl_sql_gaps: List[RdlSqlGap] = field(default_factory=list)
 
@@ -134,8 +138,11 @@ class AuditSummary:
     wrong_file_011: List[CsvGap] = field(default_factory=list)
     extra_in_010: List[CsvGap] = field(default_factory=list)
     extra_in_011: List[CsvGap] = field(default_factory=list)
-    duplicates_010: int = 0
-    duplicates_011: int = 0
+
+    # Raw CSV duplicates — independent of sql_index
+    csv_raw_duplicates_010: List[Tuple[str, str, int]] = field(default_factory=list)
+    csv_raw_duplicates_011: List[Tuple[str, str, int]] = field(default_factory=list)
+
     empty_property_names_010: int = 0
     empty_property_names_011: int = 0
     tags_missing_from_010: List[str] = field(default_factory=list)
@@ -186,7 +193,7 @@ def _equip_number(tag_name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# CSV lookup builders (unchanged from prior version)
+# CSV lookup builders
 # ---------------------------------------------------------------------------
 
 def _build_export_lookup_010(
@@ -230,6 +237,7 @@ def _load_sql_data(
 
     Returns:
         dict[(tag_name_upper, property_code_upper), SqlRow] — active non-Common rows.
+        Duplicate (tag, prop) pairs: first occurrence wins (silently, per DB artifact).
         Populates summary.sql_* fields in-place.
     """
     if no_db:
@@ -294,24 +302,26 @@ def _load_sql_data(
 
         conn.close()
 
-        summary.sql_total_rows       = stats[0]
-        summary.sql_unique_tags      = stats[1]
+        summary.sql_total_rows        = stats[0]
+        summary.sql_unique_tags       = stats[1]
         summary.sql_unique_properties = stats[2]
-        summary.sql_by_concept       = [(r[0] or "", r[1]) for r in by_concept]
-        summary.sql_top_properties   = [(r[0] or "", r[1]) for r in top_props]
+        summary.sql_by_concept        = [(r[0] or "", r[1]) for r in by_concept]
+        summary.sql_top_properties    = [(r[0] or "", r[1]) for r in top_props]
 
         sql_index: Dict[Tuple[str, str], SqlRow] = {}
         for tag, prop, concept, uom, value in data_rows:
             if not tag or not prop:
                 continue
             key = (tag.strip().upper(), prop.strip().upper())
-            sql_index[key] = SqlRow(
-                tag=tag.strip(),
-                prop=prop.strip(),
-                concept=(concept or "").strip(),
-                uom=(uom or "").strip(),
-                value=(value or "").strip(),
-            )
+            # First-occurrence-wins: the 70 known duplicate pairs are a DB artifact
+            if key not in sql_index:
+                sql_index[key] = SqlRow(
+                    tag=tag.strip(),
+                    prop=prop.strip(),
+                    concept=(concept or "").strip(),
+                    uom=(uom.strip() if uom is not None else None),
+                    value=(value.strip() if value is not None else None),
+                )
 
         return sql_index
 
@@ -368,8 +378,12 @@ def _detect_rdl_sql_gaps(
                 sql_uom="",
             ))
         else:
+            _sdv = sql_hit.value if sql_hit.value is not None else "(NULL)"
+            _sdu = sql_hit.uom if sql_hit.uom is not None else "(NULL)"
             # NA_BLANK check must precede VALUE_MISMATCH
-            if rdl_val.upper() in ("NA", "N/A") and (not sql_hit.value or sql_hit.value.strip() == ""):
+            if rdl_val.upper() in ("NA", "N/A") and (
+                sql_hit.value is None or sql_hit.value.strip() == ""
+            ):
                 summary.rdl_sql_gaps.append(RdlSqlGap(
                     tag_name=entity_id,
                     property_name=prop_code,
@@ -377,10 +391,10 @@ def _detect_rdl_sql_gaps(
                     issue="SQL_NA_BLANK",
                     rdl_value=rdl_val,
                     rdl_uom=rdl_uom,
-                    sql_value=sql_hit.value,
-                    sql_uom=sql_hit.uom,
+                    sql_value=_sdv,
+                    sql_uom=_sdu,
                 ))
-            elif (rdl_val and sql_hit.value
+            elif (rdl_val and sql_hit.value is not None
                   and sql_hit.value.upper() != rdl_val.upper()):
                 summary.rdl_sql_gaps.append(RdlSqlGap(
                     tag_name=entity_id,
@@ -389,39 +403,57 @@ def _detect_rdl_sql_gaps(
                     issue="SQL_VALUE_MISMATCH",
                     rdl_value=rdl_val,
                     rdl_uom=rdl_uom,
-                    sql_value=sql_hit.value,
-                    sql_uom=sql_hit.uom,
+                    sql_value=_sdv,
+                    sql_uom=_sdu,
                 ))
-            elif (rdl_uom and sql_hit.uom
-                  and sql_hit.uom.upper() != rdl_uom.upper()):
-                summary.rdl_sql_gaps.append(RdlSqlGap(
-                    tag_name=entity_id,
-                    property_name=prop_code,
-                    concept=concept,
-                    issue="SQL_UOM_MISMATCH",
-                    rdl_value=rdl_val,
-                    rdl_uom=rdl_uom,
-                    sql_value=sql_hit.value,
-                    sql_uom=sql_hit.uom,
-                ))
+            else:
+                sql_uom_norm = (sql_hit.uom or "").upper()
+                rdl_uom_norm = rdl_uom.upper()
+                if sql_uom_norm != rdl_uom_norm and not (sql_uom_norm == "" and rdl_uom_norm == ""):
+                    summary.rdl_sql_gaps.append(RdlSqlGap(
+                        tag_name=entity_id,
+                        property_name=prop_code,
+                        concept=concept,
+                        issue="SQL_UOM_MISMATCH",
+                        rdl_value=rdl_val,
+                        rdl_uom=rdl_uom,
+                        sql_value=_sdv,
+                        sql_uom=_sdu,
+                    ))
 
     summary.tags_in_rdl = len({k[0] for k in rdl_keys})
 
-    # SQL_EXTRA: in sql_index but not in RDL (non-Common only)
+    # SQL_EXTRA: in sql_index but not in RDL — capped at 200 rows in report
+    # sql_index has ~169K non-Common rows; RDL covers only a subset → extras are expected
+    sql_extra_by_tag: Dict[str, List[RdlSqlGap]] = {}
     for key, sql_row in sql_index.items():
         if sql_row.concept in SKIP_CONCEPTS:
             continue
         if key not in rdl_keys:
-            summary.rdl_sql_gaps.append(RdlSqlGap(
+            gap = RdlSqlGap(
                 tag_name=sql_row.tag,
                 property_name=sql_row.prop,
                 concept=sql_row.concept,
                 issue="SQL_EXTRA",
                 rdl_value="",
                 rdl_uom="",
-                sql_value=sql_row.value,
-                sql_uom=sql_row.uom,
-            ))
+                sql_value=sql_row.value if sql_row.value is not None else "(NULL)",
+                sql_uom=sql_row.uom if sql_row.uom is not None else "(NULL)",
+            )
+            sql_extra_by_tag.setdefault(sql_row.tag, []).append(gap)
+
+    summary.sql_extra_tags = sorted(sql_extra_by_tag.keys())
+    summary.sql_extra_total_props = sum(len(v) for v in sql_extra_by_tag.values())
+    # Append at most 200 extra gaps into rdl_sql_gaps for the detail table
+    capped = 0
+    for gaps_for_tag in sql_extra_by_tag.values():
+        if capped >= 200:
+            break
+        for gap in gaps_for_tag:
+            if capped >= 200:
+                break
+            summary.rdl_sql_gaps.append(gap)
+            capped += 1
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +467,9 @@ def _detect_sql_csv_gaps(
     summary: AuditSummary,
 ) -> None:
     """Populate summary.csv_gaps_010/011 by comparing sql_index against CSV lookups."""
+    if not sql_index:
+        return   # DB unavailable — skip to avoid massive false positives
+
     tags_needing_010: set = set()
     tags_needing_011: set = set()
 
@@ -458,8 +493,8 @@ def _detect_sql_csv_gaps(
                     concept=concept,
                     layer="010",
                     issue="CSV_MISSING",
-                    sql_value=sql_row.value,
-                    sql_uom=sql_row.uom,
+                    sql_value=sql_row.value if sql_row.value is not None else "(NULL)",
+                    sql_uom=sql_row.uom if sql_row.uom is not None else "(NULL)",
                     csv_value="",
                     csv_uom="",
                 ))
@@ -470,48 +505,53 @@ def _detect_sql_csv_gaps(
                     concept=concept,
                     layer="010",
                     issue=f"CSV_DUPLICATE ({len(hits)} rows)",
-                    sql_value=sql_row.value,
-                    sql_uom=sql_row.uom,
+                    sql_value=sql_row.value if sql_row.value is not None else "(NULL)",
+                    sql_uom=sql_row.uom if sql_row.uom is not None else "(NULL)",
                     csv_value=hits[0][0],
                     csv_uom=hits[0][1],
                 ))
             else:
                 csv_val, csv_uom = hits[0]
+                _sdv = sql_row.value if sql_row.value is not None else "(NULL)"
+                _sdu = sql_row.uom if sql_row.uom is not None else "(NULL)"
+                sql_val_norm = (sql_row.value or "").upper()
+                csv_val_norm = csv_val.upper()
+                sql_uom_norm = (sql_row.uom or "").upper()
+                csv_uom_norm = csv_uom.upper()
                 # NA_BLANK check must precede VALUE_MISMATCH
-                if (sql_row.value and sql_row.value.upper() in ("NA", "N/A")
-                        and csv_val.strip() == ""):
+                if sql_val_norm in ("NA", "N/A") and csv_val.strip() == "":
                     summary.csv_gaps_010.append(CsvGap(
                         tag_name=sql_row.tag,
                         property_name=sql_row.prop,
                         concept=concept,
                         layer="010",
                         issue="CSV_NA_BLANK",
-                        sql_value=sql_row.value,
-                        sql_uom=sql_row.uom,
+                        sql_value=_sdv,
+                        sql_uom=_sdu,
                         csv_value=csv_val,
                         csv_uom=csv_uom,
                     ))
-                elif sql_row.value and csv_val and csv_val.upper() != sql_row.value.upper():
+                elif sql_val_norm != csv_val_norm and not (sql_val_norm == "" and csv_val_norm == ""):
                     summary.csv_gaps_010.append(CsvGap(
                         tag_name=sql_row.tag,
                         property_name=sql_row.prop,
                         concept=concept,
                         layer="010",
                         issue="CSV_VALUE_MISMATCH",
-                        sql_value=sql_row.value,
-                        sql_uom=sql_row.uom,
+                        sql_value=_sdv,
+                        sql_uom=_sdu,
                         csv_value=csv_val,
                         csv_uom=csv_uom,
                     ))
-                elif sql_row.uom and csv_uom and csv_uom.upper() != sql_row.uom.upper():
+                elif sql_uom_norm != csv_uom_norm and not (sql_uom_norm == "" and csv_uom_norm == ""):
                     summary.csv_gaps_010.append(CsvGap(
                         tag_name=sql_row.tag,
                         property_name=sql_row.prop,
                         concept=concept,
                         layer="010",
                         issue="CSV_UOM_MISMATCH",
-                        sql_value=sql_row.value,
-                        sql_uom=sql_row.uom,
+                        sql_value=_sdv,
+                        sql_uom=_sdu,
                         csv_value=csv_val,
                         csv_uom=csv_uom,
                     ))
@@ -531,8 +571,8 @@ def _detect_sql_csv_gaps(
                     concept=concept,
                     layer="011",
                     issue="CSV_MISSING",
-                    sql_value=sql_row.value,
-                    sql_uom=sql_row.uom,
+                    sql_value=sql_row.value if sql_row.value is not None else "(NULL)",
+                    sql_uom=sql_row.uom if sql_row.uom is not None else "(NULL)",
                     csv_value="",
                     csv_uom="",
                 ))
@@ -543,47 +583,53 @@ def _detect_sql_csv_gaps(
                     concept=concept,
                     layer="011",
                     issue=f"CSV_DUPLICATE ({len(hits)} rows)",
-                    sql_value=sql_row.value,
-                    sql_uom=sql_row.uom,
+                    sql_value=sql_row.value if sql_row.value is not None else "(NULL)",
+                    sql_uom=sql_row.uom if sql_row.uom is not None else "(NULL)",
                     csv_value=hits[0][0],
                     csv_uom=hits[0][1],
                 ))
             else:
                 csv_val, csv_uom = hits[0]
-                if (sql_row.value and sql_row.value.upper() in ("NA", "N/A")
-                        and csv_val.strip() == ""):
+                _sdv = sql_row.value if sql_row.value is not None else "(NULL)"
+                _sdu = sql_row.uom if sql_row.uom is not None else "(NULL)"
+                sql_val_norm = (sql_row.value or "").upper()
+                csv_val_norm = csv_val.upper()
+                sql_uom_norm = (sql_row.uom or "").upper()
+                csv_uom_norm = csv_uom.upper()
+                # NA_BLANK check must precede VALUE_MISMATCH
+                if sql_val_norm in ("NA", "N/A") and csv_val.strip() == "":
                     summary.csv_gaps_011.append(CsvGap(
                         tag_name=sql_row.tag,
                         property_name=sql_row.prop,
                         concept=concept,
                         layer="011",
                         issue="CSV_NA_BLANK",
-                        sql_value=sql_row.value,
-                        sql_uom=sql_row.uom,
+                        sql_value=_sdv,
+                        sql_uom=_sdu,
                         csv_value=csv_val,
                         csv_uom=csv_uom,
                     ))
-                elif sql_row.value and csv_val and csv_val.upper() != sql_row.value.upper():
+                elif sql_val_norm != csv_val_norm and not (sql_val_norm == "" and csv_val_norm == ""):
                     summary.csv_gaps_011.append(CsvGap(
                         tag_name=sql_row.tag,
                         property_name=sql_row.prop,
                         concept=concept,
                         layer="011",
                         issue="CSV_VALUE_MISMATCH",
-                        sql_value=sql_row.value,
-                        sql_uom=sql_row.uom,
+                        sql_value=_sdv,
+                        sql_uom=_sdu,
                         csv_value=csv_val,
                         csv_uom=csv_uom,
                     ))
-                elif sql_row.uom and csv_uom and csv_uom.upper() != sql_row.uom.upper():
+                elif sql_uom_norm != csv_uom_norm and not (sql_uom_norm == "" and csv_uom_norm == ""):
                     summary.csv_gaps_011.append(CsvGap(
                         tag_name=sql_row.tag,
                         property_name=sql_row.prop,
                         concept=concept,
                         layer="011",
                         issue="CSV_UOM_MISMATCH",
-                        sql_value=sql_row.value,
-                        sql_uom=sql_row.uom,
+                        sql_value=_sdv,
+                        sql_uom=_sdu,
                         csv_value=csv_val,
                         csv_uom=csv_uom,
                     ))
@@ -606,6 +652,9 @@ def _detect_wrong_and_extra(
     summary: AuditSummary,
 ) -> None:
     """Detect properties in the wrong CSV file or absent from sql_index entirely."""
+    if not sql_index:
+        return   # DB unavailable — every CSV row would be EXTRA_UNKNOWN_TAG (false positive)
+
     sql_tag_set = {k[0] for k in sql_index}
 
     for _, row in df010.iterrows():
@@ -634,8 +683,8 @@ def _detect_wrong_and_extra(
                 concept=sql_row.concept,
                 layer="010",
                 issue="CSV_WRONG_FILE",
-                sql_value=sql_row.value,
-                sql_uom=sql_row.uom,
+                sql_value=sql_row.value if sql_row.value is not None else "(NULL)",
+                sql_uom=sql_row.uom if sql_row.uom is not None else "(NULL)",
                 csv_value=row.get("PROPERTY_VALUE", ""),
                 csv_uom=row.get("PROPERTY_VALUE_UOM", ""),
             ))
@@ -668,15 +717,15 @@ def _detect_wrong_and_extra(
                 concept=sql_row.concept,
                 layer="011",
                 issue="CSV_WRONG_FILE",
-                sql_value=sql_row.value,
-                sql_uom=sql_row.uom,
+                sql_value=sql_row.value if sql_row.value is not None else "(NULL)",
+                sql_uom=sql_row.uom if sql_row.uom is not None else "(NULL)",
                 csv_value=row.get("PROPERTY_VALUE", ""),
                 csv_uom=row.get("PROPERTY_VALUE_UOM", ""),
             ))
 
 
 # ---------------------------------------------------------------------------
-# Structural checks (duplicates, empty names) — unchanged logic
+# Structural checks (empty names only — duplicates handled via raw lookup)
 # ---------------------------------------------------------------------------
 
 def _check_structural(
@@ -684,15 +733,11 @@ def _check_structural(
     df011: pd.DataFrame,
     summary: AuditSummary,
 ) -> None:
-    """Check for duplicates and empty property names in export files."""
-    if "TAG_NAME" in df010.columns and "PROPERTY_NAME" in df010.columns:
-        dup010 = df010.duplicated(subset=["TAG_NAME", "PROPERTY_NAME"], keep=False)
-        summary.duplicates_010 = int(dup010.sum())
+    """Check for empty property names in export files."""
+    if "PROPERTY_NAME" in df010.columns:
         summary.empty_property_names_010 = int((df010["PROPERTY_NAME"].str.strip() == "").sum())
 
-    if "EQUIPMENT_NUMBER" in df011.columns and "PROPERTY_NAME" in df011.columns:
-        dup011 = df011.duplicated(subset=["EQUIPMENT_NUMBER", "PROPERTY_NAME"], keep=False)
-        summary.duplicates_011 = int(dup011.sum())
+    if "PROPERTY_NAME" in df011.columns:
         summary.empty_property_names_011 = int((df011["PROPERTY_NAME"].str.strip() == "").sum())
 
 
@@ -780,7 +825,7 @@ def render_report(
     n_sql_mismatch   = sum(1 for g in summary.rdl_sql_gaps if g.issue == "SQL_VALUE_MISMATCH")
     n_sql_uom        = sum(1 for g in summary.rdl_sql_gaps if g.issue == "SQL_UOM_MISMATCH")
     n_sql_na         = sum(1 for g in summary.rdl_sql_gaps if g.issue == "SQL_NA_BLANK")
-    n_sql_extra      = sum(1 for g in summary.rdl_sql_gaps if g.issue == "SQL_EXTRA")
+    n_sql_extra      = summary.sql_extra_total_props   # use the full count, not the 200-row cap
     n_csv_miss_010   = sum(1 for g in summary.csv_gaps_010 if g.issue == "CSV_MISSING")
     n_csv_miss_011   = sum(1 for g in summary.csv_gaps_011 if g.issue == "CSV_MISSING")
     n_csv_mm_010     = sum(1 for g in summary.csv_gaps_010 if g.issue == "CSV_VALUE_MISMATCH")
@@ -824,12 +869,6 @@ def render_report(
             "These were imported but not exported. Check EIS export filters."
         )
     lines.append("")
-
-    # Structural checks
-    lines.append("### Structural Checks")
-    lines.append("")
-    lines.append(f"- {'🔁' if summary.duplicates_010 > 0 else '✅'} File 010 duplicate rows (TAG_NAME + PROPERTY_NAME): **{summary.duplicates_010}**")
-    lines.append(f"- {'🔁' if summary.duplicates_011 > 0 else '✅'} File 011 duplicate rows (EQUIPMENT_NUMBER + PROPERTY_NAME): **{summary.duplicates_011}**")
     lines.append(f"- {'⚠️' if summary.empty_property_names_010 > 0 else '✅'} File 010 rows with empty PROPERTY_NAME: **{summary.empty_property_names_010}**")
     lines.append(f"- {'⚠️' if summary.empty_property_names_011 > 0 else '✅'} File 011 rows with empty PROPERTY_NAME: **{summary.empty_property_names_011}**")
     lines.append("")
@@ -884,11 +923,10 @@ def render_report(
         lines.append("")
     else:
         for issue_type, header in [
-            ("SQL_MISSING",       "⛔ SQL_MISSING — Critical: in RDL, absent from database"),
-            ("SQL_VALUE_MISMATCH","⚠️ SQL_VALUE_MISMATCH"),
-            ("SQL_UOM_MISMATCH",  "📐 SQL_UOM_MISMATCH"),
-            ("SQL_NA_BLANK",      "🔕 SQL_NA_BLANK"),
-            ("SQL_EXTRA",         "➕ SQL_EXTRA — In SQL but not in RDL"),
+            ("SQL_MISSING",        "⛔ SQL_MISSING — Critical: in RDL, absent from database"),
+            ("SQL_VALUE_MISMATCH", "⚠️ SQL_VALUE_MISMATCH"),
+            ("SQL_UOM_MISMATCH",   "📐 SQL_UOM_MISMATCH"),
+            ("SQL_NA_BLANK",       "🔕 SQL_NA_BLANK"),
         ]:
             subset = [g for g in summary.rdl_sql_gaps if g.issue == issue_type]
             if not subset:
@@ -897,6 +935,28 @@ def render_report(
             lines.append("")
             lines.extend(_render_rdl_sql_gap_table(subset))
             lines.append("")
+
+        # SQL_EXTRA — potentially huge; show callout + capped table
+        extra_subset = [g for g in summary.rdl_sql_gaps if g.issue == "SQL_EXTRA"]
+        if extra_subset or summary.sql_extra_total_props > 0:
+            lines.append(f"### ➕ SQL_EXTRA — In SQL but not in RDL ({summary.sql_extra_total_props:,} total)")
+            lines.append("")
+            n_extra_tags = len(summary.sql_extra_tags)
+            tag_list = ", ".join(summary.sql_extra_tags[:50])
+            if n_extra_tags > 50:
+                tag_list += "…"
+            lines.append(
+                f"> ℹ️ **SQL_EXTRA:** {summary.sql_extra_total_props:,} properties across "
+                f"{n_extra_tags:,} tags are present in SQL but not in the RDL file. "
+                f"Showing first {len(extra_subset)} rows below."
+            )
+            if n_extra_tags > 0:
+                lines.append(f">")
+                lines.append(f"> **Tag list:** {tag_list}")
+            lines.append("")
+            if extra_subset:
+                lines.extend(_render_rdl_sql_gap_table(extra_subset))
+                lines.append("")
 
     lines.append("---")
     lines.append("")
@@ -923,10 +983,10 @@ def render_report(
             return
 
         for issue_type, header in [
-            ("CSV_MISSING",       "❌ CSV_MISSING — In SQL, absent from export"),
-            ("CSV_VALUE_MISMATCH","⚠️ CSV_VALUE_MISMATCH"),
-            ("CSV_UOM_MISMATCH",  "📐 CSV_UOM_MISMATCH"),
-            ("CSV_NA_BLANK",      "🔕 CSV_NA_BLANK"),
+            ("CSV_MISSING",        "❌ CSV_MISSING — In SQL, absent from export"),
+            ("CSV_VALUE_MISMATCH", "⚠️ CSV_VALUE_MISMATCH"),
+            ("CSV_UOM_MISMATCH",   "📐 CSV_UOM_MISMATCH"),
+            ("CSV_NA_BLANK",       "🔕 CSV_NA_BLANK"),
         ]:
             subset = [g for g in gaps if g.issue == issue_type]
             if not subset:
@@ -983,6 +1043,44 @@ def render_report(
         for t in summary.tags_missing_from_011:
             lines.append(f"- `{t}`")
         lines.append("")
+
+    lines.append("---")
+    lines.append("")
+
+    # ── Raw CSV Duplicates (independent of SQL) ───────────────────────────────
+    lines.append("## 🔁 Raw CSV Duplicates (independent of SQL)")
+    lines.append("")
+    lines.append("> Duplicate (key, PROPERTY_NAME) pairs found in the raw CSV files — "
+                 "independent of whether the tag exists in the database.")
+    lines.append("")
+
+    if not summary.csv_raw_duplicates_010 and not summary.csv_raw_duplicates_011:
+        lines.append("✅ No raw duplicates in either file.")
+        lines.append("")
+    else:
+        if summary.csv_raw_duplicates_010:
+            lines.append(f"### File 010 ({len(summary.csv_raw_duplicates_010):,} duplicate keys)")
+            lines.append("")
+            lines.append("| Tag Name | Property Name | Row Count |")
+            lines.append("|----------|---------------|----------:|")
+            for tag, prop, cnt in sorted(summary.csv_raw_duplicates_010):
+                lines.append(f"| `{_escape(tag)}` | `{_escape(prop)}` | {cnt} |")
+            lines.append("")
+        else:
+            lines.append("✅ File 010: no raw duplicates.")
+            lines.append("")
+
+        if summary.csv_raw_duplicates_011:
+            lines.append(f"### File 011 ({len(summary.csv_raw_duplicates_011):,} duplicate keys)")
+            lines.append("")
+            lines.append("| Equipment Number | Property Name | Row Count |")
+            lines.append("|------------------|---------------|----------:|")
+            for equip, prop, cnt in sorted(summary.csv_raw_duplicates_011):
+                lines.append(f"| `{_escape(equip)}` | `{_escape(prop)}` | {cnt} |")
+            lines.append("")
+        else:
+            lines.append("✅ File 011: no raw duplicates.")
+            lines.append("")
 
     lines.append("---")
     lines.append("")
@@ -1077,12 +1175,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     _detect_rdl_sql_gaps(rdl, sql_index, summary)
     n_l1_missing  = sum(1 for g in summary.rdl_sql_gaps if g.issue == "SQL_MISSING")
     n_l1_mismatch = sum(1 for g in summary.rdl_sql_gaps if g.issue == "SQL_VALUE_MISMATCH")
-    print(f"done. SQL_MISSING={n_l1_missing:,}  SQL_MISMATCH={n_l1_mismatch:,}")
+    print(f"done. SQL_MISSING={n_l1_missing:,}  SQL_MISMATCH={n_l1_mismatch:,}  SQL_EXTRA={summary.sql_extra_total_props:,}")
 
     print("Building CSV lookups...", end=" ", flush=True)
     lookup_010 = _build_export_lookup_010(df010)
     lookup_011 = _build_export_lookup_011(df011)
     print(f"010 keys={len(lookup_010):,}  011 keys={len(lookup_011):,}")
+
+    # Detect raw CSV duplicates — independent of sql_index
+    for (tag, prop), hits in lookup_010.items():
+        if len(hits) > 1:
+            summary.csv_raw_duplicates_010.append((tag, prop, len(hits)))
+    for (equip, prop), hits in lookup_011.items():
+        if len(hits) > 1:
+            summary.csv_raw_duplicates_011.append((equip, prop, len(hits)))
 
     print("LAYER 2 — SQL vs CSV...", end=" ", flush=True)
     _detect_sql_csv_gaps(sql_index, lookup_010, lookup_011, summary)
