@@ -107,6 +107,19 @@ class CsvGap:
 
 
 @dataclass
+class RdlCsvGap:
+    tag_name: str
+    property_name: str
+    concept: str
+    layer: str          # "010" | "011" | "010+011"
+    issue: str          # RDL_CSV_MISSING | RDL_CSV_VALUE_MISMATCH | RDL_CSV_UOM_MISMATCH | RDL_CSV_NA_BLANK
+    rdl_value: str
+    rdl_uom: str
+    csv_value: str
+    csv_uom: str
+
+
+@dataclass
 class AuditSummary:
     # RDL facts
     rdl_row_count_pre_filter: int = 0
@@ -149,6 +162,12 @@ class AuditSummary:
     empty_property_names_011: int = 0
     tags_missing_from_010: List[str] = field(default_factory=list)
     tags_missing_from_011: List[str] = field(default_factory=list)
+
+    # LAYER 0 gaps (RDL vs CSV — no SQL required)
+    rdl_csv_gaps_010: List["RdlCsvGap"] = field(default_factory=list)
+    rdl_csv_gaps_011: List["RdlCsvGap"] = field(default_factory=list)
+    rdl_csv_missing_tags_010: List[str] = field(default_factory=list)
+    rdl_csv_missing_tags_011: List[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +252,44 @@ def _build_export_lookup_011(
 # DB — load SQL data for Layer 1 and Layer 2 reference
 # ---------------------------------------------------------------------------
 
+def _query_via_mcp(sql: str, mcp_url: str, mcp_token: str) -> list:
+    """Execute SQL via pgedge MCP HTTP endpoint and return rows as list of tuples.
+
+    MCP tool call: query_database
+    Endpoint: POST {mcp_url}/tools/call
+    Auth: Bearer {mcp_token}
+    Response: {"content": [{"type": "text", "text": "<json string>"}]}
+    """
+    import json
+    import urllib.request
+
+    payload = json.dumps({
+        "name": "query_database",
+        "arguments": {"sql": sql},
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        url=f"{mcp_url}/tools/call",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {mcp_token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        body = json.loads(resp.read().decode("utf-8"))
+
+    raw = body.get("content", [{}])[0].get("text", "[]")
+    data = json.loads(raw)
+
+    if not data:
+        return []
+    cols = list(data[0].keys())
+    return [tuple(row[c] for c in cols) for row in data]
+
+
 def _load_sql_data(
     summary: AuditSummary,
     no_db: bool,
@@ -253,65 +310,48 @@ def _load_sql_data(
     try:
         import os
 
-        import psycopg2
+        mcp_url   = os.getenv("MCP_DB_URL",   "https://ai-db.adzv-pt.dev/mcp/v1")
+        mcp_token = os.getenv("MCP_DB_TOKEN", "ShZzR1FkhTA7ggZRmdF8dQAcfIaD4LHs7HY88W7al5U=")
 
-        dsn = os.getenv("EDW_DB_URL") or os.getenv("DATABASE_URL")
-        if dsn:
-            conn = psycopg2.connect(dsn, connect_timeout=10)
-        else:
-            conn = psycopg2.connect(
-                host=os.getenv("DB_HOST", "localhost"),
-                port=int(os.getenv("DB_PORT", "5432")),
-                dbname=os.getenv("DB_NAME", "engineering_core"),
-                user=os.getenv("DB_USER"),
-                password=os.getenv("DB_PASSWORD"),
-                connect_timeout=10,
-            )
+        def _exec(sql: str) -> list:
+            return _query_via_mcp(sql, mcp_url, mcp_token)
 
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT tag_name_raw, property_code_raw, mapping_concept_raw,
-                           property_uom_raw, property_value
-                    FROM project_core.property_value
-                    WHERE object_status = 'Active'
-                      AND mapping_concept_raw NOT IN ('Common', '')
-                      AND mapping_concept_raw IS NOT NULL
-                """)
-                data_rows = cur.fetchall()
+        data_rows = _exec("""
+            SELECT tag_name_raw, property_code_raw, mapping_concept_raw,
+                   property_uom_raw, property_value
+            FROM project_core.property_value
+            WHERE object_status = 'Active'
+              AND mapping_concept_raw NOT IN ('Common', '')
+              AND mapping_concept_raw IS NOT NULL
+        """)
 
-                cur.execute("""
-                    SELECT COUNT(*),
-                           COUNT(DISTINCT tag_name_raw),
-                           COUNT(DISTINCT property_code_raw)
-                    FROM project_core.property_value
-                    WHERE object_status = 'Active'
-                """)
-                stats = cur.fetchone()
+        stats = _exec("""
+            SELECT COUNT(*) AS total,
+                   COUNT(DISTINCT tag_name_raw) AS utags,
+                   COUNT(DISTINCT property_code_raw) AS uprops
+            FROM project_core.property_value
+            WHERE object_status = 'Active'
+        """)[0]
 
-                cur.execute("""
-                    SELECT mapping_concept_raw, COUNT(*) AS cnt
-                    FROM project_core.property_value
-                    WHERE object_status = 'Active'
-                    GROUP BY mapping_concept_raw ORDER BY cnt DESC
-                """)
-                by_concept = cur.fetchall()
+        by_concept = _exec("""
+            SELECT mapping_concept_raw, COUNT(*) AS cnt
+            FROM project_core.property_value
+            WHERE object_status = 'Active'
+            GROUP BY mapping_concept_raw ORDER BY cnt DESC
+        """)
 
-                cur.execute("""
-                    SELECT property_code_raw, COUNT(*) AS cnt
-                    FROM project_core.property_value
-                    WHERE object_status = 'Active'
-                    GROUP BY property_code_raw ORDER BY cnt DESC LIMIT 10
-                """)
-                top_props = cur.fetchall()
+        top_props = _exec("""
+            SELECT property_code_raw, COUNT(*) AS cnt
+            FROM project_core.property_value
+            WHERE object_status = 'Active'
+            GROUP BY property_code_raw ORDER BY cnt DESC LIMIT 10
+        """)
 
-        conn.close()
-
-        summary.sql_total_rows        = stats[0]
-        summary.sql_unique_tags       = stats[1]
-        summary.sql_unique_properties = stats[2]
-        summary.sql_by_concept        = [(r[0] or "", r[1]) for r in by_concept]
-        summary.sql_top_properties    = [(r[0] or "", r[1]) for r in top_props]
+        summary.sql_total_rows        = int(stats[0])
+        summary.sql_unique_tags       = int(stats[1])
+        summary.sql_unique_properties = int(stats[2])
+        summary.sql_by_concept        = [(str(r[0] or ""), int(r[1])) for r in by_concept]
+        summary.sql_top_properties    = [(str(r[0] or ""), int(r[1])) for r in top_props]
 
         sql_index: Dict[Tuple[str, str], SqlRow] = {}
         for tag, prop, concept, uom, value in data_rows:
@@ -337,6 +377,139 @@ def _load_sql_data(
 
 
 # ---------------------------------------------------------------------------
+# LAYER 0: RDL vs CSV gap detection (direct, no SQL)
+# ---------------------------------------------------------------------------
+
+def _detect_rdl_csv_gaps(
+    rdl: pd.DataFrame,
+    lookup_010: Dict[Tuple[str, str], List[Tuple[str, str]]],
+    lookup_011: Dict[Tuple[str, str], List[Tuple[str, str]]],
+    summary: AuditSummary,
+) -> None:
+    """Populate summary.rdl_csv_gaps_010 and _011 by comparing RDL against CSV lookups.
+    
+    This layer does NOT require SQL — useful when DB is unavailable.
+    """
+    for _, row in rdl.iterrows():
+        entity_id = row.get(COL_ENTITY_ID, "").strip()
+        prop_code = row.get(COL_RAM_PROP_CODE, "").strip()
+        concept   = row.get(COL_RDL_CONCEPT, "").strip()
+        rdl_val   = row.get(COL_PROP_VALUE, "").strip()
+        rdl_uom   = row.get(COL_PROP_UOM, "").strip()
+
+        if not entity_id or not prop_code:
+            continue
+        if concept in SKIP_CONCEPTS:
+            continue
+
+        tag_upper = entity_id.upper()
+        prop_upper = prop_code.upper()
+        equip_upper = f"Equip_{tag_upper}"
+
+        # Helper: check against a lookup and detect gaps
+        def check_lookup(
+            lookup_key: Tuple[str, str],
+            lookup: Dict[Tuple[str, str], List[Tuple[str, str]]],
+            layer_id: str,  # "010" or "011"
+        ) -> None:
+            csv_entries = lookup.get(lookup_key, [])
+            
+            if not csv_entries:
+                # RDL_CSV_MISSING: property exists in RDL but not in CSV
+                gap = RdlCsvGap(
+                    tag_name=entity_id,
+                    property_name=prop_code,
+                    concept=concept,
+                    layer=layer_id,
+                    issue="RDL_CSV_MISSING",
+                    rdl_value=rdl_val,
+                    rdl_uom=rdl_uom,
+                    csv_value="<missing>",
+                    csv_uom="<missing>",
+                )
+                if layer_id == "010":
+                    summary.rdl_csv_gaps_010.append(gap)
+                else:
+                    summary.rdl_csv_gaps_011.append(gap)
+                return
+
+            # Check each CSV entry for mismatches
+            for csv_val, csv_uom in csv_entries:
+                # Check for NA/blank mismatch
+                rdl_is_na = rdl_val.upper() in ("NA", "N/A", "N/A")
+                csv_is_blank = not csv_val or csv_val.strip() == ""
+                
+                if rdl_is_na and csv_is_blank:
+                    gap = RdlCsvGap(
+                        tag_name=entity_id,
+                        property_name=prop_code,
+                        concept=concept,
+                        layer=layer_id,
+                        issue="RDL_CSV_NA_BLANK",
+                        rdl_value=rdl_val,
+                        rdl_uom=rdl_uom,
+                        csv_value=csv_val,
+                        csv_uom=csv_uom,
+                    )
+                    if layer_id == "010":
+                        summary.rdl_csv_gaps_010.append(gap)
+                    else:
+                        summary.rdl_csv_gaps_011.append(gap)
+                    continue
+
+                # Check for value mismatch (skip if RDL is NA or CSV is blank)
+                if not rdl_is_na and not csv_is_blank:
+                    if csv_val != rdl_val:
+                        gap = RdlCsvGap(
+                            tag_name=entity_id,
+                            property_name=prop_code,
+                            concept=concept,
+                            layer=layer_id,
+                            issue="RDL_CSV_VALUE_MISMATCH",
+                            rdl_value=rdl_val,
+                            rdl_uom=rdl_uom,
+                            csv_value=csv_val,
+                            csv_uom=csv_uom,
+                        )
+                        if layer_id == "010":
+                            summary.rdl_csv_gaps_010.append(gap)
+                        else:
+                            summary.rdl_csv_gaps_011.append(gap)
+
+                # Check for UoM mismatch (skip if either is blank)
+                if rdl_uom and csv_uom:
+                    if csv_uom != rdl_uom:
+                        gap = RdlCsvGap(
+                            tag_name=entity_id,
+                            property_name=prop_code,
+                            concept=concept,
+                            layer=layer_id,
+                            issue="RDL_CSV_UOM_MISMATCH",
+                            rdl_value=rdl_val,
+                            rdl_uom=rdl_uom,
+                            csv_value=csv_val,
+                            csv_uom=csv_uom,
+                        )
+                        if layer_id == "010":
+                            summary.rdl_csv_gaps_010.append(gap)
+                        else:
+                            summary.rdl_csv_gaps_011.append(gap)
+
+        # Routing based on concept
+        if concept in TAG_CONCEPTS:
+            # Functional properties go to file-010
+            check_lookup((tag_upper, prop_upper), lookup_010, "010")
+        elif concept in EQUIP_CONCEPTS:
+            # Physical properties go to file-011
+            check_lookup((equip_upper, prop_upper), lookup_011, "011")
+        elif concept == "Functional Physical":
+            # Check BOTH files
+            check_lookup((tag_upper, prop_upper), lookup_010, "010")
+            check_lookup((equip_upper, prop_upper), lookup_011, "011")
+        # Common concepts are skipped
+
+
+
 # LAYER 1: RDL vs SQL gap detection
 # ---------------------------------------------------------------------------
 
@@ -757,6 +930,8 @@ def _escape(s: str, max_len: int = 120) -> str:
 
 
 def _issue_icon(issue: str) -> str:
+    if "RDL_CSV_MISSING" in issue:
+        return "🚫"
     if "SQL_MISSING" in issue:
         return "⛔"
     if "CSV_MISSING" in issue:
@@ -808,6 +983,24 @@ def _render_csv_gap_table(gaps: List[CsvGap]) -> List[str]:
     return lines
 
 
+
+
+def _render_rdl_csv_gap_table(gaps: List[RdlCsvGap]) -> List[str]:
+    """Render LAYER 0 gap table (RDL vs CSV)."""
+    lines = [
+        "| # | Icon | Tag | Property Code | Concept | Issue | RDL Value | RDL UoM | CSV Value | CSV UoM |",
+        "|---|------|-----|---------------|---------|-------|-----------|---------|-----------|---------|",
+    ]
+    for i, g in enumerate(gaps, start=1):
+        lines.append(
+            f"| {i} | {_issue_icon(g.issue)} | `{_escape(g.tag_name)}` "
+            f"| `{_escape(g.property_name)}` | {g.concept} | **{g.issue}** "
+            f"| {_escape(g.rdl_value)} | {_escape(g.rdl_uom)} "
+            f"| {_escape(g.csv_value)} | {_escape(g.csv_uom)} |"
+        )
+    return lines
+
+
 def render_report(
     summary: AuditSummary,
     rdl_path: Path,
@@ -845,21 +1038,35 @@ def render_report(
 
     lines.append("## Executive Summary")
     lines.append("")
-    lines.append("| Metric | LAYER 1 (RDL vs SQL) | LAYER 2 (SQL vs CSV 010) | LAYER 2 (SQL vs CSV 011) |")
-    lines.append("|--------|---------------------|--------------------------|--------------------------|")
-    lines.append(f"| Reference rows | {n_rdl_ref:,} | {summary.sql_l2_tag_count:,} | {summary.sql_l2_equip_count:,} |")
-    lines.append(f"| ⛔ SQL_MISSING (critical) | **{n_sql_missing:,}** | — | — |")
-    lines.append(f"| ⚠️ SQL_VALUE_MISMATCH | {n_sql_mismatch:,} | — | — |")
-    lines.append(f"| 📐 SQL_UOM_MISMATCH | {n_sql_uom:,} | — | — |")
-    lines.append(f"| 🔕 SQL_NA_BLANK | {n_sql_na:,} | — | — |")
-    lines.append(f"| ➕ SQL_EXTRA | {n_sql_extra:,} | — | — |")
-    lines.append(f"| ❌ CSV_MISSING | — | **{n_csv_miss_010:,}** | **{n_csv_miss_011:,}** |")
-    lines.append(f"| ⚠️ CSV_VALUE_MISMATCH | — | {n_csv_mm_010:,} | {n_csv_mm_011:,} |")
-    lines.append(f"| 📐 CSV_UOM_MISMATCH | — | {n_csv_uom_010:,} | {n_csv_uom_011:,} |")
-    lines.append(f"| 🔕 CSV_NA_BLANK | — | {n_csv_na_010:,} | {n_csv_na_011:,} |")
-    lines.append(f"| 🔁 DUPLICATE | — | {n_dup_010:,} | {n_dup_011:,} |")
-    lines.append(f"| 🔀 WRONG_FILE | — | {len(summary.wrong_file_010):,} | {len(summary.wrong_file_011):,} |")
-    lines.append(f"| ➕ EXTRA (unknown) | — | {len(summary.extra_in_010):,} | {len(summary.extra_in_011):,} |")
+    # LAYER 0 metrics (calculated for Executive Summary)
+    n_l0_miss_010   = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_MISSING"])
+    n_l0_miss_011   = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_MISSING"])
+    n_l0_mm_010     = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_VALUE_MISMATCH"])
+    n_l0_mm_011     = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_VALUE_MISMATCH"])
+    n_l0_uom_010    = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_UOM_MISMATCH"])
+    n_l0_uom_011    = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_UOM_MISMATCH"])
+    n_l0_na_010     = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_NA_BLANK"])
+    n_l0_na_011     = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_NA_BLANK"])
+
+    lines.append("| Metric | LAYER 0 (RDL vs CSV) | LAYER 1 (RDL vs SQL) | LAYER 2 (SQL vs CSV 010) | LAYER 2 (SQL vs CSV 011) |")
+    lines.append("|--------|---------------------|---------------------|--------------------------|--------------------------|")
+    lines.append(f"| Reference rows | — | {n_rdl_ref:,} | {summary.sql_l2_tag_count:,} | {summary.sql_l2_equip_count:,} |")
+    lines.append(f"| 🚫 RDL_CSV_MISSING | **{n_l0_miss_010+n_l0_miss_011:,}** | — | — | — |")
+    lines.append(f"| ⚠️ RDL_CSV_VALUE_MISMATCH | {n_l0_mm_010+n_l0_mm_011:,} | — | — | — |")
+    lines.append(f"| 📐 RDL_CSV_UOM_MISMATCH | {n_l0_uom_010+n_l0_uom_011:,} | — | — | — |")
+    lines.append(f"| 🔕 RDL_CSV_NA_BLANK | {n_l0_na_010+n_l0_na_011:,} | — | — | — |")
+    lines.append(f"| ⛔ SQL_MISSING (critical) | — | **{n_sql_missing:,}** | — | — |")
+    lines.append(f"| ⚠️ SQL_VALUE_MISMATCH | — | {n_sql_mismatch:,} | — | — |")
+    lines.append(f"| 📐 SQL_UOM_MISMATCH | — | {n_sql_uom:,} | — | — |")
+    lines.append(f"| 🔕 SQL_NA_BLANK | — | {n_sql_na:,} | — | — |")
+    lines.append(f"| ➕ SQL_EXTRA | — | {n_sql_extra:,} | — | — |")
+    lines.append(f"| ❌ CSV_MISSING | — | — | **{n_csv_miss_010:,}** | **{n_csv_miss_011:,}** |")
+    lines.append(f"| ⚠️ CSV_VALUE_MISMATCH | — | — | {n_csv_mm_010:,} | {n_csv_mm_011:,} |")
+    lines.append(f"| 📐 CSV_UOM_MISMATCH | — | — | {n_csv_uom_010:,} | {n_csv_uom_011:,} |")
+    lines.append(f"| 🔕 CSV_NA_BLANK | — | — | {n_csv_na_010:,} | {n_csv_na_011:,} |")
+    lines.append(f"| 🔁 DUPLICATE | — | — | {n_dup_010:,} | {n_dup_011:,} |")
+    lines.append(f"| 🔀 WRONG_FILE | — | — | {len(summary.wrong_file_010):,} | {len(summary.wrong_file_011):,} |")
+    lines.append(f"| ➕ EXTRA (unknown) | — | — | {len(summary.extra_in_010):,} | {len(summary.extra_in_011):,} |")
     lines.append("")
 
     if n_sql_missing > 0:
@@ -909,6 +1116,79 @@ def render_report(
             for code, cnt in summary.sql_top_properties:
                 lines.append(f"| `{_escape(code)}` | {cnt:,} |")
     lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    # ── LAYER 0: RDL vs CSV (direct, no SQL) ────────────────────────────────
+    lines.append("## LAYER 0 — RDL vs CSV (Direct, no SQL)")
+    lines.append("")
+    lines.append("> This layer checks RDL reference values directly against CSV export files.")
+    lines.append("> **SQL is not required** — useful when DB is unavailable.")
+    lines.append("")
+
+    # Calculate metrics for LAYER 0
+    n_l0_miss_010   = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_MISSING"])
+    n_l0_miss_011   = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_MISSING"])
+    n_l0_mm_010     = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_VALUE_MISMATCH"])
+    n_l0_mm_011     = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_VALUE_MISMATCH"])
+    n_l0_uom_010    = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_UOM_MISMATCH"])
+    n_l0_uom_011    = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_UOM_MISMATCH"])
+    n_l0_na_010     = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_NA_BLANK"])
+    n_l0_na_011     = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_NA_BLANK"])
+
+    # Metrics table
+    lines.append("### Metrics")
+    lines.append("")
+    lines.append("| Metric | vs CSV-010 | vs CSV-011 |")
+    lines.append("|--------|-----------:|-----------:|")
+    lines.append(f"| 🚫 RDL_CSV_MISSING | **{n_l0_miss_010:,}** | **{n_l0_miss_011:,}** |")
+    lines.append(f"| ⚠️ RDL_CSV_VALUE_MISMATCH | {n_l0_mm_010:,} | {n_l0_mm_011:,} |")
+    lines.append(f"| 📐 RDL_CSV_UOM_MISMATCH | {n_l0_uom_010:,} | {n_l0_uom_011:,} |")
+    lines.append(f"| 🔕 RDL_CSV_NA_BLANK | {n_l0_na_010:,} | {n_l0_na_011:,} |")
+    lines.append("")
+
+    # Detailed tables for file-010
+    if summary.rdl_csv_gaps_010:
+        lines.append("### File-010 (Tag Property Values) Details")
+        lines.append("")
+
+        for issue_type, header in [
+            ("RDL_CSV_MISSING",        "🚫 RDL_CSV_MISSING — Critical: in RDL, absent from CSV-010"),
+            ("RDL_CSV_VALUE_MISMATCH", "⚠️ RDL_CSV_VALUE_MISMATCH"),
+            ("RDL_CSV_UOM_MISMATCH",   "📐 RDL_CSV_UOM_MISMATCH"),
+            ("RDL_CSV_NA_BLANK",       "🔕 RDL_CSV_NA_BLANK"),
+        ]:
+            subset = [g for g in summary.rdl_csv_gaps_010 if g.issue == issue_type]
+            if not subset:
+                continue
+            lines.append(f"#### {header} ({len(subset):,})")
+            lines.append("")
+            lines.extend(_render_rdl_csv_gap_table(subset))
+            lines.append("")
+
+    # Detailed tables for file-011
+    if summary.rdl_csv_gaps_011:
+        lines.append("### File-011 (Equipment Property Values) Details")
+        lines.append("")
+
+        for issue_type, header in [
+            ("RDL_CSV_MISSING",        "🚫 RDL_CSV_MISSING — Critical: in RDL, absent from CSV-011"),
+            ("RDL_CSV_VALUE_MISMATCH", "⚠️ RDL_CSV_VALUE_MISMATCH"),
+            ("RDL_CSV_UOM_MISMATCH",   "📐 RDL_CSV_UOM_MISMATCH"),
+            ("RDL_CSV_NA_BLANK",       "🔕 RDL_CSV_NA_BLANK"),
+        ]:
+            subset = [g for g in summary.rdl_csv_gaps_011 if g.issue == issue_type]
+            if not subset:
+                continue
+            lines.append(f"#### {header} ({len(subset):,})")
+            lines.append("")
+            lines.extend(_render_rdl_csv_gap_table(subset))
+            lines.append("")
+
+    if not summary.rdl_csv_gaps_010 and not summary.rdl_csv_gaps_011:
+        lines.append("✅ No Layer 0 gaps found.")
+        lines.append("")
+
     lines.append("---")
     lines.append("")
 
@@ -1212,6 +1492,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     n_l2_miss_011 = sum(1 for g in summary.csv_gaps_011 if g.issue == "CSV_MISSING")
     print(f"done. CSV_MISSING_010={n_l2_miss_010:,}  CSV_MISSING_011={n_l2_miss_011:,}")
 
+    print("LAYER 0 — RDL vs CSV (direct)...", end=" ", flush=True)
+    _detect_rdl_csv_gaps(rdl, lookup_010, lookup_011, summary)
+    n_l0_miss = len(summary.rdl_csv_gaps_010) + len(summary.rdl_csv_gaps_011)
+    print(f"done. gaps_010={len(summary.rdl_csv_gaps_010):,}  gaps_011={len(summary.rdl_csv_gaps_011):,}")
+
     print("Detecting wrong-file and extra...", end=" ", flush=True)
     _detect_wrong_and_extra(df010, df011, sql_index, summary)
     print(
@@ -1222,8 +1507,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     _check_structural(df010, df011, summary)
 
     total_gaps = (
-        len(summary.rdl_sql_gaps)
-        + len(summary.csv_gaps_010) + len(summary.csv_gaps_011)
+        len(summary.rdl_csv_gaps_010) + len(summary.rdl_csv_gaps_011)  # Layer 0
+        + len(summary.rdl_sql_gaps)                                       # Layer 1
+        + len(summary.csv_gaps_010) + len(summary.csv_gaps_011)          # Layer 2
         + len(summary.wrong_file_010) + len(summary.wrong_file_011)
         + len(summary.extra_in_010) + len(summary.extra_in_011)
     )
