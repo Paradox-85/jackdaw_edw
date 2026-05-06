@@ -111,7 +111,7 @@ class RdlSqlGap:
     tag_name: str
     property_name: str
     concept: str
-    issue: str   # SQL_MISSING | SQL_VALUE_MISMATCH | SQL_NA_BLANK | SQL_EXTRA
+    issue: str   # SQL_MISSING | SQL_VALUE_MISMATCH | SQL_NA_BLANK | SQL_EXTRA | SQL_VALUE_MISSING
     rdl_value: str
     rdl_uom: str
     sql_value: str
@@ -124,7 +124,7 @@ class CsvGap:
     property_name: str
     concept: str
     layer: str   # "010" | "011"
-    issue: str   # CSV_MISSING | CSV_VALUE_MISMATCH | CSV_NA_BLANK
+    issue: str   # CSV_MISSING | CSV_VALUE_MISMATCH | CSV_NA_BLANK | CSV_VALUE_MISSING | CSV_EXTRA_VALUE
                  # CSV_WRONG_FILE | CSV_DUPLICATE | EXTRA_UNKNOWN_TAG | EXTRA_UNKNOWN_PROP
     sql_value: str
     sql_uom: str
@@ -138,7 +138,7 @@ class RdlCsvGap:
     property_name: str
     concept: str
     layer: str          # "010" | "011" | "010+011"
-    issue: str          # RDL_CSV_MISSING | RDL_CSV_VALUE_MISMATCH | RDL_CSV_NA_BLANK
+    issue: str          # RDL_CSV_MISSING | RDL_CSV_VALUE_MISMATCH | RDL_CSV_NA_BLANK | RDL_CSV_NA_HAS_VALUE | RDL_CSV_VALUE_MISSING
     rdl_value: str
     rdl_uom: str
     csv_value: str
@@ -536,23 +536,61 @@ def _detect_rdl_csv_gaps(
                         summary.rdl_csv_gaps_011.append(gap)
                     continue
 
-                if not rdl_is_na and not csv_is_blank:
-                    if _norm_composite(csv_val, csv_uom) != _norm_composite(rdl_val, rdl_uom):
-                        gap = RdlCsvGap(
-                            tag_name=tag_name,
-                            property_name=prop_name,
-                            concept=concept,
-                            layer=layer_id,
-                            issue="RDL_CSV_VALUE_MISMATCH",
-                            rdl_value=rdl_val,
-                            rdl_uom=rdl_uom,
-                            csv_value=csv_val,
-                            csv_uom=csv_uom,
-                        )
-                        if layer_id == "010":
-                            summary.rdl_csv_gaps_010.append(gap)
-                        else:
-                            summary.rdl_csv_gaps_011.append(gap)
+                # RDL=NA, CSV=реальное значение → неожиданно, надо разобраться
+                if rdl_is_na and not csv_is_blank:
+                    gap = RdlCsvGap(
+                        tag_name=tag_name,
+                        property_name=prop_name,
+                        concept=concept,
+                        layer=layer_id,
+                        issue="RDL_CSV_NA_HAS_VALUE",
+                        rdl_value=rdl_val,
+                        rdl_uom=rdl_uom,
+                        csv_value=csv_val,
+                        csv_uom=csv_uom,
+                    )
+                    if layer_id == "010":
+                        summary.rdl_csv_gaps_010.append(gap)
+                    else:
+                        summary.rdl_csv_gaps_011.append(gap)
+                    continue
+
+                # RDL=реальное значение, CSV=blank → пропущено при экспорте
+                if not rdl_is_na and csv_is_blank:
+                    gap = RdlCsvGap(
+                        tag_name=tag_name,
+                        property_name=prop_name,
+                        concept=concept,
+                        layer=layer_id,
+                        issue="RDL_CSV_VALUE_MISSING",
+                        rdl_value=rdl_val,
+                        rdl_uom=rdl_uom,
+                        csv_value="<blank>",
+                        csv_uom=csv_uom,
+                    )
+                    if layer_id == "010":
+                        summary.rdl_csv_gaps_010.append(gap)
+                    else:
+                        summary.rdl_csv_gaps_011.append(gap)
+                    continue
+
+                # оба не пустые → сравнить
+                if _norm_composite(csv_val, csv_uom) != _norm_composite(rdl_val, rdl_uom):
+                    gap = RdlCsvGap(
+                        tag_name=tag_name,
+                        property_name=prop_name,
+                        concept=concept,
+                        layer=layer_id,
+                        issue="RDL_CSV_VALUE_MISMATCH",
+                        rdl_value=rdl_val,
+                        rdl_uom=rdl_uom,
+                        csv_value=csv_val,
+                        csv_uom=csv_uom,
+                    )
+                    if layer_id == "010":
+                        summary.rdl_csv_gaps_010.append(gap)
+                    else:
+                        summary.rdl_csv_gaps_011.append(gap)
 
         # Routing based on concept (explicit checks - no dead-code elif)
         key = (_norm(tag_name), _norm(prop_name))
@@ -629,6 +667,18 @@ def _detect_rdl_sql_gaps(
                     rdl_value=rdl_val,
                     rdl_uom=rdl_uom,
                     sql_value=_sdv,
+                    sql_uom=_sdu,
+                ))
+            elif rdl_val and not sql_hit.prop_value.strip():
+                # NEW: RDL имеет значение, SQL пустой (не NA) — ошибка импорта
+                summary.rdl_sql_gaps.append(RdlSqlGap(
+                    tag_name=tag_name,
+                    property_name=prop_id,
+                    concept=concept,
+                    issue="SQL_VALUE_MISSING",
+                    rdl_value=rdl_val,
+                    rdl_uom=rdl_uom,
+                    sql_value="(BLANK)",
                     sql_uom=_sdu,
                 ))
             elif rdl_val and sql_hit.prop_value:
@@ -730,6 +780,22 @@ def _detect_sql_csv_gaps(
                     tag_name=sql_row.tag_name, property_name=sql_row.prop_name,
                     concept=concept, layer=layer, issue="CSV_NA_BLANK",
                     sql_value=sql_val_raw, sql_uom=sql_uom_raw,
+                    csv_value=csv_val, csv_uom=csv_uom,
+                ))
+            elif sql_val_raw.strip() and not csv_val.strip():
+                # NEW: SQL имеет значение, CSV пустой (не NA) — ошибка экспорта
+                gap_list.append(CsvGap(
+                    tag_name=sql_row.tag_name, property_name=sql_row.prop_name,
+                    concept=concept, layer=layer, issue="CSV_VALUE_MISSING",
+                    sql_value=sql_val_raw, sql_uom=sql_uom_raw,
+                    csv_value="<blank>", csv_uom=csv_uom,
+                ))
+            elif not sql_val_raw.strip() and csv_val.strip():
+                # NEW: SQL пустой, CSV имеет значение — неожиданный контент в экспорте
+                gap_list.append(CsvGap(
+                    tag_name=sql_row.tag_name, property_name=sql_row.prop_name,
+                    concept=concept, layer=layer, issue="CSV_EXTRA_VALUE",
+                    sql_value="(BLANK)", sql_uom=sql_uom_raw,
                     csv_value=csv_val, csv_uom=csv_uom,
                 ))
             elif _norm_composite(sql_val_raw, sql_uom_raw) != _norm_composite(csv_val, csv_uom) \
@@ -882,6 +948,12 @@ def _issue_icon(issue: str) -> str:
         return "🔁"
     if "VALUE_MISMATCH" in issue:
         return "⚠️"
+    if "NA_HAS_VALUE" in issue:
+        return "ℹ️"
+    if "VALUE_MISSING" in issue:
+        return "⚠️"
+    if "EXTRA_VALUE" in issue:
+        return "ℹ️"
     if "NA_BLANK" in issue:
         return "🔕"
     if "WRONG_FILE" in issue:
@@ -961,14 +1033,23 @@ def render_report(
     # ── Executive Summary ────────────────────────────────────────────────────
     n_sql_missing    = sum(1 for g in summary.rdl_sql_gaps if g.issue == "SQL_MISSING")
     n_sql_mismatch   = sum(1 for g in summary.rdl_sql_gaps if g.issue == "SQL_VALUE_MISMATCH")
+    n_sql_val_missing = sum(1 for g in summary.rdl_sql_gaps if g.issue == "SQL_VALUE_MISSING")
     n_sql_na         = sum(1 for g in summary.rdl_sql_gaps if g.issue == "SQL_NA_BLANK")
     n_sql_extra      = summary.sql_extra_total_props   # use the full count, not the 200-row cap
     n_csv_miss_010   = sum(1 for g in summary.csv_gaps_010 if g.issue == "CSV_MISSING")
     n_csv_miss_011   = sum(1 for g in summary.csv_gaps_011 if g.issue == "CSV_MISSING")
     n_csv_mm_010     = sum(1 for g in summary.csv_gaps_010 if g.issue == "CSV_VALUE_MISMATCH")
     n_csv_mm_011     = sum(1 for g in summary.csv_gaps_011 if g.issue == "CSV_VALUE_MISMATCH")
+    n_csv_val_miss_010 = sum(1 for g in summary.csv_gaps_010 if g.issue == "CSV_VALUE_MISSING")
+    n_csv_val_miss_011 = sum(1 for g in summary.csv_gaps_011 if g.issue == "CSV_VALUE_MISSING")
+    n_csv_extra_val_010 = sum(1 for g in summary.csv_gaps_010 if g.issue == "CSV_EXTRA_VALUE")
+    n_csv_extra_val_011 = sum(1 for g in summary.csv_gaps_011 if g.issue == "CSV_EXTRA_VALUE")
     n_csv_na_010     = sum(1 for g in summary.csv_gaps_010 if g.issue == "CSV_NA_BLANK")
     n_csv_na_011     = sum(1 for g in summary.csv_gaps_011 if g.issue == "CSV_NA_BLANK")
+    n_l0_na_has_val_010 = sum(1 for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_NA_HAS_VALUE")
+    n_l0_na_has_val_011 = sum(1 for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_NA_HAS_VALUE")
+    n_l0_val_miss_010 = sum(1 for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_VALUE_MISSING")
+    n_l0_val_miss_011 = sum(1 for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_VALUE_MISSING")
     n_rdl_ref        = summary.total_rdl_tag_props + summary.total_rdl_equip_props - summary.total_rdl_both_props
 
     lines.append("## Executive Summary")
@@ -978,6 +1059,10 @@ def render_report(
     n_l0_miss_011   = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_MISSING"])
     n_l0_mm_010     = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_VALUE_MISMATCH"])
     n_l0_mm_011     = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_VALUE_MISMATCH"])
+    n_l0_na_has_val_010 = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_NA_HAS_VALUE"])
+    n_l0_na_has_val_011 = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_NA_HAS_VALUE"])
+    n_l0_val_miss_010 = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_VALUE_MISSING"])
+    n_l0_val_miss_011 = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_VALUE_MISSING"])
     n_l0_na_010     = len([g for g in summary.rdl_csv_gaps_010 if g.issue == "RDL_CSV_NA_BLANK"])
     n_l0_na_011     = len([g for g in summary.rdl_csv_gaps_011 if g.issue == "RDL_CSV_NA_BLANK"])
 
@@ -986,6 +1071,8 @@ def render_report(
     lines.append(f"| Reference rows | — | {n_rdl_ref:,} | {summary.sql_l2_tag_count:,} | {summary.sql_l2_equip_count:,} |")
     lines.append(f"| 🚫 RDL_CSV_MISSING | **{n_l0_miss_010+n_l0_miss_011:,}** | — | — | — |")
     lines.append(f"| ⚠️ RDL_CSV_VALUE_MISMATCH | {n_l0_mm_010+n_l0_mm_011:,} | — | — | — |")
+    lines.append(f"| ℹ️ RDL_CSV_NA_HAS_VALUE | {n_l0_na_has_val_010+n_l0_na_has_val_011:,} | — | — | — |")
+    lines.append(f"| ⚠️ RDL_CSV_VALUE_MISSING | {n_l0_val_miss_010+n_l0_val_miss_011:,} | — | — | — |")
     lines.append(f"| 🔕 RDL_CSV_NA_BLANK | {n_l0_na_010+n_l0_na_011:,} | — | — | — |")
 
     # LAYER 1 metrics — show "N/A (no-db)" when DB unavailable
@@ -993,12 +1080,18 @@ def render_report(
     lines.append(f"| ⛔ SQL_MISSING (critical) | — | {sql_col} | — | — |")
     sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_sql_mismatch:,}"
     lines.append(f"| ⚠️ SQL_VALUE_MISMATCH | — | {sql_col} | — | — |")
+    sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_sql_val_missing:,}"
+    lines.append(f"| ⚠️ SQL_VALUE_MISSING | — | {sql_col} | — | — |")
     sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_sql_na:,}"
     lines.append(f"| 🔕 SQL_NA_BLANK | — | {sql_col} | — | — |")
     sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_sql_extra:,}"
     lines.append(f"| ➕ SQL_EXTRA | — | {sql_col} | — | — |")
     lines.append(f"| ❌ CSV_MISSING | — | — | **{n_csv_miss_010:,}** | **{n_csv_miss_011:,}** |")
     lines.append(f"| ⚠️ CSV_VALUE_MISMATCH | — | — | {n_csv_mm_010:,} | {n_csv_mm_011:,} |")
+    sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_csv_val_missing_010:,}"
+    lines.append(f"| ⚠️ CSV_VALUE_MISSING | — | — | {sql_col} | {n_csv_val_missing_011:,} |")
+    sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_csv_extra_val_010:,}"
+    lines.append(f"| ℹ️ CSV_EXTRA_VALUE | — | — | {sql_col} | {n_csv_extra_val_011:,} |")
     lines.append(f"| 🔕 CSV_NA_BLANK | — | — | {n_csv_na_010:,} | {n_csv_na_011:,} |")
     lines.append(f"| 🔀 WRONG_FILE | — | — | {len(summary.wrong_file_010):,} | {len(summary.wrong_file_011):,} |")
     lines.append(f"| ➕ EXTRA (unknown) | — | — | {len(summary.extra_in_010):,} | {len(summary.extra_in_011):,} |")
@@ -1087,6 +1180,8 @@ def render_report(
         for issue_type, header in [
             ("RDL_CSV_MISSING",        "🚫 RDL_CSV_MISSING — Critical: in RDL, absent from CSV-010"),
             ("RDL_CSV_VALUE_MISMATCH", "⚠️ RDL_CSV_VALUE_MISMATCH"),
+            ("RDL_CSV_NA_HAS_VALUE",   "ℹ️ RDL_CSV_NA_HAS_VALUE — RDL has 'NA' but CSV has value"),
+            ("RDL_CSV_VALUE_MISSING",   "⚠️ RDL_CSV_VALUE_MISSING — RDL has value, CSV is blank"),
             ("RDL_CSV_NA_BLANK",       "🔕 RDL_CSV_NA_BLANK"),
         ]:
             subset = [g for g in summary.rdl_csv_gaps_010 if g.issue == issue_type]
@@ -1105,6 +1200,8 @@ def render_report(
         for issue_type, header in [
             ("RDL_CSV_MISSING",        "🚫 RDL_CSV_MISSING — Critical: in RDL, absent from CSV-011"),
             ("RDL_CSV_VALUE_MISMATCH", "⚠️ RDL_CSV_VALUE_MISMATCH"),
+            ("RDL_CSV_NA_HAS_VALUE",   "ℹ️ RDL_CSV_NA_HAS_VALUE — RDL has 'NA' but CSV has value"),
+            ("RDL_CSV_VALUE_MISSING",   "⚠️ RDL_CSV_VALUE_MISSING — RDL has value, CSV is blank"),
             ("RDL_CSV_NA_BLANK",       "🔕 RDL_CSV_NA_BLANK"),
         ]:
             subset = [g for g in summary.rdl_csv_gaps_011 if g.issue == issue_type]
@@ -1140,6 +1237,7 @@ def render_report(
         for issue_type, header in [
             ("SQL_MISSING",        "⛔ SQL_MISSING — Critical: in RDL, absent from database"),
             ("SQL_VALUE_MISMATCH", "⚠️ SQL_VALUE_MISMATCH"),
+            ("SQL_VALUE_MISSING",   "⚠️ SQL_VALUE_MISSING — RDL has value, SQL is blank (not NA)"),
             ("SQL_NA_BLANK",       "🔕 SQL_NA_BLANK"),
         ]:
             subset = [g for g in summary.rdl_sql_gaps if g.issue == issue_type]
@@ -1199,6 +1297,8 @@ def render_report(
         for issue_type, header in [
             ("CSV_MISSING",        "❌ CSV_MISSING — In SQL, absent from export"),
             ("CSV_VALUE_MISMATCH", "⚠️ CSV_VALUE_MISMATCH"),
+            ("CSV_VALUE_MISSING",   "⚠️ CSV_VALUE_MISSING — SQL has value, CSV is blank (not NA)"),
+            ("CSV_EXTRA_VALUE",     "ℹ️ CSV_EXTRA_VALUE — SQL is blank, CSV has value (unexpected content)"),
             ("CSV_NA_BLANK",       "🔕 CSV_NA_BLANK"),
         ]:
             subset = [g for g in gaps if g.issue == issue_type]
@@ -1270,16 +1370,20 @@ def render_report(
     lines.append("|------|------|-------|---------|")
     lines.append("| ⛔ | SQL_MISSING | L1 | In RDL but absent from SQL database — never imported |")
     lines.append("| ⚠️ | SQL_VALUE_MISMATCH | L1 | Value in SQL differs from RDL reference |")
+    lines.append("| ⚠️ | SQL_VALUE_MISSING | L1 | RDL has value, SQL is blank (not NA) — import error |")
     lines.append("| 🔕 | SQL_NA_BLANK | L1 | RDL has 'NA' but SQL has empty/null |")
     lines.append("| ➕ | SQL_EXTRA | L1 | In SQL (non-Common) but not present in RDL |")
     lines.append("| ❌ | CSV_MISSING | L2 | In SQL but absent from export CSV |")
     lines.append("| ⚠️ | CSV_VALUE_MISMATCH | L2 | Value in CSV differs from SQL |")
+    lines.append("| ⚠️ | CSV_VALUE_MISSING | L2 | SQL has value, CSV is blank (not NA) — export error |")
+    lines.append("| ℹ️ | CSV_EXTRA_VALUE | L2 | SQL is blank, CSV has value — unexpected content |")
     lines.append("| 🔕 | CSV_NA_BLANK | L2 | SQL has 'NA' but CSV has empty string |")
     lines.append("| 🔁 | CSV_DUPLICATE | L2 | Same TAG_NAME/EQUIP_NUMBER + PROPERTY_NAME appears >1 time in CSV |")
     lines.append("| 🔀 | CSV_WRONG_FILE | L2 | Property in wrong file (Physical in 010 or Functional in 011) |")
     lines.append("| ➕ | EXTRA_UNKNOWN_TAG | L2 | Tag in CSV has no matching tag in SQL at all |")
     lines.append("| ➕ | EXTRA_UNKNOWN_PROP | L2 | Tag known in SQL but this property pair is not in SQL |")
-    lines.append("")
+    lines.append("| ℹ️ | RDL_CSV_NA_HAS_VALUE | L0 | RDL has 'NA' but CSV has value — possible RDL error |")
+    lines.append("| ⚠️ | RDL_CSV_VALUE_MISSING | L0 | RDL has value, CSV is blank — omitted during export |")
 
     return "\n".join(lines)
 
