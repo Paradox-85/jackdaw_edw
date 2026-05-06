@@ -31,6 +31,7 @@ Output:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections import namedtuple
 from dataclasses import dataclass, field
@@ -80,8 +81,24 @@ TAG_FILTER: str | None = None  # set at runtime via --tag
 # ---------------------------------------------------------------------------
 
 def _norm(s: str) -> str:
-    """Normalize for case-insensitive key matching."""
-    return " ".join(s.strip().lower().split())
+    """Normalize property name for fuzzy key matching.
+
+    Removes all punctuation/separator characters (hyphens, dashes, slashes,
+    underscores, dots) and collapses whitespace, then lowercases.
+
+    Examples:
+        'Actuation-Closing'  -> 'actuation closing'
+        'ACTUATION - CLOSING' -> 'actuation closing'
+        'seat material'      -> 'seat material'
+        'SEAT MATERIAL'      -> 'seat material'
+        'N/A'               -> 'n a'   (acceptable — not used as a lookup key)
+    """
+    s = s.strip().lower()
+    # Replace hyphens, en-dashes, em-dashes, slashes, underscores, dots
+    # with a single space, then collapse multiple spaces
+    s = re.sub(r'[\-–—/_\.]', ' ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s
 
 
 SqlRow = namedtuple(
@@ -1001,11 +1018,18 @@ def render_report(
     lines.append(f"| ⚠️ RDL_CSV_VALUE_MISMATCH | {n_l0_mm_010+n_l0_mm_011:,} | — | — | — |")
     lines.append(f"| 📐 RDL_CSV_UOM_MISMATCH | {n_l0_uom_010+n_l0_uom_011:,} | — | — | — |")
     lines.append(f"| 🔕 RDL_CSV_NA_BLANK | {n_l0_na_010+n_l0_na_011:,} | — | — | — |")
-    lines.append(f"| ⛔ SQL_MISSING (critical) | — | **{n_sql_missing:,}** | — | — |")
-    lines.append(f"| ⚠️ SQL_VALUE_MISMATCH | — | {n_sql_mismatch:,} | — | — |")
-    lines.append(f"| 📐 SQL_UOM_MISMATCH | — | {n_sql_uom:,} | — | — |")
-    lines.append(f"| 🔕 SQL_NA_BLANK | — | {n_sql_na:,} | — | — |")
-    lines.append(f"| ➕ SQL_EXTRA | — | {n_sql_extra:,} | — | — |")
+
+    # LAYER 1 metrics — show "N/A (no-db)" when DB unavailable
+    sql_col = "N/A (no-db)" if summary.sql_unavailable else f"**{n_sql_missing:,}**"
+    lines.append(f"| ⛔ SQL_MISSING (critical) | — | {sql_col} | — | — |")
+    sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_sql_mismatch:,}"
+    lines.append(f"| ⚠️ SQL_VALUE_MISMATCH | — | {sql_col} | — | — |")
+    sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_sql_uom:,}"
+    lines.append(f"| 📐 SQL_UOM_MISMATCH | — | {sql_col} | — | — |")
+    sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_sql_na:,}"
+    lines.append(f"| 🔕 SQL_NA_BLANK | — | {sql_col} | — | — |")
+    sql_col = "N/A (no-db)" if summary.sql_unavailable else f"{n_sql_extra:,}"
+    lines.append(f"| ➕ SQL_EXTRA | — | {sql_col} | — | — |")
     lines.append(f"| ❌ CSV_MISSING | — | — | **{n_csv_miss_010:,}** | **{n_csv_miss_011:,}** |")
     lines.append(f"| ⚠️ CSV_VALUE_MISMATCH | — | — | {n_csv_mm_010:,} | {n_csv_mm_011:,} |")
     lines.append(f"| 📐 CSV_UOM_MISMATCH | — | — | {n_csv_uom_010:,} | {n_csv_uom_011:,} |")
@@ -1014,7 +1038,7 @@ def render_report(
     lines.append(f"| ➕ EXTRA (unknown) | — | — | {len(summary.extra_in_010):,} | {len(summary.extra_in_011):,} |")
     lines.append("")
 
-    if n_sql_missing > 0:
+    if n_sql_missing > 0 and not summary.sql_unavailable:
         lines.append(
             f"> ⛔ **CRITICAL:** {n_sql_missing:,} properties exist in RDL but are **MISSING from SQL database**. "
             "These were never imported. Run the import flow to fix."
@@ -1388,7 +1412,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"done. sql_index={len(sql_index):,} entries  total_active={summary.sql_total_rows:,}")
 
     print("LAYER 1 - RDL vs SQL...", end=" ", flush=True)
-    _detect_rdl_sql_gaps(rdl, sql_index, summary)
+    if not summary.sql_unavailable:
+        _detect_rdl_sql_gaps(rdl, sql_index, summary)
     n_l1_missing  = sum(1 for g in summary.rdl_sql_gaps if g.issue == "SQL_MISSING")
     n_l1_mismatch = sum(1 for g in summary.rdl_sql_gaps if g.issue == "SQL_VALUE_MISMATCH")
     print(f"done. SQL_MISSING={n_l1_missing:,}  SQL_MISMATCH={n_l1_mismatch:,}  SQL_EXTRA={summary.sql_extra_total_props:,}")
