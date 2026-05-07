@@ -55,13 +55,15 @@ Changes: 2026-03-13 — Initial implementation.
          2026-05-07 — ROOT-CAUSE FIX: filter on pv.mapping_concept_raw, not cp.mapping_concept.
                       BUG-B: Added SELECT DISTINCT (mirrors BUG-6 from -010-).
                       Recovers 23,954 missing rows (Functional Physical properties).
+         2026-05-07 — Removed class_property INNER JOIN (cp alias unused; 19,759 rows lost).
+                      property JOIN → LEFT JOIN + COALESCE fallback to property_code_raw
+                      (216 Active rows have property_id=NULL, all have property_code_raw).
 */
--- BUG-B: DISTINCT eliminates duplicate rows (safety net).
--- Mirrors BUG-6 fix already applied in export_tag_properties_deploy.py.
+-- BUG-B: DISTINCT eliminates duplicate rows (safety net; class_property join removed).
 SELECT DISTINCT
     pl.code                         AS PLANT_CODE,
     t.equip_no                      AS EQUIPMENT_NUMBER,
-    p.name                          AS PROPERTY_NAME,
+    COALESCE(p.name, pv.property_code_raw) AS PROPERTY_NAME,
     pv.property_value               AS PROPERTY_VALUE,
     COALESCE(u.symbol_ascii, u.symbol, pv.property_uom_raw) AS PROPERTY_VALUE_UOM,
     -- internal fields for validation rules (dropped by transform before CSV write)
@@ -69,13 +71,12 @@ SELECT DISTINCT
     t.tag_name                      AS object_name,
     pv.object_status
 FROM project_core.property_value pv
--- Why INNER JOIN on tag and class_property: rows without a valid tag or mapping
--- are data integrity errors — they must not silently appear in the export
+-- INNER JOIN on tag: rows without a valid tag are data integrity errors
 JOIN project_core.tag t
     ON pv.tag_id = t.id
-JOIN ontology_core.class_property cp
-    ON pv.mapping_id = cp.id
-JOIN ontology_core.property p
+-- LEFT JOIN on property: 216 Active rows have property_id=NULL but valid property_code_raw;
+-- COALESCE above ensures PROPERTY_NAME falls back to property_code_raw for those rows
+LEFT JOIN ontology_core.property p
     ON pv.property_id = p.id
 -- Why LEFT JOIN on plant: tag must not disappear due to missing plant FK
 LEFT JOIN reference_core.plant pl
