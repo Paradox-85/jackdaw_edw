@@ -89,7 +89,7 @@ LEFT JOIN ontology_core.uom u
 WHERE pv.object_status = 'Active'
   AND pv.mapping_concept_raw ILIKE '%Physical%'
   AND pv.mapping_concept_raw NOT ILIKE '%common%'
-ORDER BY pl.code, t.equip_no, p.name
+ORDER BY PLANT_CODE, EQUIPMENT_NUMBER, PROPERTY_NAME
 """
 
 _FILE_TEMPLATE = "JDAW-KVE-E-JA-6944-00001-011-{revision}.CSV"
