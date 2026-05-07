@@ -9,7 +9,8 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--no-db"
+                "--no-db",
+                "--compact"
             ]
         },
         {
