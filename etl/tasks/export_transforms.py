@@ -1141,8 +1141,10 @@ def transform_tag_instance_properties(
       1. Uppercase column names        — PostgreSQL returns lowercase aliases
       2. sanitize_dataframe()          — NaN → "", encoding repair (mojibake etc.)
       3. normalize_pseudo_null()       — PROPERTY_VALUE: sentinel → "NA"
+      3b. decimal comma → period       — "3,14" → "3.14" for data_type=Decimal only
       4. _apply_value_uom_split()      — split embedded UoM (e.g. "490mm" → "490"/"mm")
-                                         handles: signed ranges, inch, degree, % LEL
+                                         only for Decimal/Integer with uom_group_id set;
+                                         String/NULL type rows are never split
       5. UOM auto-clear                — blank PROPERTY_VALUE_UOM when value is "NA" or "TBC"
       6. Column reorder                — _TAG_INSTANCE_PROP_COLUMNS (exact EIS order)
 
@@ -1181,15 +1183,47 @@ def transform_tag_instance_properties(
             lambda v: normalize_pseudo_null(v) if isinstance(v, str) else v
         )
 
-    # Step 4: split embedded UoM
+    # Step 3b: normalize decimal comma separator → period for Decimal-type properties.
+    # Some EIS source data uses "," as decimal separator (e.g. "3,14" = 3.14).
+    # Must run before write_csv() sanitizer (which escapes commas as ";") and
+    # before _apply_value_uom_split (so the split regex sees "3.14", not "3,14").
+    if "DATA_TYPE" in df.columns and "PROPERTY_VALUE" in df.columns:
+        decimal_mask = df["DATA_TYPE"].fillna("").str.strip().str.lower() == "decimal"
+        df.loc[decimal_mask, "PROPERTY_VALUE"] = (
+            df.loc[decimal_mask, "PROPERTY_VALUE"]
+            .fillna("")
+            .astype(str)
+            .str.replace(",", ".", regex=False)
+        )
+
+    # Step 4: split embedded UoM — only for numeric types with a UoM group.
+    # String properties (data_type='String'/NULL or uom_group_id=NULL) must not be split:
+    # values like "4D", "3FE" are codes, not numeric+UoM pairs.
     # Handles: "490mm", "+60° C", "-50 - 450 Deg C", "6\"", "0% LEL"
     if "PROPERTY_VALUE" in df.columns and "PROPERTY_VALUE_UOM" in df.columns:
-        df = _apply_value_uom_split(
-            df,
-            value_col="PROPERTY_VALUE",
-            uom_col="PROPERTY_VALUE_UOM",
-            uom_lookup=uom_lookup,
-        )
+        if "DATA_TYPE" in df.columns and "UOM_GROUP_ID" in df.columns:
+            split_mask = (
+                df["DATA_TYPE"].fillna("").str.strip().str.lower().isin(["decimal", "integer"])
+                & df["UOM_GROUP_ID"].notna()
+            )
+            split_df = df[split_mask].copy()
+            nosplit_df = df[~split_mask].copy()
+            if not split_df.empty:
+                split_df = _apply_value_uom_split(
+                    split_df,
+                    value_col="PROPERTY_VALUE",
+                    uom_col="PROPERTY_VALUE_UOM",
+                    uom_lookup=uom_lookup,
+                )
+            df = pd.concat([split_df, nosplit_df], ignore_index=True)
+        else:
+            # Fallback: DATA_TYPE not in DataFrame — legacy behavior (split all rows)
+            df = _apply_value_uom_split(
+                df,
+                value_col="PROPERTY_VALUE",
+                uom_col="PROPERTY_VALUE_UOM",
+                uom_lookup=uom_lookup,
+            )
         # Step 5: auto-clear UOM for sentinel and placeholder values
         # NA = pseudo-null (no meaningful value, no meaningful UoM)
         # TBC = to be confirmed (valid export row, UoM would be speculative)
@@ -1208,6 +1242,7 @@ def transform_tag_instance_properties(
     if key_cols:
         df = df.drop_duplicates(subset=key_cols, keep="last")
 
+    df = df.drop(columns=["DATA_TYPE", "UOM_GROUP_ID"], errors="ignore")
     available = [c for c in _TAG_INSTANCE_PROP_COLUMNS if c in df.columns]
     return df[available]
 
@@ -1236,7 +1271,9 @@ def transform_equipment_instance_properties(
       1. Uppercase column names
       2. sanitize_dataframe()          — NaN → "", encoding repair
       3. normalize_pseudo_null()       — PROPERTY_VALUE: sentinel → "NA"
-      4. _apply_value_uom_split()      — split embedded UoM
+      3b. decimal comma → period       — "3,14" → "3.14" for data_type=Decimal only
+      4. _apply_value_uom_split()      — split embedded UoM; only for Decimal/Integer
+                                         with uom_group_id set; String/NULL skipped
       5. UOM auto-clear                — blank UOM when value is "NA" or "TBC"
       5b. lowercase UOM                — canonical EIS format per A36 specification
       6. Column reorder                — _EQUIPMENT_INSTANCE_PROP_COLUMNS
@@ -1285,14 +1322,46 @@ def transform_equipment_instance_properties(
             lambda v: normalize_pseudo_null(v) if isinstance(v, str) else v
         )
 
-    # Step 4: split embedded UoM
-    if "PROPERTY_VALUE" in df.columns and "PROPERTY_VALUE_UOM" in df.columns:
-        df = _apply_value_uom_split(
-            df,
-            value_col="PROPERTY_VALUE",
-            uom_col="PROPERTY_VALUE_UOM",
-            uom_lookup=uom_lookup,
+    # Step 3b: normalize decimal comma separator → period for Decimal-type properties.
+    # Some EIS source data uses "," as decimal separator (e.g. "3,14" = 3.14).
+    # Must run before write_csv() sanitizer (which escapes commas as ";") and
+    # before _apply_value_uom_split (so the split regex sees "3.14", not "3,14").
+    if "DATA_TYPE" in df.columns and "PROPERTY_VALUE" in df.columns:
+        decimal_mask = df["DATA_TYPE"].fillna("").str.strip().str.lower() == "decimal"
+        df.loc[decimal_mask, "PROPERTY_VALUE"] = (
+            df.loc[decimal_mask, "PROPERTY_VALUE"]
+            .fillna("")
+            .astype(str)
+            .str.replace(",", ".", regex=False)
         )
+
+    # Step 4: split embedded UoM — only for numeric types with a UoM group.
+    # String properties (data_type='String'/NULL or uom_group_id=NULL) must not be split:
+    # values like "4D", "3FE" are codes, not numeric+UoM pairs.
+    if "PROPERTY_VALUE" in df.columns and "PROPERTY_VALUE_UOM" in df.columns:
+        if "DATA_TYPE" in df.columns and "UOM_GROUP_ID" in df.columns:
+            split_mask = (
+                df["DATA_TYPE"].fillna("").str.strip().str.lower().isin(["decimal", "integer"])
+                & df["UOM_GROUP_ID"].notna()
+            )
+            split_df = df[split_mask].copy()
+            nosplit_df = df[~split_mask].copy()
+            if not split_df.empty:
+                split_df = _apply_value_uom_split(
+                    split_df,
+                    value_col="PROPERTY_VALUE",
+                    uom_col="PROPERTY_VALUE_UOM",
+                    uom_lookup=uom_lookup,
+                )
+            df = pd.concat([split_df, nosplit_df], ignore_index=True)
+        else:
+            # Fallback: DATA_TYPE not in DataFrame — legacy behavior (split all rows)
+            df = _apply_value_uom_split(
+                df,
+                value_col="PROPERTY_VALUE",
+                uom_col="PROPERTY_VALUE_UOM",
+                uom_lookup=uom_lookup,
+            )
         # Step 5: auto-clear UOM for sentinel and placeholder values
         # astype(str): same guard as transform_tag_instance_properties — NUMERIC dtype safety.
         mask = df["PROPERTY_VALUE"].fillna("").astype(str).str.strip().str.upper().isin(["NA", "TBC"])
@@ -1302,6 +1371,7 @@ def transform_equipment_instance_properties(
     if "PROPERTY_VALUE_UOM" in df.columns:
         df["PROPERTY_VALUE_UOM"] = df["PROPERTY_VALUE_UOM"].fillna("").astype(str).str.lower()
 
+    df = df.drop(columns=["DATA_TYPE", "UOM_GROUP_ID"], errors="ignore")
     available = [c for c in _EQUIPMENT_INSTANCE_PROP_COLUMNS if c in df.columns]
     return df[available]
 

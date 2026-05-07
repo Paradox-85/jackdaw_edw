@@ -66,6 +66,8 @@ SELECT DISTINCT
     COALESCE(p.name, pv.property_code_raw) AS PROPERTY_NAME,
     pv.property_value               AS PROPERTY_VALUE,
     COALESCE(u.symbol_ascii, u.symbol, pv.property_uom_raw) AS PROPERTY_VALUE_UOM,
+    p.data_type                     AS DATA_TYPE,
+    p.uom_group_id                  AS UOM_GROUP_ID,
     -- internal fields for validation rules (dropped by transform before CSV write)
     pv.id                           AS object_id,
     t.tag_name                      AS object_name,
