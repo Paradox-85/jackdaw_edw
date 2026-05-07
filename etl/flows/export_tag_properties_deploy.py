@@ -41,15 +41,19 @@ _TAG_PROPERTIES_SQL = """
 /*
 Purpose: Tag Property Values full extract for EIS snapshot export (seq 303).
 Gate:    pv.object_status = 'Active'
-         AND cp.mapping_concept ILIKE '%Functional%'
-         AND cp.mapping_concept NOT ILIKE '%common%'
+         AND pv.mapping_concept_raw ILIKE '%Functional%'
+         AND pv.mapping_concept_raw NOT ILIKE '%common%'
 Routing: Functional concept → seq 303 (this file, -010-)
          Physical concept   → seq 301 (export_equipment_properties.py, -011-)
          common concept     → excluded (already in tag/equipment registers)
-Note:    ILIKE '%...%' used because mapping_concept may be composite,
-         e.g. 'Functional Physical'.
+Note:    Filter uses pv.mapping_concept_raw (stored at import time) — NOT cp.mapping_concept.
+         pv.mapping_id may reference a class_property with wrong mapping_concept.
+         ILIKE '%...%' handles composite values e.g. 'Functional Physical'.
+         pv.mapping_concept_raw confirmed non-null for all Active rows (2026-05-07).
 Changes: 2026-03-13 — Initial implementation.
          2026-04-09 — Added uom_alias join for symbol_ascii resolution.
+         2026-05-07 — ROOT-CAUSE FIX: filter on pv.mapping_concept_raw, not cp.mapping_concept.
+                      Recovers 18,750 missing rows (FROM TAG NAME, Functional Physical props).
 */
 -- BUG-6: DISTINCT eliminates duplicate rows that arise when a property_value
 -- row is linked to multiple class_property entries with Functional mapping_concept.
@@ -81,8 +85,8 @@ LEFT JOIN ontology_core.uom_alias ua
 LEFT JOIN ontology_core.uom u
     ON ua.uom_id = u.id
 WHERE pv.object_status = 'Active'
-  AND cp.mapping_concept ILIKE '%Functional%'
-  AND cp.mapping_concept NOT ILIKE '%common%'
+  AND pv.mapping_concept_raw ILIKE '%Functional%'
+  AND pv.mapping_concept_raw NOT ILIKE '%common%'
 ORDER BY pl.code, t.tag_name, p.name
 """
 

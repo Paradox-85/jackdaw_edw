@@ -1259,6 +1259,23 @@ def transform_equipment_instance_properties(
     df = df.copy()
     df.columns = df.columns.str.upper()
 
+    # Guard: exclude rows where EQUIPMENT_NUMBER is NULL or empty.
+    # Defensive: current data shows 0 such rows (confirmed 2026-05-07), but guard
+    # prevents silent data errors if equip_no is unset for future Physical properties.
+    if "EQUIPMENT_NUMBER" in df.columns:
+        before = len(df)
+        df = df[
+            df["EQUIPMENT_NUMBER"].notna()
+            & (df["EQUIPMENT_NUMBER"].astype(str).str.strip() != "")
+        ]
+        dropped = before - len(df)
+        if dropped > 0:
+            import logging
+            logging.getLogger(__name__).warning(
+                f"transform_equipment_instance_properties: dropped {dropped} rows "
+                f"with NULL/empty EQUIPMENT_NUMBER (tags not assigned to equipment)."
+            )
+
     # Step 2: encoding repair + NaN → ""
     df = sanitize_dataframe(df)
 

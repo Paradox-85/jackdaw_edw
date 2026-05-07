@@ -41,17 +41,24 @@ _EQUIPMENT_PROPERTIES_SQL = """
 /*
 Purpose: Equipment Property Values full extract for EIS snapshot export (seq 301).
 Gate:    pv.object_status = 'Active'
-         AND cp.mapping_concept ILIKE '%Physical%'
-         AND cp.mapping_concept NOT ILIKE '%common%'
+         AND pv.mapping_concept_raw ILIKE '%Physical%'
+         AND pv.mapping_concept_raw NOT ILIKE '%common%'
 Routing: Physical concept   → seq 301 (this file, -011-)
          Functional concept → seq 303 (export_tag_properties.py, -010-)
          common concept     → excluded (already in tag/equipment registers)
-Note:    ILIKE '%...%' used because mapping_concept may be composite,
-         e.g. 'Functional Physical'. Such rows appear in BOTH exports.
+Note:    Filter uses pv.mapping_concept_raw (stored at import time) — NOT cp.mapping_concept.
+         pv.mapping_id may reference a class_property with wrong mapping_concept.
+         ILIKE '%...%' handles composite values e.g. 'Functional Physical' (both exports).
+         pv.mapping_concept_raw confirmed non-null for all Active rows (2026-05-07).
 Changes: 2026-03-13 — Initial implementation.
          2026-04-09 — Added uom_alias join for symbol_ascii resolution.
+         2026-05-07 — ROOT-CAUSE FIX: filter on pv.mapping_concept_raw, not cp.mapping_concept.
+                      BUG-B: Added SELECT DISTINCT (mirrors BUG-6 from -010-).
+                      Recovers 23,954 missing rows (Functional Physical properties).
 */
-SELECT
+-- BUG-B: DISTINCT eliminates duplicate rows (safety net).
+-- Mirrors BUG-6 fix already applied in export_tag_properties_deploy.py.
+SELECT DISTINCT
     pl.code                         AS PLANT_CODE,
     t.equip_no                      AS EQUIPMENT_NUMBER,
     p.name                          AS PROPERTY_NAME,
@@ -79,8 +86,8 @@ LEFT JOIN ontology_core.uom_alias ua
 LEFT JOIN ontology_core.uom u
     ON ua.uom_id = u.id
 WHERE pv.object_status = 'Active'
-  AND cp.mapping_concept ILIKE '%Physical%'
-  AND cp.mapping_concept NOT ILIKE '%common%'
+  AND pv.mapping_concept_raw ILIKE '%Physical%'
+  AND pv.mapping_concept_raw NOT ILIKE '%common%'
 ORDER BY pl.code, t.equip_no, p.name
 """
 

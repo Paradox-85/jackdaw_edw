@@ -440,6 +440,11 @@ CREATE TABLE "project_core"."property_value" (
   CONSTRAINT "property_value_property_id_fkey" FOREIGN KEY ("property_id") REFERENCES "ontology_core"."property" ("id"),
   CONSTRAINT "property_value_class_id_fkey" FOREIGN KEY ("class_id") REFERENCES "ontology_core"."class" ("id")
 );
+-- Applied 2026-05-07 after confirming 0 duplicates in Active rows.
+-- Run scripts/deduplicate_property_values.py --dry-run before applying.
+ALTER TABLE "project_core"."property_value"
+    ADD CONSTRAINT "uq_property_value_tag_property_status"
+    UNIQUE (tag_id, property_id, property_value, property_uom_raw, object_status);
 
 -- ---------------------------------------------------------------------------
 -- Schema: reference_core
