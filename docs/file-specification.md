@@ -539,13 +539,15 @@ WHERE `pv.object_status = 'Active'`
 #### EIS Seq 414 — Document References to Model Part
 **File**: `JDAW-KVE-E-JA-6944-00001-020-{revision}.CSV`
 **Flow**: `export_doc_to_model_part_flow`
-**Source**: `mapping.tag_document` → `project_core.tag` → `reference_core.model_part` (via `tag.model_id`); DISTINCT pairs
+**Source**: `mapping.tag_document` → `project_core.tag` → `reference_core.model_part` (via `tag.model_id`) → `reference_core.company` (via `model_part.manufacturer_id`); DISTINCT pairs
+**Changed**: 2026-05-11 — Column schema updated: replaced PLANT_CODE + MODEL_PART_CODE with REVISION_CODE + MANUFACTURER_COMPANY_NAME + MODEL_PART_NAME per EIS requirement.
 
 | Column | Source | Notes |
 |---|---|---|
 | `DOCUMENT_NUMBER` | `document.doc_number` | |
-| `PLANT_CODE` | `plant.code` via `tag.plant_id` | LEFT JOIN; empty if unresolved |
-| `MODEL_PART_CODE` | `model_part.code` via `tag.model_id` | INNER JOIN; DISTINCT |
+| `REVISION_CODE` | `document.rev` | Document revision code (e.g. `C03`, `A35`) |
+| `MANUFACTURER_COMPANY_NAME` | `company.name` via `model_part.manufacturer_id` | LEFT JOIN; empty if FK unresolved |
+| `MODEL_PART_NAME` | `model_part.name` (fallback `model_part.code`) via `tag.model_id` | INNER JOIN; DISTINCT |
 
 ---
 

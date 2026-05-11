@@ -1432,7 +1432,7 @@ _DOC_TO_PROCESS_UNIT_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "PRO
 _DOC_TO_AREA_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "AREA_CODE"]
 _DOC_TO_TAG_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "TAG_NAME"]
 _DOC_TO_EQUIPMENT_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "EQUIPMENT_NUMBER"]
-_DOC_TO_MODEL_PART_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "PLANT_CODE", "MODEL_PART_CODE"]
+_DOC_TO_MODEL_PART_COLUMNS: list[str] = ["DOCUMENT_NUMBER", "REVISION_CODE", "MANUFACTURER_COMPANY_NAME", "MODEL_PART_NAME"]
 _DOC_TO_PO_COLUMNS: list[str] = [
     "DOCUMENT_NUMBER",
     "REVISION_CODE",
@@ -1582,7 +1582,7 @@ def transform_doc_to_model_part(df: pd.DataFrame) -> pd.DataFrame:
 
     Example:
         >>> list(transform_doc_to_model_part(raw_df).columns)
-        ['DOCUMENT_NUMBER', 'PLANT_CODE', 'MODEL_PART_CODE']
+        ['DOCUMENT_NUMBER', 'REVISION_CODE', 'MANUFACTURER_COMPANY_NAME', 'MODEL_PART_NAME']
     """
     return _transform_doc_crossref(df, _DOC_TO_MODEL_PART_COLUMNS)
 

@@ -269,19 +269,22 @@ Purpose: Document→ModelPart cross-reference for EIS snapshot export (seq 414).
 Gate:    document: object_status='Active', mdr_flag=TRUE, status NOT NULL/CAN.
          tag: object_status='Active', tag_status NOT VOID/empty.
          DISTINCT: remove duplicate (doc, model_part) pairs from multi-tag joins.
-Source:  mapping.tag_document → tag.model_id → model_part.
+Source:  mapping.tag_document → tag.model_id → model_part → company (manufacturer).
 Changes: 2026-03-17 — Initial implementation.
+         2026-05-11 — Column schema updated: replaced PLANT_CODE + MODEL_PART_CODE with
+                      REVISION_CODE + MANUFACTURER_COMPANY_NAME + MODEL_PART_NAME per EIS requirement.
 */
 SELECT DISTINCT
-    d.doc_number                            AS DOCUMENT_NUMBER,
-    COALESCE(pl.code, '')                   AS PLANT_CODE,
-    COALESCE(mp.code, '')                   AS MODEL_PART_CODE,
+    d.doc_number                             AS DOCUMENT_NUMBER,
+    COALESCE(d.rev, '')                      AS REVISION_CODE,
+    COALESCE(c.name, '')                     AS MANUFACTURER_COMPANY_NAME,
+    COALESCE(mp.name, mp.code, '')           AS MODEL_PART_NAME,
     d.object_status
 FROM mapping.tag_document m
-INNER JOIN project_core.document      d   ON m.document_id = d.id
-INNER JOIN project_core.tag           t   ON m.tag_id      = t.id
-INNER JOIN reference_core.model_part  mp  ON t.model_id    = mp.id
-LEFT  JOIN reference_core.plant       pl  ON t.plant_id    = pl.id AND pl.object_status = 'Active'
+INNER JOIN project_core.document      d   ON m.document_id      = d.id
+INNER JOIN project_core.tag           t   ON m.tag_id            = t.id
+INNER JOIN reference_core.model_part  mp  ON t.model_id          = mp.id
+LEFT  JOIN reference_core.company     c   ON mp.manufacturer_id  = c.id
 WHERE m.mapping_status = 'Active'
   AND d.object_status = 'Active'
   AND d.mdr_flag = TRUE
@@ -289,7 +292,7 @@ WHERE m.mapping_status = 'Active'
   AND UPPER(COALESCE(d.status, '')) != 'CAN'
   AND t.object_status = 'Active'
   AND UPPER(COALESCE(t.tag_status, '')) NOT IN ('VOID', '')
-ORDER BY DOCUMENT_NUMBER, MODEL_PART_CODE
+ORDER BY DOCUMENT_NUMBER, MANUFACTURER_COMPANY_NAME, MODEL_PART_NAME
 """
 
 _FILE_414 = "JDAW-KVE-E-JA-6944-00001-020-{revision}.CSV"
